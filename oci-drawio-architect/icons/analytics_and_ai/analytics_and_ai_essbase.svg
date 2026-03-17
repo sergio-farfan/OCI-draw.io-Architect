@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 81.0 108.99999999999994" width="81" height="108">
+  <g transform="translate(0.00,-0.00) scale(0.8100,0.8400)">
+    <path d="M 100 36.48 L 84.59 0 L 15.36 0.02 L 0 36.4 L 0 99.88 L 100 100 L 100 36.48 L 100 36.48" fill="#FFFFFF" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(2.00,58.00) scale(0.2300,0.2300)">
+    <path d="M 0 100 L 100 100 L 100 0 L 0 0 L 0 100 L 0 100 M 13.26 13.17 L 87.19 13.17 L 87.19 86.83 L 13.26 86.83 L 13.26 13.17 L 13.26 13.17" fill="#2c5967" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(28.00,58.00) scale(0.2300,0.2300)">
+    <path d="M 0 100 L 100 100 L 100 0 L 0 0 L 0 100 L 0 100 M 13.18 13.17 L 86.82 13.17 L 86.82 86.83 L 13.18 86.83 L 13.18 13.17 L 13.18 13.17" fill="#2c5967" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(54.00,58.00) scale(0.2300,0.2300)">
+    <path d="M 0 100 L 100 100 L 100 0 L 0 0 L 0 100 L 0 100 M 13.26 13.17 L 86.74 13.17 L 86.74 86.83 L 13.26 86.83 L 13.26 13.17 L 13.26 13.17" fill="#2c5967" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(2.00,32.00) scale(0.2300,0.2300)">
+    <path d="M 0 100 L 100 100 L 100 0 L 0 0 L 0 100 L 0 100 M 13.26 13.17 L 87.19 13.17 L 87.19 86.92 L 13.26 86.92 L 13.26 13.17 L 13.26 13.17" fill="#2c5967" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(28.00,32.00) scale(0.2300,0.2300)">
+    <path d="M 0 100 L 100 100 L 100 0 L 0 0 L 0 100 L 0 100 M 13.18 13.17 L 86.82 13.17 L 86.82 86.92 L 13.18 86.92 L 13.18 13.17 L 13.18 13.17" fill="#2c5967" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(54.00,32.00) scale(0.2300,0.2300)">
+    <path d="M 0 0 L 0 100 L 100 100 L 100 0 L 0 0 L 0 0 M 86.74 86.92 L 13.26 86.92 L 13.26 13.17 L 86.74 13.17 L 86.74 86.92 L 86.74 86.92" fill="#2c5967" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(3.00,15.00) scale(0.2500,0.1400)">
+    <path d="M 0 100 L 90.76 100 L 100 0 L 23.06 0 L 0 100 L 0 100 M 86.01 20 L 80.6 79.57 L 17.57 79.57 L 31.22 20 L 86.01 20 L 86.01 20" fill="#2c5967" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(28.00,15.00) scale(0.2200,0.1400)">
+    <path d="M 100 100 L 92.31 0 L 7.69 0 L 0 100 L 100 100 L 100 100 M 19.44 20 L 80.56 20 L 85.09 79.57 L 14.91 79.57 L 19.44 20 L 19.44 20" fill="#2c5967" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(52.00,14.00) scale(0.2500,0.1400)">
+    <path d="M 100 100 L 77.1 0 L 0 0 L 9.31 99.57 L 100 100 L 100 100 M 68.71 20.34 L 82.47 79.66 L 19.55 79.66 L 14.09 20.34 L 68.71 20.34 L 68.71 20.34" fill="#2c5967" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(10.00,2.00) scale(0.2000,0.1000)">
+    <path d="M 19.98 0 L 0 100 L 91.97 100 L 100 0 L 19.98 0 L 19.98 0 M 79.4 69.8 L 21.73 69.8 L 30.07 28.6 L 82.7 28.6 L 79.4 69.8 L 79.4 69.8" fill="#2c5967" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(30.00,2.00) scale(0.1800,0.1000)">
+    <path d="M 93.84 0 L 6.49 0 L 0 100 L 100 100 L 93.84 0 L 93.84 0 M 18.03 70.4 L 20.72 29.2 L 79.17 29.2 L 81.97 70.4 L 18.03 70.4 L 18.03 70.4" fill="#2c5967" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(50.00,2.00) scale(0.2000,0.1000)">
+    <path d="M 80.02 0 L 0 0 L 8.03 100 L 100 100 L 80.02 0 L 80.02 0 M 20.6 70.4 L 17.3 29.2 L 70.03 29.2 L 78.37 70.4 L 20.6 70.4 L 20.6 70.4" fill="#2c5967" stroke="none" stroke-width="0.5"/>
+  </g>
+</svg>
