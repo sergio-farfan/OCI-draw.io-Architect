@@ -2,11 +2,16 @@
 
 **A Claude Code plugin that generates production-quality draw.io architecture diagrams for Oracle Cloud Infrastructure (OCI) — from Terraform configurations or free-form descriptions.**
 
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/tag/v1.0.0)
+[![Python](https://img.shields.io/badge/python-3.8%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-orange.svg?logo=anthropic)](https://claude.ai/code)
+
 ---
 
-**Author:** Sergio Farfan
-**Contact:** sergio.farfan@gmail.com
-**Version:** 1.0.0
+**Author:** Sergio Farfan · sergio.farfan@gmail.com
+**Version:** 1.0.0 · [Download archive (424KB)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.0.0/oci-drawio-architect-v1.0.0.tar.gz)
 
 ---
 
