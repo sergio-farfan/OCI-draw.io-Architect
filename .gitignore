@@ -1,0 +1,2 @@
+*.tar.gz
+.claude/settings.local.json

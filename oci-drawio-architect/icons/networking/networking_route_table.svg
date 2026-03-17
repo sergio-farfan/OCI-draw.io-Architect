@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 84.0 109.0000000000001" width="84" height="109">
+  <g transform="translate(9.00,1.00) scale(0.8200,0.8200)">
+    <path d="M 100 0 L 0 0 L 0 100 L 100 100 L 100 0 L 100 0" fill="#FFFFFF" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(8.00,0.00) scale(0.8400,0.8400)">
+    <path d="M 97.62 2.38 L 97.62 97.62 L 2.38 97.62 L 2.38 2.38 L 97.62 2.38 L 97.62 2.38 M 100 0 L 97.62 0 L 2.38 0 L 0 0 L 0 2.38 L 0 97.62 L 0 100 L 2.38 100 L 97.62 100 L 100 100 L 100 97.62 L 100 2.38 L 100 0 L 100 0" fill="#FFFFFF" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(10.00,2.00) scale(0.8000,0.8000)">
+    <path d="M 0 0 L 0 100 L 100 100 L 100 0 L 0 0 L 0 0 M 96.25 32 L 31.5 32 L 31.5 3.75 L 96.25 3.75 L 96.25 32 L 96.25 32 M 3.75 68 L 27.75 68 L 27.75 96.5 L 3.75 96.5 L 3.75 68 L 3.75 68 M 27.75 3.75 L 27.75 32.25 L 3.75 32.25 L 3.75 3.75 L 27.75 3.75 L 27.75 3.75 M 27.75 35.75 L 27.75 64.25 L 3.75 64.25 L 3.75 35.75 L 27.75 35.75 L 27.75 35.75 M 31.5 96.25 L 31.5 68 L 96.25 68 L 96.25 96.5 L 31.5 96.25 L 31.5 96.25 M 31.5 64.25 L 31.5 35.75 L 96.25 35.75 L 96.25 64.25 L 31.5 64.25 L 31.5 64.25" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(38.00,14.00) scale(0.1000,0.1000)">
+    <path d="M 0 100 L 33.33 100 L 50.98 67.31 L 68.62 100 L 100 100 L 70.59 48.08 L 98.03 0 L 66.67 0 L 50.98 30.77 L 33.33 0 L 1.96 0 L 31.37 48.08 L 0 100 L 0 100" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(50.00,22.00) scale(0.0200,0.0200)">
+    <path d="M 100 0 L 0 0 L 0 100 L 100 100 L 100 0 L 100 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(55.00,14.00) scale(0.1000,0.1000)">
+    <path d="M 32 100 L 50 67.31 L 68 100 L 100 100 L 68 48.08 L 98.01 0 L 68 0 L 50 30.77 L 32 0 L 0 0 L 30 48.08 L 0 100 L 32 100 L 32 100" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(66.00,22.00) scale(0.0200,0.0200)">
+    <path d="M 100 0 L 0 0 L 0 100 L 100 100 L 100 0 L 100 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(70.00,14.00) scale(0.1000,0.1000)">
+    <path d="M 32 100 L 50 67.31 L 70 100 L 100 100 L 70 48.08 L 98.01 0 L 68 0 L 50 30.77 L 32 0 L 2.01 0 L 30 48.08 L 0 100 L 32 100 L 32 100" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(81.00,22.00) scale(0.0200,0.0200)">
+    <path d="M 100 0 L 0 0 L 0 100 L 100 100 L 100 0 L 100 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(38.00,40.00) scale(0.1000,0.1000)">
+    <path d="M 98.03 0 L 66.67 0 L 50.98 30.77 L 33.33 0 L 1.96 0 L 31.37 48.08 L 0 100 L 33.33 100 L 50.98 67.31 L 68.62 100 L 100 100 L 70.59 48.08 L 98.03 0 L 98.03 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(50.00,48.00) scale(0.0200,0.0200)">
+    <path d="M 100 0 L 0 0 L 0 100 L 100 100 L 100 0 L 100 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(55.00,40.00) scale(0.1000,0.1000)">
+    <path d="M 98.01 0 L 68 0 L 50 30.77 L 32 0 L 0 0 L 30 48.08 L 0 100 L 32 100 L 50 67.31 L 68 100 L 100 100 L 68 48.08 L 98.01 0 L 98.01 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(66.00,48.00) scale(0.0200,0.0200)">
+    <path d="M 100 0 L 0 0 L 0 100 L 100 100 L 100 0 L 100 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(70.00,40.00) scale(0.1000,0.1000)">
+    <path d="M 98.01 0 L 68 0 L 50 30.77 L 32 0 L 2.01 0 L 30 48.08 L 0 100 L 32 100 L 50 67.31 L 70 100 L 100 100 L 70 48.08 L 98.01 0 L 98.01 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(81.00,48.00) scale(0.0200,0.0200)">
+    <path d="M 100 0 L 0 0 L 0 100 L 100 100 L 100 0 L 100 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(38.00,66.00) scale(0.1000,0.1000)">
+    <path d="M 98.03 0 L 66.67 0 L 50.98 29.41 L 33.33 0 L 1.96 0 L 31.37 47.06 L 0 100 L 33.33 100 L 50.98 66.67 L 68.62 100 L 100 100 L 70.59 49.01 L 98.03 0 L 98.03 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(50.00,74.00) scale(0.0200,0.0200)">
+    <path d="M 100 0 L 0 0 L 0 100 L 100 100 L 100 0 L 100 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(55.00,66.00) scale(0.1000,0.1000)">
+    <path d="M 98.01 0 L 68 0 L 50 29.41 L 32 0 L 0 0 L 30 47.06 L 0 100 L 32 100 L 50 66.67 L 68 100 L 100 100 L 68 49.01 L 98.01 0 L 98.01 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(66.00,74.00) scale(0.0200,0.0200)">
+    <path d="M 100 0 L 0 0 L 0 100 L 100 100 L 100 0 L 100 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(70.00,66.00) scale(0.1000,0.1000)">
+    <path d="M 98.01 0 L 68 0 L 50 29.41 L 32 0 L 2.01 0 L 30 47.06 L 0 100 L 32 100 L 50 66.67 L 70 100 L 100 100 L 70 49.01 L 98.01 0 L 98.01 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+  <g transform="translate(81.00,74.00) scale(0.0200,0.0200)">
+    <path d="M 100 0 L 0 0 L 0 100 L 100 100 L 100 0 L 100 0" fill="#aa643b" stroke="none" stroke-width="0.5"/>
+  </g>
+</svg>
