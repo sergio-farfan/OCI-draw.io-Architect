@@ -30,14 +30,17 @@ from typing import Optional
 
 
 def find_terraform_dir() -> Optional[Path]:
-    """Walk up from cwd looking for provider.tf or *.auto.tfvars."""
-    candidates = [
-        Path.cwd(),
-        *Path.cwd().rglob("provider.tf"),
-    ]
-    # Direct children first
-    for f in Path.cwd().glob("**/provider.tf"):
-        return f.parent
+    """Search downward from cwd for a Terraform directory.
+
+    Returns the directory of the shallowest provider.tf; if none exists,
+    the directory of the shallowest *.auto.tfvars. Ties break
+    lexicographically for deterministic results.
+    """
+    cwd = Path.cwd()
+    for pattern in ("**/provider.tf", "**/*.auto.tfvars"):
+        hits = sorted(cwd.glob(pattern), key=lambda p: (len(p.parts), str(p)))
+        if hits:
+            return hits[0].parent
     return None
 
 
@@ -78,11 +81,15 @@ def parse_terraform_tfvars(tf_dir: Path) -> dict:
         var_tf = tf_dir / "variables.tf"
         if var_tf.exists():
             text = var_tf.read_text()
-            m = re.search(
-                r'variable\s+"tenancy_ocid".*?default\s*=\s*"([^"]+)"',
-                text, re.DOTALL)
-            if m:
-                result["tenancy_ocid"] = m.group(1)
+            # Extract the tenancy_ocid block with bounded regex to prevent
+            # cross-block capture when the variable has no default (which would
+            # match the NEXT variable's default and report a wrong value).
+            # \n} matches the closing brace at line start (terraform fmt convention).
+            block = re.search(r'variable\s+"tenancy_ocid"\s*\{(.*?)\n\}', text, re.DOTALL)
+            if block:
+                dm = re.search(r'default\s*=\s*"([^"]+)"', block.group(1))
+                if dm:
+                    result["tenancy_ocid"] = dm.group(1)
 
     return result
 
@@ -125,7 +132,7 @@ def query_oci_cli(tenancy_ocid: str, profile: str = "DEFAULT") -> dict:
         if out.returncode == 0 and out.stdout.strip():
             data = json.loads(out.stdout)
             result["tenancy_name"] = data["data"]["name"]
-    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError, KeyError, TypeError):
         pass
 
     # Get subscribed regions
@@ -143,7 +150,7 @@ def query_oci_cli(tenancy_ocid: str, profile: str = "DEFAULT") -> dict:
             for r in data["data"]:
                 if r.get("is-home-region"):
                     result["home_region"] = r["region-name"]
-    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError, KeyError, TypeError):
         pass
 
     return result
@@ -184,13 +191,20 @@ REGION_LABELS = {
 
 
 def find_logos(project_dir: Path) -> dict:
-    """Find logo files in common locations."""
+    """Find logo files in common locations.
+
+    Searches project directories first, then falls back to plugin-local logos directory.
+    Project logos take precedence over plugin-local logos.
+    """
     result = {}
+    # Plugin-local logos/ dir (optional; users may drop their own logo files there)
+    plugin_logos = Path(__file__).resolve().parent.parent / "logos"
     search_paths = [
         project_dir / "Network" / "Documents" / "logos",
         project_dir / "logos",
         project_dir / "assets" / "logos",
         project_dir / "images",
+        plugin_logos,
     ]
     for logos_dir in search_paths:
         if not logos_dir.is_dir():
