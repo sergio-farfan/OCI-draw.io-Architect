@@ -282,15 +282,12 @@ def _fmt_num(value: float) -> str:
 # ---------------------------------------------------------------------------
 # Overlap detection - call before write() to catch overlapping containers
 # ---------------------------------------------------------------------------
-def find_container_overlaps(root) -> list[str]:
-    """Find overlapping sibling containers under an mxGraphModel <root>.
+def build_cell_registry(root) -> dict[str, dict]:
+    """Parse direct children of an mxGraphModel <root> into a cell registry.
 
-    `root` is the <root> Element of an mxGraphModel (i.e. DrawioBuilder.root).
-    Containers are vertex cells whose style contains "container=1"; two
-    siblings (same parent) overlap when their absolute bounding boxes
-    intersect with positive area (touching edges are not an overlap).
-
-    Returns a list of "OVERLAP: ..." messages, or [] when clean.
+    Maps cell id -> {value, style, parent, vertex, x, y, w, h}, handling both
+    plain <mxCell> vertices and <object> wrappers (metadata/tooltip cells).
+    Shared by find_container_overlaps and the check_overlaps CLI.
     """
     registry = {}
     for el in root:
@@ -325,6 +322,20 @@ def find_container_overlaps(root) -> list[str]:
             "value": value, "style": style, "parent": parent,
             "vertex": vertex, "x": x, "y": y, "w": w, "h": h,
         }
+    return registry
+
+
+def find_container_overlaps(root) -> list[str]:
+    """Find overlapping sibling containers under an mxGraphModel <root>.
+
+    `root` is the <root> Element of an mxGraphModel (i.e. DrawioBuilder.root).
+    Containers are vertex cells whose style contains "container=1"; two
+    siblings (same parent) overlap when their absolute bounding boxes
+    intersect with positive area (touching edges are not an overlap).
+
+    Returns a list of "OVERLAP: ..." messages, or [] when clean.
+    """
+    registry = build_cell_registry(root)
 
     errors = []
     abs_cache = {}
