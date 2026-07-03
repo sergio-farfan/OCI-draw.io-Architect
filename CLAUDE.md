@@ -82,7 +82,7 @@ tar -xzf oci-drawio-architect-v1.1.0.tar.gz
 The `DrawioBuilder` class programmatically generates draw.io `.drawio` XML files. It is copied into the user's working directory at diagram generation time (it must be local to the generated script).
 
 Key design decisions:
-- **URL-encoding**: SVG data URIs must use `urllib.parse.quote()`, NOT base64. draw.io silently ignores base64-encoded images.
+- **URL-encoding**: SVG data URIs must use `urllib.parse.quote()`, NOT base64. A raw `;base64,` marker breaks draw.io's semicolon-delimited style parsing, so images are URL-encoded instead.
 - **viewBox fix**: OCI SVGs have `translate+scale` transforms that push content outside the declared viewBox. `drawio_builder.py` automatically expands the viewBox to fit actual content bounds.
 - **Container hierarchy**: `add_group()` returns a cell ID used as the `parent` for child elements. Edge `parent` must be the **common ancestor** of source and target, or edges won't render correctly.
 - **Overlap prevention**: Container positions must be computed from actual bounding boxes — hardcoding row Y positions leads to overlapping containers when content height varies. Use named variables (`ROW1_Y`, `ROW2_Y`) derived from computed bottoms. Verify with the shipped checker (`DrawioBuilder.check_overlaps()` or `scripts/check_overlaps.py`) — a mandatory gate in the `/drawio-architect` workflow.
