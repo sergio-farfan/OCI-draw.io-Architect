@@ -10,28 +10,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Contents
 
-This directory is the **distribution root**. The plugin source lives inside the archive:
+The plugin source is tracked directly in this repo, under `oci-drawio-architect/`. Edit it there — there is no archive to extract.
 
 ```
 OCI-Diagrams/
-├── README.md                          # Installation & usage guide
-└── oci-drawio-architect-v1.1.0.tar.gz # Self-contained plugin archive
+├── README.md              # Installation & usage guide
+└── oci-drawio-architect/  # Plugin source (edit here)
 ```
 
-To inspect or modify the plugin, extract the archive:
+`oci-drawio-architect/pack.sh` builds the distributable `oci-drawio-architect-v<VERSION>.tar.gz` from this source tree; that tarball is published as a GitHub release asset, not committed to the repo. (A `oci-drawio-architect-v1.0.0.tar.gz` may still be present at the repo root — it is `.gitignore`d and untracked, a legacy artifact from the pre-v1.1.0 packaging flow, and does not reflect current source.) `install.sh` installs the plugin directly from the source directory; no extraction step is needed.
 
-```bash
-tar -xzf oci-drawio-architect-v1.1.0.tar.gz
-```
-
-Plugin source layout inside the archive:
+Plugin source layout:
 
 ```
 oci-drawio-architect/
 ├── .claude-plugin/plugin.json         # Plugin metadata
 ├── scripts/
 │   ├── drawio_builder.py              # Core XML builder class
-│   └── detect_settings.py            # OCI settings auto-detection
+│   ├── detect_settings.py             # OCI settings auto-detection
+│   └── check_overlaps.py              # Overlap-checker CLI (mandatory workflow gate)
 ├── commands/drawio-architect.md       # /drawio-architect command
 ├── skills/oci-drawio-architect/
 │   ├── SKILL.md                       # Full skill workflow
@@ -39,6 +36,8 @@ oci-drawio-architect/
 │       ├── oracle-styles.md           # Container/color style reference
 │       ├── icon-catalog.md            # All 220 icon keys
 │       └── gotchas.md                 # Common pitfalls
+├── examples/
+│   └── generate_demo_diagram.py       # Demo / post-install smoke test
 ├── icons/                             # 220 OCI SVG icons (15 categories)
 ├── install.sh                         # Install/uninstall script
 └── pack.sh                            # Packaging script
@@ -49,7 +48,7 @@ oci-drawio-architect/
 ### Package the plugin
 
 ```bash
-cd oci-drawio-architect   # after extracting
+cd oci-drawio-architect
 ./pack.sh                 # outputs oci-drawio-architect-v<VERSION>.tar.gz to current dir
 ./pack.sh /path/to/output # outputs to specified directory
 ```
@@ -59,7 +58,6 @@ Version is auto-read from `.claude-plugin/plugin.json`.
 ### Install the plugin
 
 ```bash
-tar -xzf oci-drawio-architect-v1.1.0.tar.gz
 ./oci-drawio-architect/install.sh
 # Then inside a Claude Code session:
 # /plugin marketplace add ~/.claude/plugins/marketplaces/local
