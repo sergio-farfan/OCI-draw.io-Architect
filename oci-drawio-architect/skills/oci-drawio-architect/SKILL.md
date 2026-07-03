@@ -11,11 +11,11 @@ Generate production-quality draw.io diagrams for Oracle Cloud Infrastructure usi
 
 This skill provides a battle-tested `DrawioBuilder` Python class that produces `.drawio` XML files with:
 - Embedded OCI SVG icons (URL-encoded, single-cell, clean rendering)
-- Oracle template container styles (Region, VCN, Subnet, Services, Hub)
+- Oracle template container styles (Region, VCN, Subnet, Services, On-Premises)
 - PNG logo embedding via SVG wrapper trick
-- Explicit edge routing with waypoints
+- Orthogonal-router edges by default, with explicit ports/waypoints available for tight control
 
-**Core principle:** Copy `drawio_builder.py` into your script, write a `build_diagram()` function that places containers and icons on a grid, then route edges with explicit waypoints.
+**Core principle:** Copy `drawio_builder.py` into your script, write a `build_diagram()` function that places containers/icons on a grid, then let the orthogonal router connect them — explicit ports/waypoints only where tight control is needed.
 
 **DrawioBuilder script location:** `${CLAUDE_PLUGIN_ROOT}/scripts/drawio_builder.py`
 
@@ -63,8 +63,9 @@ R1 = 50        # first icon row y (below container title)
 R2 = 210       # second icon row y
 COL = 130      # column gap between icons
 SN_H = 380     # subnet height for 2 rows of icons
-ICON_W = 75    # icon cell width
-ICON_H = 95    # icon cell height (taller than wide for label space)
+GAP = 30       # gap between sibling containers
+ICON_W = 75    # nominal slot width (actual cell width derived from the SVG's aspect)
+ICON_H = 95    # fixed icon cell height
 ```
 
 **Page dimensions:** Calculate from content. Typical: 1600x1100 for single-VCN, 2400x1400 for multi-VCN.
@@ -89,14 +90,21 @@ ROW2_Y = max(ROW1_BOTTOM, CPLB_BOTTOM) + GAP
 
 3. **Account for icon label overflow**: Each icon occupies `ICON_H(95) + LABEL_GAP(2) + label_h(45) = 142px` vertically. A container with 2 icon rows needs at least `R2(210) + 142 = 352px` height (380 SN_H provides 28px padding).
 
-4. **After generating**, run an overlap check that parses the `.drawio` XML and tests all sibling container pairs for bounding-box intersection:
-```python
-# For each pair of sibling containers (same parent):
-x_overlap = c1.x < c2.x + c2.w and c2.x < c1.x + c1.w
-y_overlap = c1.y < c2.y + c2.h and c2.y < c1.y + c1.h
-if x_overlap and y_overlap:
-    print(f"OVERLAP: {c1.label} vs {c2.label}")
-```
+4. **Use the shipped overlap checker** - don't hand-roll one:
+   - In the generated script, call `d.check_overlaps()` before `d.write()` and abort on any findings:
+     ```python
+     problems = d.check_overlaps()
+     if problems:
+         for p in problems:
+             print(p)
+         raise SystemExit(1)
+     d.write(Path("output.drawio"))
+     ```
+   - After generation, also run the standalone CLI gate:
+     ```bash
+     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" <output>.drawio
+     ```
+     Exit code `1` means overlaps were found - fix the layout math (see the row-derivation rule above) and regenerate. Exit `0` is clean.
 
 **Common overlap traps:**
 - Containers of **different heights** in the same visual row - the tallest one's bottom sets the next row's y
@@ -150,9 +158,20 @@ def build_diagram():
     lb = d.add_icon("Load Balancer", "load_balancer", x=20, y=50, parent=sn)
     vm = d.add_icon("App VM", "vm", x=150, y=50, parent=sn)
 
-    # Edges
-    d.add_edge(lb, vm, "443", parent=vcn,
-               exit_x=1.0, exit_y=0.5, entry_x=0.0, entry_y=0.5)
+    # Icon with metadata + tooltip (survives round-trips through draw.io)
+    db = d.add_icon("Autonomous Database", "autonomous_db", x=280, y=50, parent=sn,
+                     metadata={"ocid": "ocid1.autonomousdatabase.oc1..example"},
+                     tooltip="Primary OLTP database")
+
+    # Edges - modern port-less form; the orthogonal router picks the path
+    d.add_edge(lb, vm, "443", parent=sn)
+
+    # Mandatory overlap gate before writing
+    problems = d.check_overlaps()
+    if problems:
+        for p in problems:
+            print(p)
+        raise SystemExit(1)
 
     d.write(Path("output.drawio"))
 
@@ -162,28 +181,36 @@ if __name__ == "__main__":
 
 ### Phase 4: Route Edges
 
-Edges need explicit waypoints for clean routing. Key rules:
+`add_edge` defaults to draw.io's orthogonal router (`edgeStyle=orthogonalEdgeStyle`) with no fixed connection points - draw.io picks the path. Key rules:
 
-- **Same container:** Simple exit/entry ports, no waypoints needed
-- **Cross-container:** Set `parent` to common ancestor; waypoints in ancestor's coordinate space
-- **Around obstacles:** Route along container margins, then through gaps
-- **Parallel routes:** Offset by ~8px to prevent overlap
+- **Same container:** Just call `d.add_edge(source, target, label, parent=container)` - no ports, no waypoints needed.
+- **Cross-container:** Still set `parent` to the common ancestor of the two endpoints, even in the default (no-ports) mode.
+- **Tight control:** Passing any of `exit_x`/`exit_y`/`entry_x`/`entry_y` or `waypoints` switches that edge to legacy pinned mode (fixed side/point, router disabled - the v1.0.0 behavior). Use this when you need to route around obstacles or dock at a specific side.
+- **Router + docked endpoints:** Pass `orthogonal=True` together with full exit/entry pins to keep the orthogonal router active while still pinning the connection sides.
+- **Parallel routes (legacy mode only):** Offset by ~8px to prevent overlap.
 
 ```python
-# Cross-container edge: DRG (in hub) -> LB (in subnet inside vcn)
-# parent=region because region is the common ancestor
+# Default: modern, port-less, same-container
+d.add_edge(lb, vm, "443", parent=sn)
+
+# Cross-container, still port-less: parent is the common ancestor
+d.add_edge(drg, lb, "", parent=region)
+
+# Tight control: any port or waypoint switches to legacy pinned mode
 d.add_edge(drg, lb, "", parent=region,
            exit_x=1.0, exit_y=0.5, entry_x=0.0, entry_y=0.5,
            waypoints=[(gap_x, drg_y), (gap_x, lb_y)])
 ```
 
-**Exit/entry port reference:**
+**Exit/entry port reference** (legacy pinned mode, or `orthogonal=True` with full pins):
 | Position | exitX/entryX | exitY/entryY |
 |----------|-------------|-------------|
 | Top | 0.5 | 0.0 |
 | Bottom | 0.5 | 1.0 |
 | Left | 0.0 | 0.5 |
 | Right | 1.0 | 0.5 |
+
+**Semantics:** solid = data flow, dashed (`dashed=True`) = user interaction. This is the official Oracle toolkit convention - don't invert it.
 
 ### Phase 5: Finalize
 
@@ -197,24 +224,32 @@ d.add_edge(drg, lb, "", parent=region,
 
 ### Container Types
 
+11 group types are defined in `_GROUP_STYLES`:
+
 | Type | Border | Fill | Font Color | Use For |
 |------|--------|------|------------|---------|
-| `region` | `#9E9892` solid | `#F5F4F2` | `#312D2A` | OCI region |
-| `compartment` | `#9E9892` solid | `#F5F4F2` | `#312D2A` | Compartment |
-| `vcn` | `#AE562C` dashed 2px | none | `#AE562C` | VCN |
-| `subnet` | `#AE562C` dashed 1px | none | `#AE562C` | Subnet |
-| `services` | `#312D2A` dashed 1px | none | `#312D2A` | OCI services panel |
-| `hub` | `#9E9892` solid | `#F5F4F2` | `#312D2A` | Hub network / on-prem |
+| `region` | `#9E9892` solid, rounded | `#F5F4F2` | `#312D2A` bold | OCI region |
+| `tenancy` | `#9E9892` dashed 1px, square | none | `#312D2A` bold | Tenancy boundary |
+| `availability_domain` | `#9E9892` solid, rounded | `#DFDCD8` | `#312D2A` bold | Availability Domain |
+| `fault_domain` | `#9E9892` solid, rounded | `#FCFBFA` | `#312D2A` bold | Fault Domain |
+| `compartment` | `#AE562C` dotted 1px, square | none | `#312D2A` bold | Compartment |
+| `vcn` | `#AE562C` dashed 2px, square | none | `#AE562C` bold | VCN |
+| `subnet` | `#AE562C` dashed 1px, square | none | `#AE562C` bold | Subnet |
+| `services` | `#9E9892` dashed 2px, square | none | `#312D2A` bold | OCI services panel |
+| `oracle_services_network` | `#A36472` dashed 2px, square | none | `#A36472` bold | Oracle Services Network |
+| `onprem` | `#9E9892` solid, rounded | `#F5F4F2` | `#312D2A` bold | On-premises / hub network |
+| `hub` | *(deprecated alias of `onprem`)* | | | Use `onprem` in new diagrams |
 
 ### DrawioBuilder API
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `add_group(label, x, y, w, h, parent, group_type)` | cell ID | Container rectangle |
-| `add_icon(label, icon_key, x, y, parent, w, h)` | cell ID | OCI SVG icon + text label |
+| `add_group(label, x, y, w, h, parent, group_type, metadata=None, tooltip=None)` | cell ID | Container rectangle |
+| `add_icon(label, icon_key, x, y, parent, w=None, h=None, metadata=None, tooltip=None)` | cell ID | OCI SVG icon + text label; derived aspect-correct sizing when w/h omitted |
 | `add_image(path, x, y, w, h, parent)` | cell ID | PNG/image (logo embedding) |
 | `add_text(label, x, y, w, h, parent, ...)` | cell ID | Text-only label |
-| `add_edge(src, tgt, label, parent, dashed, color, ...)` | cell ID | Edge with ports + waypoints |
+| `add_edge(src, tgt, label, parent, dashed, color, ..., orthogonal=None)` | cell ID | Edge; port-less orthogonal router by default, legacy pinned mode when ports/waypoints are passed |
+| `check_overlaps()` | list of `"OVERLAP: ..."` strings | Sibling-container overlap check; call before `write()` |
 | `write(path)` | None | Write .drawio XML to disk |
 
 ### Helper Functions
@@ -222,18 +257,22 @@ d.add_edge(drg, lb, "", parent=region,
 | Function | Description |
 |----------|-------------|
 | `add_icons_to_map({"key": "category/file.svg"})` | Add icons to global ICON_MAP |
+| `find_container_overlaps(root)` | Module-level function `check_overlaps()` delegates to; takes an `mxGraphModel` `<root>` Element, returns the same overlap-message list |
 
 ## Key References
 
 - **Full style details:** `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/oracle-styles.md`
 - **All available icons:** `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/icon-catalog.md` (~160 icons across 14 categories)
-- **Common pitfalls:** `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/gotchas.md` (10 workarounds)
+- **Common pitfalls:** `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/gotchas.md` (12 issues)
 - **OCI SVG icons:** Bundled at `${CLAUDE_PLUGIN_ROOT}/icons/` (override with `OCI_SVG_DIR` env var)
+- **Working example:** `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (exercises every container type, icon sizing mode, edge mode, metadata, and the overlap checker)
+- **Overlap checker CLI:** `${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py`
 
 ## Common Mistakes
 
-1. **Using base64 encoding** - draw.io ignores base64 SVGs/PNGs. Use URL-encoding only.
+1. **Using a raw base64 data URI** - `image=data:image/png;base64,iVBOR...` gets truncated at the `;base64,` marker because draw.io/mxGraph splits cell styles on `;`. Always URL-encode instead: `image=data:image/svg+xml,{urllib.parse.quote(svg, safe='')}`.
 2. **Missing `container=1`** - Children render at root level if parent lacks `container=1`. All `_GROUP_STYLES` include it, but custom styles must too.
 3. **Wrong edge parent** - Cross-container edges must use a common ancestor as parent. Icons in different containers cannot share an edge parented to either container.
 4. **Forgetting viewBox fix** - OCI SVGs clip without the transform-based viewBox expansion. Use `_load_svg()` which handles this automatically.
 5. **Hardcoded cell IDs** - Always use `_next_id()`. Duplicate IDs cause silent rendering failures.
+6. **Don't stretch icons** - default derived sizing preserves aspect; pass explicit `w`/`h` only for wide logical/physical connector shapes.
