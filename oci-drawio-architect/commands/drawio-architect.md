@@ -119,9 +119,10 @@ Region ({region_label} - {region})     <-- from settings
 
 **Mandatory overlap prevention:**
 1. Compute bounding boxes for every sibling container
-2. Derive each row's y-position from the tallest sibling above + gap
+2. Derive each row's y-position from the tallest sibling above + gap (`row_start_y = max(bottom_of_all_containers_above) + gap`) - never hardcode row positions
 3. Use named variables (ROW1_Y, ROW2_Y, GW_Y), never magic numbers
 4. Account for icon label overflow: each icon uses ICON_H(95) + LABEL_GAP(2) + label_h(45) = 142px vertical
+5. Don't hand-roll an overlap check - the generated script MUST call the shipped `d.check_overlaps()` before `d.write()` (see Step 5), and Step 6 REQUIRES running the standalone `check_overlaps.py` CLI gate afterward
 
 **Grid constants** (adjust per diagram):
 ```python
@@ -129,8 +130,8 @@ R1 = 50        # first icon row y (below container title)
 R2 = 210       # second icon row y
 COL = 130      # column gap between icons
 SN_H = 380     # subnet height for 2 rows of icons
-ICON_W = 75    # icon cell width
-ICON_H = 95    # icon cell height
+ICON_W = 75    # nominal slot width (actual cell width derived from the SVG's aspect)
+ICON_H = 95    # fixed icon cell height
 GAP = 20       # gap between containers
 ```
 
@@ -158,23 +159,32 @@ Create a `generate_<name>_drawio.py` script that:
    - Adds logo via `d.add_image()` using `logo_light` path from settings (if set)
    - Builds the container hierarchy (Region > VCN > Subnets)
    - Places service icons inside their containers
-   - Routes edges with explicit waypoints for cross-container connections
+   - Routes edges (see edge rules below)
+   - Calls `problems = d.check_overlaps()` before `d.write()` and aborts with `raise SystemExit(1)` (printing each problem) if the list is non-empty
    - Writes the `.drawio` file
+
+**Edge rules (default to the orthogonal router, no ports):**
+- Default: `d.add_edge(source, target, label, parent=...)` with no `exit_x`/`exit_y`/`entry_x`/`entry_y`/`waypoints` - draw.io's orthogonal router picks the path
+- **Cross-container edges:** still set `parent` to the common ancestor of the two endpoints, even in this default port-less mode
+- **Explicit ports/waypoints (legacy pinned mode):** only pass `exit_x`/`exit_y`/`entry_x`/`entry_y` or `waypoints` when tight control is needed (e.g., routing around obstacles or docking at a specific side) - this disables the router
+- Solid edges = data flow, dashed (`dashed=True`) = user interaction - don't invert this convention
 
 **Follow these rules from the skill:**
 - URL-encode SVGs, never base64
 - Use `container=1` on all group styles (handled by DrawioBuilder)
-- Cross-container edges must use a common ancestor as parent
 - Use `_next_id()` for all cell IDs (handled by DrawioBuilder)
 - Derive row positions from computed bottoms, never hardcode
+- Where Terraform/OCID context is available, the script SHOULD attach it via `add_group()`/`add_icon()`'s `metadata=`/`tooltip=` parameters (e.g., `metadata={"ocid": "..."}`, `tooltip="Primary OLTP database"`) so it survives round-trips through draw.io
+- The script MUST call `problems = d.check_overlaps()` before `d.write()` and abort (`raise SystemExit(1)`, printing each problem) if `problems` is non-empty
 
 **Reference files for style details:**
 - Oracle styles: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/oracle-styles.md`
 - Icon catalog: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/icon-catalog.md`
 - Gotchas: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/gotchas.md`
 - Full skill guide: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/SKILL.md`
+- Working example: `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (exercises every container type, icon sizing mode, edge mode, metadata, and the overlap checker)
 
-### Step 6: Run the Script
+### Step 6: Run the Script and Verify
 
 Execute the generated script:
 
@@ -185,13 +195,25 @@ python3 generate_<name>_drawio.py
 Verify:
 - Script runs without errors
 - Output `.drawio` file exists and has reasonable size (typically 10-100KB)
-- Report the output path and file size to the user
+
+**Mandatory overlap check gate.** After the script runs, REQUIRE the standalone checker CLI on the output file:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" <output>.drawio
+```
+
+- **Exit 0:** clean - proceed to Step 7.
+- **Exit 1:** overlaps found - fix the layout math (derive each row's Y from `max(bottoms) + GAP`, per Step 3's overlap-prevention rule), regenerate, and re-run the checker. Do NOT report success to the user while this fails.
+- **Exit 2:** the file/setup is broken (missing/unreadable file, unparsable XML, unsupported compressed content, or a missing sibling `drawio_builder.py`) - diagnose before continuing.
+
+Report the output path and file size to the user only after the checker exits 0.
 
 ### Step 7: Report Results
 
 Tell the user:
 - Output file path
 - File size
+- Overlap check passed (Step 6's `check_overlaps.py` gate exited 0)
 - What's in the diagram (VCNs, subnets, services, connections)
 - Settings used (tenancy, region, logo)
 - Suggest opening in draw.io desktop to verify rendering
@@ -235,7 +257,7 @@ To re-detect settings, delete `.claude/oci-drawio-architect.local.md` and run `/
 
 ## Prerequisites
 
-- Python 3.8+
+- Python 3.9+
 - `Pillow` package (for PNG logo embedding): `pip install Pillow`
 - OCI SVG icons are bundled in `${CLAUDE_PLUGIN_ROOT}/icons/` (no external dependency needed; override with `OCI_SVG_DIR` env var)
 - draw.io desktop for viewing generated diagrams
