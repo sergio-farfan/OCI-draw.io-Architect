@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**oci-drawio-architect** is a Claude Code plugin (v1.0.0) that generates production-quality `.drawio` architecture diagrams for Oracle Cloud Infrastructure (OCI) from Terraform configs or free-form descriptions. The plugin is distributed as a self-contained archive (`oci-drawio-architect-v1.0.0.tar.gz`, 424KB).
+**oci-drawio-architect** is a Claude Code plugin (v1.1.0) that generates production-quality `.drawio` architecture diagrams for Oracle Cloud Infrastructure (OCI) from Terraform configs or free-form descriptions. The plugin is distributed as a self-contained archive (`oci-drawio-architect-v1.1.0.tar.gz`).
 
 **Author:** Sergio Farfan
 
@@ -15,13 +15,13 @@ This directory is the **distribution root**. The plugin source lives inside the 
 ```
 OCI-Diagrams/
 ├── README.md                          # Installation & usage guide
-└── oci-drawio-architect-v1.0.0.tar.gz # Self-contained plugin archive
+└── oci-drawio-architect-v1.1.0.tar.gz # Self-contained plugin archive
 ```
 
 To inspect or modify the plugin, extract the archive:
 
 ```bash
-tar -xzf oci-drawio-architect-v1.0.0.tar.gz
+tar -xzf oci-drawio-architect-v1.1.0.tar.gz
 ```
 
 Plugin source layout inside the archive:
@@ -59,7 +59,7 @@ Version is auto-read from `.claude-plugin/plugin.json`.
 ### Install the plugin
 
 ```bash
-tar -xzf oci-drawio-architect-v1.0.0.tar.gz
+tar -xzf oci-drawio-architect-v1.1.0.tar.gz
 ./oci-drawio-architect/install.sh
 # Then inside a Claude Code session:
 # /plugin marketplace add ~/.claude/plugins/marketplaces/local
@@ -85,17 +85,18 @@ Key design decisions:
 - **URL-encoding**: SVG data URIs must use `urllib.parse.quote()`, NOT base64. draw.io silently ignores base64-encoded images.
 - **viewBox fix**: OCI SVGs have `translate+scale` transforms that push content outside the declared viewBox. `drawio_builder.py` automatically expands the viewBox to fit actual content bounds.
 - **Container hierarchy**: `add_group()` returns a cell ID used as the `parent` for child elements. Edge `parent` must be the **common ancestor** of source and target, or edges won't render correctly.
-- **Overlap prevention**: Container positions must be computed from actual bounding boxes — hardcoding row Y positions leads to overlapping containers when content height varies. Use named variables (`ROW1_Y`, `ROW2_Y`) derived from computed bottoms.
+- **Overlap prevention**: Container positions must be computed from actual bounding boxes — hardcoding row Y positions leads to overlapping containers when content height varies. Use named variables (`ROW1_Y`, `ROW2_Y`) derived from computed bottoms. Verify with the shipped checker (`DrawioBuilder.check_overlaps()` or `scripts/check_overlaps.py`) — a mandatory gate in the `/drawio-architect` workflow.
 
 API summary:
 
 | Method | Purpose |
 |--------|---------|
-| `add_group(label, x, y, w, h, group_type)` | Container rectangle (region/compartment/vcn/subnet/services/hub) |
-| `add_icon(label, icon_key, x, y, parent)` | OCI SVG icon + label (icon 75×95, label 105×45) |
+| `add_group(label, x, y, w, h, group_type)` | Container rectangle (region/tenancy/availability_domain/fault_domain/compartment/vcn/subnet/services/oracle_services_network/onprem; `hub` is a deprecated alias of `onprem`) |
+| `add_icon(label, icon_key, x, y, parent)` | OCI SVG icon + label; cell width derived from the icon's native aspect ratio (fixed 95px height) |
 | `add_image(image_path, x, y, w, h)` | PNG logo embedded via SVG wrapper |
 | `add_text(label, x, y, w, h)` | Text-only label |
-| `add_edge(source, target, label, parent, exit_x, exit_y, entry_x, entry_y, waypoints)` | Connection with explicit ports |
+| `add_edge(source, target, label, parent, ...)` | Connection; defaults to draw.io's orthogonal router with no fixed ports — passing `exit_x`/`exit_y`/`entry_x`/`entry_y` or `waypoints` switches to legacy pinned mode |
+| `check_overlaps()` | Returns overlap warnings for sibling containers; call before `write()` |
 | `add_icons_to_map(dict)` | Extend ICON_MAP with custom icon keys |
 | `write(path)` | Output `.drawio` XML file |
 
@@ -107,7 +108,7 @@ Auto-detects project settings in priority order:
 1. Terraform files (`provider.tf`, `*.tfvars`, `variables.tf`)
 2. OCI CLI (`oci iam tenancy get`, region subscriptions)
 3. `~/.oci/config`
-4. File system scan for logos
+4. File system scan for logos (project-level locations first, then an optional plugin-local `logos/` directory as fallback)
 
 Detected settings are saved to `.claude/oci-drawio-architect.local.md` (per-project, gitignored). Delete that file to re-trigger auto-detection.
 
@@ -119,23 +120,27 @@ Detected settings are saved to `.claude/oci-drawio-architect.local.md` (per-proj
 3. Plan container layout with grid constants
 4. Copy `drawio_builder.py` to working directory
 5. Generate `generate_<name>_drawio.py`
-6. Execute the script to produce `.drawio`
+6. Execute the script, then gate on the overlap checker (`scripts/check_overlaps.py` / `check_overlaps()`) before proceeding
 7. Report file path, size, and viewing instructions
 
 ## OCI Color Palette
 
 | Token | Hex | Use |
 |-------|-----|-----|
-| `region_fill` | `#F5F4F2` | Region/compartment/hub background |
-| `region_stroke` | `#9E9892` | Region/compartment borders |
+| `region_fill` | `#F5F4F2` | Region/onprem background |
+| `region_stroke` | `#9E9892` | Region/tenancy/availability_domain/fault_domain/compartment borders |
+| `neutral_2` | `#DFDCD8` | Availability Domain fill |
+| `air` | `#FCFBFA` | Fault Domain fill |
 | `vcn_stroke` / `vcn_label` | `#AE562C` | VCN/subnet borders and labels (Oracle orange) |
+| `rose` | `#A36472` | Oracle Services Network border/label |
 | `text_primary` | `#312D2A` | General text, service borders (charcoal) |
+| `edge_color` | `#312D2A` | Default connector color (Bark) |
 | `edge_accent` | `#AE562C` | Highlighted edges |
 | `edge_purple` | `#7B61FF` | Special connection type |
 
 ## Dependencies
 
-- Python 3.8+ (for running generated diagram scripts)
+- Python 3.9+ (for running generated diagram scripts)
 - Pillow (`pip install Pillow`) — required for `add_image()` (PNG logos)
 - draw.io desktop — for viewing generated `.drawio` files
 - OCI CLI (optional) — for tenancy name auto-detection

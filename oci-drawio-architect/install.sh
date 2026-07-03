@@ -101,7 +101,12 @@ if command -v python3 &>/dev/null; then
     PY_VER=$(python3 --version 2>&1)
     info "Python: $PY_VER"
 else
-    fail "Python 3 not found. Install Python 3.8+ first."
+    fail "Python 3 not found. Install Python 3.9+ first."
+fi
+
+# Check Python version (warn, don't abort - some checks may still work on older Python)
+if ! python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' 2>/dev/null; then
+    warn "drawio_builder requires Python 3.9+. Detected: $PY_VER"
 fi
 
 # Check Pillow

@@ -2,10 +2,21 @@
 
 Generate production-quality draw.io diagrams for Oracle Cloud Infrastructure architectures using Python, embedded SVG icons, and Oracle template styles.
 
+## What's new in 1.1.0
+
+- Aspect-correct icons: `imageAspect=1` with per-icon derived cell width (fixed 95px height) — pre-1.1.0 stretched every icon ~15-20%
+- Official Oracle v24.2 container styles; 5 new container types (`tenancy`, `availability_domain`, `fault_domain`, `oracle_services_network`, `onprem`); `hub` is now a deprecated alias of `onprem`
+- Edges default to draw.io's orthogonal router; explicit ports/waypoints are still supported (legacy pinned mode)
+- Shipped overlap checker: `scripts/check_overlaps.py` CLI + `DrawioBuilder.check_overlaps()` — mandatory gate in the `/drawio-architect` workflow
+- Optional `metadata=`/`tooltip=` on icons and containers (`<object>` wrappers; visible in draw.io tooltips/Edit Data)
+- Friendlier errors (unknown icon keys get close-match suggestions); `.drawio` files are written with `compressed="false"`
+- `detect_settings`: bounded tenancy-OCID regex (no more cross-variable false matches), deterministic Terraform-dir discovery, robust OCI CLI JSON handling, optional plugin-local `logos/` fallback
+- New `examples/generate_demo_diagram.py` demo / post-install smoke test
+
 ## Installation
 
 ```bash
-tar -xzf oci-drawio-architect-v1.0.0.tar.gz
+tar -xzf oci-drawio-architect-v1.1.0.tar.gz
 ./oci-drawio-architect/install.sh
 ```
 
@@ -48,6 +59,8 @@ On first run, `/drawio-architect` auto-detects settings from your Terraform conf
 | `tenancy_ocid` | `*.tfvars` | - | `~/.oci/config` |
 | `logo_light/dark` | File scan | - | - |
 
+Logo file scan checks project-level locations first (`Network/Documents/logos`, `logos/`, `assets/logos`, `images/`), then falls back to an optional plugin-local `logos/` directory (`oci-drawio-architect/logos/`) — drop your own PNGs there if you want a default logo without adding one to every project.
+
 ### Settings File Format
 
 `.claude/oci-drawio-architect.local.md`:
@@ -88,7 +101,7 @@ You can edit any field in the settings file. Common manual settings:
 
 ## Prerequisites
 
-- **Python 3.8+**
+- **Python 3.9+**
 - **Pillow**: `pip install Pillow` (for PNG logo embedding)
 - **draw.io desktop**: For viewing generated diagrams
 - (Optional) **OCI CLI**: For auto-detecting tenancy name
@@ -112,7 +125,10 @@ oci-drawio-architect/
 │           └── gotchas.md       # 11 battle-tested workarounds
 ├── scripts/
 │   ├── drawio_builder.py        # DrawioBuilder Python class
-│   └── detect_settings.py       # Auto-detection from Terraform/OCI CLI
+│   ├── detect_settings.py       # Auto-detection from Terraform/OCI CLI
+│   └── check_overlaps.py        # Overlap-checker CLI (mandatory workflow gate)
+├── examples/
+│   └── generate_demo_diagram.py # Demo / post-install smoke test
 ├── icons/                        # Bundled OCI SVG icons (220 files, 14 categories)
 ├── install.sh                    # Installer script
 ├── pack.sh                       # Packaging script

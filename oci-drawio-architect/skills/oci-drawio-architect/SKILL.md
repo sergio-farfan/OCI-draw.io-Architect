@@ -104,7 +104,7 @@ ROW2_Y = max(ROW1_BOTTOM, CPLB_BOTTOM) + GAP
      ```bash
      python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" <output>.drawio
      ```
-     Exit code `1` means overlaps were found - fix the layout math (see the row-derivation rule above) and regenerate. Exit `0` is clean.
+     Exit `0` is clean. Exit code `1` means overlaps were found - fix the layout math (see the row-derivation rule above) and regenerate. Exit code `2` means a usage/parse/compressed/import error (missing or unreadable file, unparsable XML, unsupported compressed diagram content, or a missing sibling `drawio_builder.py`) - diagnose the setup rather than the layout.
 
 **Common overlap traps:**
 - Containers of **different heights** in the same visual row - the tallest one's bottom sets the next row's y
@@ -187,6 +187,7 @@ if __name__ == "__main__":
 - **Cross-container:** Still set `parent` to the common ancestor of the two endpoints, even in the default (no-ports) mode.
 - **Tight control:** Passing any of `exit_x`/`exit_y`/`entry_x`/`entry_y` or `waypoints` switches that edge to legacy pinned mode (fixed side/point, router disabled - the v1.0.0 behavior). Use this when you need to route around obstacles or dock at a specific side.
 - **Router + docked endpoints:** Pass `orthogonal=True` together with full exit/entry pins to keep the orthogonal router active while still pinning the connection sides.
+- **Force legacy mode without ports:** Pass `orthogonal=False` to use legacy pinned mode even when no ports/waypoints are given (falls back to the default port positions: exit bottom-center, entry top-center).
 - **Parallel routes (legacy mode only):** Offset by ~8px to prevent overlap.
 
 ```python
@@ -248,7 +249,7 @@ d.add_edge(drg, lb, "", parent=region,
 | `add_icon(label, icon_key, x, y, parent, w=None, h=None, metadata=None, tooltip=None)` | cell ID | OCI SVG icon + text label; derived aspect-correct sizing when w/h omitted |
 | `add_image(path, x, y, w, h, parent)` | cell ID | PNG/image (logo embedding) |
 | `add_text(label, x, y, w, h, parent, ...)` | cell ID | Text-only label |
-| `add_edge(src, tgt, label, parent, dashed, color, ..., orthogonal=None)` | cell ID | Edge; port-less orthogonal router by default, legacy pinned mode when ports/waypoints are passed |
+| `add_edge(src, tgt, label, parent, dashed, color, ..., orthogonal=None)` | cell ID | Edge; port-less orthogonal router by default, legacy pinned mode when ports/waypoints are passed, or forced either way via `orthogonal=True`/`orthogonal=False` |
 | `check_overlaps()` | list of `"OVERLAP: ..."` strings | Sibling-container overlap check; call before `write()` |
 | `write(path)` | None | Write .drawio XML to disk |
 

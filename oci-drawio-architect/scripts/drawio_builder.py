@@ -557,7 +557,9 @@ class DrawioBuilder:
         return cid
 
     def add_image(self, image_path, x, y, w, h, parent="1"):
-        """Add a PNG/image as a URL-encoded SVG wrapper (draw.io ignores base64)."""
+        """Add a PNG/image as a URL-encoded SVG wrapper (a raw ';base64,' marker
+        would break draw.io's semicolon-delimited style parsing - URL-encoding
+        avoids it)."""
         import urllib.parse
         from PIL import Image
         import io
@@ -574,7 +576,8 @@ class DrawioBuilder:
         img.save(buf, format="PNG", optimize=True)
         img_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-        # Wrap PNG in an SVG so we can URL-encode it (draw.io renders URL-encoded SVGs)
+        # Wrap PNG in an SVG so we can URL-encode it (a raw ';base64,' marker would
+        # break draw.io's semicolon-delimited style parsing - URL-encoding avoids it)
         svg_wrapper = (
             f'<svg xmlns="http://www.w3.org/2000/svg" '
             f'xmlns:xlink="http://www.w3.org/1999/xlink" '

@@ -52,12 +52,12 @@ cat <<'INSTRUCTIONS'
 
 Prerequisites:
   - Claude Code (CLI) installed
-  - Python 3.8+
+  - Python 3.9+
   - draw.io desktop (for viewing diagrams)
 
 Step 1 — Extract the archive:
 
-    tar -xzf oci-drawio-architect-v1.0.0.tar.gz
+    tar -xzf oci-drawio-architect-v1.1.0.tar.gz
 
 Step 2 — Run the installer:
 

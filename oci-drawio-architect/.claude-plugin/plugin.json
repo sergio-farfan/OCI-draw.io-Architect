@@ -1,6 +1,6 @@
 {
   "name": "oci-drawio-architect",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Generate production-quality draw.io diagrams for OCI architectures using Python, embedded SVG icons, and Oracle template styles",
   "author": {
     "name": "Sergio Farfan"
