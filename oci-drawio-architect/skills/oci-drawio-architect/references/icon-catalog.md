@@ -91,7 +91,7 @@ Add more with `add_icons_to_map({"key": "category/filename.svg"})`.
 | `instance_pools` | `compute/compute_instance_pools.svg` | Instance Pools |
 | `vm` | `compute/compute_virtual_machine_vm.svg` | VM |
 
-### Database (18 icons)
+### Database (24 icons)
 | Suggested Key | SVG Path | Description |
 |---------------|----------|-------------|
 | `adb_d` | `database/database_adb_d.svg` | ADB Dedicated |
@@ -105,13 +105,19 @@ Add more with `add_icons_to_map({"key": "category/filename.svg"})`.
 | `exadata` | `database/database_exadata.svg` | Exadata |
 | `exadata_cc` | `database/database_exadata_c_c.svg` | Exadata Cloud@Customer |
 | `goldengate` | `database/database_goldengate.svg` | GoldenGate |
-| `gg_adapter` | `database/database_goldengate_application_adapter.svg` | GoldenGate Adapter |
+| `gg_adapter` | `database/database_goldengate_application_adapter.svg` | GoldenGate Application Adapter |
 | `gg_director` | `database/database_goldengate_director.svg` | GoldenGate Director |
+| `gg_hp_nonstop` | `database/database_goldengate_hp_non_stop_guardian.svg` | GoldenGate for HP NonStop Guardian |
+| `gg_monitor` | `database/database_goldengate_monitor.svg` | GoldenGate Monitor |
+| `gg_on_premises` | `database/database_goldengate_on_premises.svg` | GoldenGate On-Premises |
+| `gg_plugin` | `database/database_goldengate_plug_in.svg` | GoldenGate Plug-In |
+| `gg_stream_analytics` | `database/database_goldengate_stream_analytics.svg` | GoldenGate Stream Analytics |
+| `gg_studio` | `database/database_goldengate_studio.svg` | GoldenGate Studio |
+| `gg_veridata` | `database/database_goldengate_veridata.svg` | GoldenGate Veridata |
 | `mysql` | `database/database_mysql.svg` | MySQL |
 | `nosql` | `database/database_nosql.svg` | NoSQL |
 | `opensearch` | `database/database_opensearch.svg` | OpenSearch |
 | `rac` | `database/database_rac.svg` | RAC |
-| *(+ 5 more GoldenGate variants)* | | |
 
 ### Developer Services (15 icons)
 | Suggested Key | SVG Path | Description |
