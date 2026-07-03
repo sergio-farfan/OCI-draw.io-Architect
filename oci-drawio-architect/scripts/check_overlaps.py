@@ -12,8 +12,9 @@ Usage:
 Exit codes:
     0 - no overlaps found
     1 - one or more overlapping container pairs found
-    2 - usage error, missing/unreadable file, unparsable XML, or
-        unsupported (compressed) diagram content
+    2 - usage error, missing/unreadable file, unparsable XML,
+        unsupported (compressed) diagram content, or a missing sibling
+        drawio_builder.py (ImportError)
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from drawio_builder import find_container_overlaps
+    from drawio_builder import build_cell_registry, find_container_overlaps, _fmt_num
 except ImportError:
     print(
         "check_overlaps.py must live next to drawio_builder.py (plugin scripts "
@@ -34,61 +35,14 @@ except ImportError:
     sys.exit(2)
 
 
-def _fmt_num(value: float) -> str:
-    """Render a float as a plain int string when it's a whole number."""
-    return str(int(value)) if float(value).is_integer() else str(value)
-
-
-def _build_cell_registry(root) -> dict:
-    """Map cell id -> {value, style, parent, vertex, x, y, w, h}.
-
-    Mirrors the registry drawio_builder.find_container_overlaps() builds
-    internally, so the WARNING pass below can reuse the same shape.
-    """
-    registry = {}
-    for el in root:
-        cid = el.get("id")
-        if cid is None:
-            continue
-        if el.tag == "mxCell":
-            value = el.get("value", "")
-            style = el.get("style", "")
-            parent = el.get("parent")
-            vertex = el.get("vertex")
-            geom = el.find("mxGeometry")
-        elif el.tag == "object":
-            value = el.get("label", "")
-            inner = el.find("mxCell")
-            if inner is None:
-                continue
-            style = inner.get("style", "")
-            parent = inner.get("parent")
-            vertex = inner.get("vertex")
-            geom = inner.find("mxGeometry")
-        else:
-            continue
-        if geom is not None:
-            x = float(geom.get("x", 0) or 0)
-            y = float(geom.get("y", 0) or 0)
-            w = float(geom.get("width", 0) or 0)
-            h = float(geom.get("height", 0) or 0)
-        else:
-            x = y = w = h = 0.0
-        registry[cid] = {
-            "value": value, "style": style, "parent": parent,
-            "vertex": vertex, "x": x, "y": y, "w": w, "h": h,
-        }
-    return registry
-
-
-def _registered_containers(registry: dict) -> set:
+def _registered_containers(registry: dict[str, dict]) -> set[str]:
     return {
         cid for cid, e in registry.items()
         if e["vertex"] == "1" and "container=1" in e["style"]
     }
 
 
-def _find_nested_container_warnings(root) -> list:
+def _find_nested_container_warnings(root) -> list[str]:
     """Vertices with container=1 that spill outside their parent container.
 
     A vertex's geometry is already expressed relative to its immediate
@@ -100,7 +54,7 @@ def _find_nested_container_warnings(root) -> list:
     container (top-level containers whose parent is the default layer are
     skipped).
     """
-    registry = _build_cell_registry(root)
+    registry = build_cell_registry(root)
     containers = _registered_containers(registry)
     warnings = []
     for cid in containers:
@@ -124,7 +78,7 @@ def _find_nested_container_warnings(root) -> list:
 
 
 def _count_containers(root) -> int:
-    return len(_registered_containers(_build_cell_registry(root)))
+    return len(_registered_containers(build_cell_registry(root)))
 
 
 def main() -> int:
