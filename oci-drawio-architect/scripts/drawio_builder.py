@@ -430,7 +430,7 @@ class DrawioBuilder:
         return str(self._cell_id)
 
     _RESERVED_METADATA_KEYS = {"id", "label", "placeholders", "tooltip"}
-    _METADATA_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+    _METADATA_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 
     def _emit_vertex(self, value, style, parent, x, y, w, h,
                       metadata=None, tooltip=None) -> str:
@@ -442,10 +442,10 @@ class DrawioBuilder:
         if metadata or tooltip is not None:
             obj_attrs = {"id": cid, "label": value, "placeholders": "1"}
             if tooltip is not None:
-                obj_attrs["tooltip"] = tooltip
+                obj_attrs["tooltip"] = str(tooltip)
             if metadata:
                 for key, val in metadata.items():
-                    if not self._METADATA_KEY_RE.match(key) or key in self._RESERVED_METADATA_KEYS:
+                    if not self._METADATA_KEY_RE.fullmatch(key) or key in self._RESERVED_METADATA_KEYS:
                         raise ValueError(
                             f"Invalid metadata key {key!r}: must match "
                             f"^[A-Za-z_][A-Za-z0-9_-]*$ and not be one of "
@@ -497,6 +497,9 @@ class DrawioBuilder:
                 f"with add_icons_to_map()."
             )
         data_uri, nw, nh = _load_svg(icon_key)
+        # Malformed SVG dimensions fall back to nominal cell size
+        if nw <= 0 or nh <= 0:
+            nw, nh = float(ICON_W), float(ICON_H)
 
         if w is None and h is None:
             cell_h = ICON_H
@@ -659,6 +662,12 @@ class DrawioBuilder:
                 f"entryX={entry_x};entryY={entry_y};entryDx=0;entryDy=0;"
             )
         else:
+            # Validate modern-mode pins: both coordinates must be provided or neither
+            if (exit_x is not None) != (exit_y is not None):
+                raise ValueError("exit_x and exit_y must be passed together")
+            if (entry_x is not None) != (entry_y is not None):
+                raise ValueError("entry_x and entry_y must be passed together")
+
             style = (
                 f"edgeStyle=orthogonalEdgeStyle;rounded=1;jettySize=auto;orthogonalLoop=1;"
                 f"html=1;strokeColor={ec};strokeWidth=1.5;{arrow}"
