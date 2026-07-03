@@ -2,8 +2,8 @@
 
 **A Claude Code plugin that generates production-quality draw.io architecture diagrams for Oracle Cloud Infrastructure (OCI) — from Terraform configurations or free-form descriptions.**
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/tag/v1.0.0)
-[![Python](https://img.shields.io/badge/python-3.8%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/tag/v1.1.0)
+[![Python](https://img.shields.io/badge/python-3.9%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-orange.svg?logo=anthropic)](https://claude.ai/code)
@@ -11,7 +11,7 @@
 ---
 
 **Author:** Sergio Farfan · sergio.farfan@gmail.com
-**Version:** 1.0.0 · [Download archive (424KB)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.0.0/oci-drawio-architect-v1.0.0.tar.gz)
+**Version:** 1.1.0 · [Download archive](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.1.0/oci-drawio-architect-v1.1.0.tar.gz)
 
 ---
 
@@ -47,7 +47,7 @@ Type `/drawio-architect` in any Claude Code session and the plugin generates a p
 
 ## How It Works
 
-The plugin accepts three input types: a Terraform directory path — parsed to extract VCNs, subnets, gateways, and DRG attachments — a VCN name resolved against existing `.tfvars` files, or a plain-text description of the target architecture. From any of these inputs, it computes a pixel-precise grid layout, calculating container bounding boxes to eliminate element overlap, and generates a Python script leveraging a custom `DrawioBuilder` class backed by 220 bundled OCI SVG icons. Executing the script produces a `.drawio` file fully styled with Oracle's official color palette. The entire workflow runs inside Claude Code via a single `/drawio-architect` command.
+The plugin accepts three input types: a Terraform directory path — parsed to extract VCNs, subnets, gateways, and DRG attachments — a VCN name resolved against existing `.tfvars` files, or a plain-text description of the target architecture. From any of these inputs, it computes a pixel-precise grid layout, calculating container bounding boxes to eliminate element overlap, and generates a Python script leveraging a custom `DrawioBuilder` class backed by 220 bundled OCI SVG icons. Executing the script produces a `.drawio` file fully styled with Oracle's official color palette, wired with draw.io's orthogonal edge router by default, and validated against a shipped overlap checker before it's reported as done. The entire workflow runs inside Claude Code via a single `/drawio-architect` command.
 
 ### 7-step workflow
 
@@ -56,7 +56,7 @@ The plugin accepts three input types: a Terraform directory path — parsed to e
 3. **Reads Terraform configs** to extract VCNs, subnets, services, DRG topology
 4. **Plans the layout** with container hierarchy and grid calculations
 5. **Generates a Python script** using the bundled `DrawioBuilder` class
-6. **Runs the script** to produce the `.drawio` file
+6. **Runs the script and validates it** — produces the `.drawio` file, then gates on the shipped overlap checker (`scripts/check_overlaps.py`)
 7. **Reports results** with file path, size, and viewing instructions
 
 ### Diagram types
@@ -73,7 +73,7 @@ The plugin accepts three input types: a Terraform directory path — parsed to e
 ## Prerequisites
 
 - **Claude Code** (CLI) installed and working
-- **Python 3.8+**
+- **Python 3.9+**
 - **draw.io desktop** for viewing generated `.drawio` files
 
 The plugin bundles 220 OCI SVG icons and auto-installs Pillow (Python imaging library) if missing.
@@ -85,7 +85,7 @@ The plugin bundles 220 OCI SVG icons and auto-installs Pillow (Python imaging li
 ### One-line install
 
 ```bash
-curl -fsSL https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.0.0/oci-drawio-architect-v1.0.0.tar.gz | tar -xz && ./oci-drawio-architect/install.sh
+curl -fsSL https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.1.0/oci-drawio-architect-v1.1.0.tar.gz | tar -xz && ./oci-drawio-architect/install.sh
 ```
 
 This will:
