@@ -122,7 +122,7 @@ oci-drawio-architect/
 │       └── references/
 │           ├── oracle-styles.md # Oracle template color/style reference
 │           ├── icon-catalog.md  # ~160 OCI SVG icons across 14 categories
-│           └── gotchas.md       # 11 battle-tested workarounds
+│           └── gotchas.md       # 12 battle-tested workarounds
 ├── scripts/
 │   ├── drawio_builder.py        # DrawioBuilder Python class
 │   ├── detect_settings.py       # Auto-detection from Terraform/OCI CLI

@@ -266,7 +266,7 @@ d.add_edge(drg, lb, "", parent=region,
 - **All available icons:** `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/icon-catalog.md` (~160 icons across 14 categories)
 - **Common pitfalls:** `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/gotchas.md` (12 issues)
 - **OCI SVG icons:** Bundled at `${CLAUDE_PLUGIN_ROOT}/icons/` (override with `OCI_SVG_DIR` env var)
-- **Working example:** `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (exercises every container type, icon sizing mode, edge mode, metadata, and the overlap checker)
+- **Working example:** `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (exercises every container type, the main icon-sizing and edge modes, metadata, and the overlap gate)
 - **Overlap checker CLI:** `${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py`
 
 ## Common Mistakes

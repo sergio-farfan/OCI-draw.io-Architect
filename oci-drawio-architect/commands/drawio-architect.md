@@ -182,7 +182,7 @@ Create a `generate_<name>_drawio.py` script that:
 - Icon catalog: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/icon-catalog.md`
 - Gotchas: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/gotchas.md`
 - Full skill guide: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/SKILL.md`
-- Working example: `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (exercises every container type, icon sizing mode, edge mode, metadata, and the overlap checker)
+- Working example: `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (exercises every container type, the main icon-sizing and edge modes, metadata, and the overlap gate)
 
 ### Step 6: Run the Script and Verify
 
