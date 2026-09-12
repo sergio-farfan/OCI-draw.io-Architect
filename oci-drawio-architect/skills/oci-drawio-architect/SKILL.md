@@ -1,279 +1,225 @@
 ---
 name: oci-drawio-architect
-description: Use when generating draw.io diagrams for OCI architectures, creating OCI architecture diagrams programmatically, or when the user says "draw.io OCI", "diagram this architecture", or "drawio with OCI icons"
+description: Generate deterministic draw.io diagrams of Oracle Cloud Infrastructure architectures (Redwood container styles, embedded OCI icons, auto-routed edges) from Terraform or a description. Use when the user says "draw.io OCI", "diagram this architecture", "drawio with OCI icons", "OCI architecture diagram" or "Terraform to draw.io".
 ---
 
-# OCI draw.io Architecture Diagrams
+# OCI draw.io Architect (plugin v1.2.0)
 
-Generate production-quality draw.io diagrams for Oracle Cloud Infrastructure using Python, embedded OCI SVG icons, and Oracle template styles.
+Diagrams are data: a MODEL dict laid out by `scripts/oci_layout.py` on top of `scripts/drawio_builder.py` (DrawioBuilder v1.2.0). The `/drawio-architect` command is the workflow; this skill holds the conventions, the schema and the API. Always `sys.path.insert(0, "<abs>/oci-drawio-architect/scripts")` and import from the plugin - never copy `drawio_builder.py` into a project (the copy loses the icon directory and drifts from the plugin).
 
-## Overview
+## 1. Target look (the reference sample, `examples/generate_reference_layout.py`)
 
-This skill provides a battle-tested `DrawioBuilder` Python class that produces `.drawio` XML files with:
-- Embedded OCI SVG icons (URL-encoded, single-cell, clean rendering)
-- Oracle template container styles (Region, VCN, Subnet, Services, On-Premises)
-- PNG logo embedding via SVG wrapper trick
-- Orthogonal-router edges by default, with explicit ports/waypoints available for tight control
+1. Title (`add_title`): bold `<Subject> - Architecture`, italic second line `<Region label> (<region>) - Compartment: <compartment>`; with a tenancy the first line is `<tenancy> - <Subject> - Architecture`. Optional logo top-right (148x39).
+2. Region: solid Neutral-3 border, Neutral-1 fill, label = bare region id (`us-ashburn-1`) bold, top-left. Only title, notes and legend sit outside it.
+3. Hub / on-premises panel (`onprem`): left of the VCN, 180 px wide, vertically centred on the VCN, label `Hub Network\n<name>\n(<purpose>)`, one icon per row (pitch 200), consecutive items linked by `link_label` (`IPSec VPN`).
+4. VCN: label `VCN: <name> (<cidr>)`, Sienna dashed 2 px. Several VCNs are columns left to right, 45 px apart.
+5. Subnet: label `<name> (<cidr>)` (+ ` - public` when `public`), Sienna dashed 1 px. Row 1 holds lb -> app -> compute -> mgmt -> other subnets in traffic order, 2 icon columns each, wrapping to a new row past 1000 px; data-tier subnets are stretched under the rows (up to 5 columns).
+6. Icon order inside a subnet: primary resource (LB, VM, DB) -> attached resources (block volume, certificate, WAF) -> NSG last.
+7. Caption convention: `Role\nidentifier\nsize` - at most 3 lines of about 16 characters at 11 px, centred under a 75x95 slot; every glyph is fitted to 70x70 so all icons look the same size.
+8. OCI Services panel (`services`): inside the VCN, right of row 1, label `OCI Services`, 2 columns. With several VCNs `model.services` becomes a region-level panel right of the VCN columns.
+9. Gateways: bare icons in the VCN's bottom row (SGW, NAT, IGW, DRG attachment), pitch 180, two-line captions (`Service\nGateway`).
+10. Edges: solid Bark with open arrow = data, label = ports (`443`, `1522`, `3000 / 8000`); dashed Bark without arrowhead = control / management; solid Sienna = analytics; dashed purple = datalake. Routed automatically through gutters; about 0.3-0.6 edges per icon.
+11. No legend by default (`legend=True` only on request or with 3+ edge kinds); `notes` text appears right of the title only when set.
+12. Page = content + 20 px margin rounded up to 10 (`fit_page`), white background, `default` style profile, Oracle Sans font stack.
 
-**Core principle:** Copy `drawio_builder.py` into your script, write a `build_diagram()` function that places containers/icons on a grid, then let the orthogonal router connect them — explicit ports/waypoints only where tight control is needed.
+## 2. Model schema (`oci_layout.py` docstring)
 
-**DrawioBuilder script location:** `${CLAUDE_PLUGIN_ROOT}/scripts/drawio_builder.py`
-
-## When to Use
-
-- Generating a draw.io diagram for any OCI architecture
-- Visualizing VCN topology, subnets, and service placement
-- Creating architecture diagrams from Terraform configurations
-- Producing professional OCI diagrams matching Oracle template style
-
-**When NOT to use:**
-- Non-OCI diagrams (use draw.io manually or other tools)
-- Simple flowcharts or sequence diagrams (use Mermaid or PlantUML)
-
-## 5-Phase Workflow
-
-### Phase 1: Understand the Architecture
-
-Read Terraform configs or documentation to identify:
-- VCNs, subnets, CIDRs
-- Services deployed (compute, databases, LB, functions, etc.)
-- Network topology (DRG, VPN, gateways)
-- Compartment hierarchy
-
-**Input sources:** `VCN.auto.tfvars`, `DRG.auto.tfvars`, `main.tf`, service `.tf` files
-
-### Phase 2: Plan the Layout
-
-Design the container hierarchy and grid before writing code:
-
-```
-Region
-  +-- Hub (left side, narrow)
-  |     +-- Firewall / DRG
-  +-- VCN (right side, wide)
-        +-- Subnet 1 (icons in rows)
-        +-- Subnet 2
-        +-- Services panel
-        +-- Gateways (bottom)
-```
-
-**Grid constants** (adjust per diagram):
-```python
-R1 = 50        # first icon row y (below container title)
-R2 = 210       # second icon row y
-COL = 130      # column gap between icons
-SN_H = 380     # subnet height for 2 rows of icons
-GAP = 30       # gap between sibling containers
-ICON_W = 75    # nominal slot width (actual cell width derived from the SVG's aspect)
-ICON_H = 95    # fixed icon cell height
-```
-
-**Page dimensions:** Calculate from content. Typical: 1600x1100 for single-VCN, 2400x1400 for multi-VCN.
-
-### Phase 2b: Verify No Container Overlaps (MANDATORY)
-
-Before writing any code, compute bounding boxes for every sibling container and verify no overlaps exist. This is the #1 source of visual bugs.
-
-**The Rule:** For each row of containers, `row_start_y = max(bottom_of_all_containers_above) + gap`. Never hardcode row positions - always derive from computed bottoms.
-
-**Step-by-step:**
-
-1. **Compute row bottoms explicitly** in comments at the top of `build_diagram()`:
-```python
-# Row 1:  y=50,  heights: [380, 230, 230] -> bottoms: [430, 280, 280]
-# Row 1.5: y=300, height: 230 -> bottom: 530
-# Row 2 must start at: max(430, 530) + 20(gap) = 550
-ROW2_Y = max(ROW1_BOTTOM, CPLB_BOTTOM) + GAP
-```
-
-2. **Use named variables** for row positions (`ROW1_Y`, `ROW2_Y`, `GW_Y`), not magic numbers. Each variable is derived from the previous row's computed bottom + a gap constant.
-
-3. **Account for icon label overflow**: Each icon occupies `ICON_H(95) + LABEL_GAP(2) + label_h(45) = 142px` vertically. A container with 2 icon rows needs at least `R2(210) + 142 = 352px` height (380 SN_H provides 28px padding).
-
-4. **Use the shipped overlap checker** - don't hand-roll one:
-   - In the generated script, call `d.check_overlaps()` before `d.write()` and abort on any findings:
-     ```python
-     problems = d.check_overlaps()
-     if problems:
-         for p in problems:
-             print(p)
-         raise SystemExit(1)
-     d.write(Path("output.drawio"))
-     ```
-   - After generation, also run the standalone CLI gate:
-     ```bash
-     python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" <output>.drawio
-     ```
-     Exit `0` is clean. Exit code `1` means overlaps were found - fix the layout math (see the row-derivation rule above) and regenerate. Exit code `2` means a usage/parse/compressed/import error (missing or unreadable file, unparsable XML, unsupported compressed diagram content, or a missing sibling `drawio_builder.py`) - diagnose the setup rather than the layout.
-
-**Common overlap traps:**
-- Containers of **different heights** in the same visual row - the tallest one's bottom sets the next row's y
-- **Staggered containers** (e.g., OKE-CP-LB at y=300 below OKE-Worker-LB at y=50) - their bottom may exceed the main row's bottom
-- **Service panels** with 3+ icon rows being taller than adjacent 2-row subnets
-
-### Phase 3: Generate the Script
-
-1. **Copy** `${CLAUDE_PLUGIN_ROOT}/scripts/drawio_builder.py` into your working directory
-2. **Create** a new script (e.g., `generate_my_diagram.py`)
-3. **Import** and build:
+Every key is optional except `subject` and `vcns` (or `hub`). JSON-serialisable.
 
 ```python
-from pathlib import Path
-from drawio_builder import DrawioBuilder, add_icons_to_map, COLORS
-
-# Add any icons not in the default ICON_MAP
-add_icons_to_map({
-    "oke": "developer_services/developer_services_container_engine_for_kubernetes.svg",
-    "bastion": "identity_and_security/identity_and_security_bastion.svg",
-})
-
-def build_diagram():
-    d = DrawioBuilder(page_name="My Architecture", width=1600, height=1100)
-
-    # Title
-    d.add_text(
-        "<b>My Architecture</b><br/><i>Frankfurt (eu-frankfurt-1)</i>",
-        x=20, y=8, w=600, h=55, font_size=18, font_style=1,
-        font_family="Georgia",
-    )
-
-    # Logos (optional)
-    LOGO_DIR = Path("logos")
-    d.add_image(LOGO_DIR / "company_logo_dark.png",
-                x=1450, y=8, w=148, h=39)
-
-    # Region container
-    region = d.add_group("eu-frankfurt-1", x=20, y=75, w=1560, h=1000,
-                         group_type="region")
-
-    # VCN container (inside region)
-    vcn = d.add_group("VCN: MyVCN (10.0.0.0/16)", x=20, y=40, w=1500, h=900,
-                       parent=region, group_type="vcn")
-
-    # Subnet (inside VCN)
-    sn = d.add_group("sn-app (10.0.1.0/24)", x=20, y=50, w=400, h=380,
-                      parent=vcn, group_type="subnet")
-
-    # Icons (inside subnet)
-    lb = d.add_icon("Load Balancer", "load_balancer", x=20, y=50, parent=sn)
-    vm = d.add_icon("App VM", "vm", x=150, y=50, parent=sn)
-
-    # Icon with metadata + tooltip (survives round-trips through draw.io)
-    db = d.add_icon("Autonomous Database", "autonomous_db", x=280, y=50, parent=sn,
-                     metadata={"ocid": "ocid1.autonomousdatabase.oc1..example"},
-                     tooltip="Primary OLTP database")
-
-    # Edges - modern port-less form; the orthogonal router picks the path
-    d.add_edge(lb, vm, "443", parent=sn)
-
-    # Mandatory overlap gate before writing
-    problems = d.check_overlaps()
-    if problems:
-        for p in problems:
-            print(p)
-        raise SystemExit(1)
-
-    d.write(Path("output.drawio"))
-
-if __name__ == "__main__":
-    build_diagram()
+MODEL = {
+  "subject": "Spoke-VCN-D",                      # title "<subject> - Architecture"; default page name
+  "region": "us-ashburn-1", "region_label": "Ashburn",
+  "compartment": "Spoke-VCN-D", "tenancy_name": None,
+  "hub": {"name": "Hub Network\nHub-Network\n(Shared-Services)",
+          "items": [{"icon": "firewall", "label": "Corp VPN\n(10.0.0.0/8)", "address": "cpe"},
+                    {"icon": "drg", "label": "Dynamic Routing\nGateway (DRG)", "address": "drg"}],
+          "link_label": "IPSec VPN"},           # None = no link edges between hub items
+  "vcns": [{
+     "name": "Spoke-VCN-D", "cidr": "10.0.0.0/16",
+     "subnets": [{"name": "sn-priv-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": False,
+                  "items": [{"icon": "load_balancer", "label": "Load Balancer\n10.0.0.23",
+                             "address": "lb", "metadata": {"ocid": "..."}, "tooltip": "..."}]}],
+     "services": [{"icon": "devops", "label": "DevOps\nProject + CI/CD", "address": "devops"}],
+     "services_label": "OCI Services",
+     "gateways": [{"icon": "service_gateway", "label": "Service\nGateway", "address": "sgw"}]
+  }],
+  "services": [],                                # regional services (own panel when several VCNs)
+  "edges": [{"source": "drg", "target": "lb", "label": "", "kind": "data"}],   # hub DRG -> load balancer
+  "notes": None,                                 # free text placed right of the title
+}
 ```
 
-### Phase 4: Route Edges
+Rules:
+1. `tier` in `lb, app, compute, mgmt, other` (row 1) or `data` (stretched row). Missing tier is inferred from the name: lb/web/dmz/pub -> lb; app/api/worker -> app; oke/node/compute -> compute; mgmt/bastion/ops -> mgmt; db/data/database -> data; else other.
+2. Item keys: `icon` (catalog key), `label` (caption, `\n` = line break, HTML-escaped), `address` (unique id, also the cell id), optional `metadata` (dict of str), `tooltip`, `link`. Subnets and VCNs also accept `metadata`/`tooltip`.
+3. Edge `kind`: `data` (solid, open arrow), `control`/`management` (dashed, no arrow), `analytics` (solid Sienna), `datalake` (dashed purple); or pass `dashed`/`color` directly.
+4. Edge endpoints: an item `address`; `vcn:<name>`, `subnet:<name>`, `services`, `services:<vcn>`, `hub`, `region`; or a unique caption first line. Ambiguous or unknown endpoints raise `ValueError`.
+5. Escape nothing yourself: labels are plain text, `\n` becomes `<br>`.
 
-`add_edge` defaults to draw.io's orthogonal router (`edgeStyle=orthogonalEdgeStyle`) with no fixed connection points - draw.io picks the path. Key rules:
+## 3. Layout recipe (`build_diagram`)
 
-- **Same container:** Just call `d.add_edge(source, target, label, parent=container)` - no ports, no waypoints needed.
-- **Cross-container:** Still set `parent` to the common ancestor of the two endpoints, even in the default (no-ports) mode.
-- **Tight control:** Passing any of `exit_x`/`exit_y`/`entry_x`/`entry_y` or `waypoints` switches that edge to legacy pinned mode (fixed side/point, router disabled - the v1.0.0 behavior). Use this when you need to route around obstacles or dock at a specific side.
-- **Router + docked endpoints:** Pass `orthogonal=True` together with full exit/entry pins to keep the orthogonal router active while still pinning the connection sides.
-- **Force legacy mode without ports:** Pass `orthogonal=False` to use legacy pinned mode even when no ports/waypoints are given (falls back to the default port positions: exit bottom-center, entry top-center).
-- **Parallel routes (legacy mode only):** Offset by ~8px to prevent overlap.
+`build_diagram(model, style_profile="default", legend=False, logo=None, page_name=None, title=True, max_row_w=MAX_ROW_W) -> DrawioBuilder` and `write_diagram(model, out_path, strict=False, render_fmt=None, **opts) -> Path` (build + `validate` + `write`, optional draw.io export). CLI: `python3 oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo FILE] [--strict] [--render png|svg|pdf]`.
+
+Order of operations: title -> region -> for each VCN: row-1 subnets packed in traffic order (2 columns each, wrap at `MAX_ROW_W`) -> services panel right of row 1 -> data subnets stretched to the row width -> gateway icons -> `fit_to_children(vcn)` -> optional regional services panel -> hub centred on the tallest VCN -> `fit_to_children(region)` -> edges (`route="auto"`) -> optional legend -> `fit_page()`.
+
+| Constant | Value | Constant | Value |
+|----------|-------|----------|-------|
+| `ICON_W` x `ICON_H` (slot) | 75 x 95 | `GLYPH_W` x `GLYPH_H` | 70 x 70 |
+| `LABEL_W` x `LABEL_H` (min) | 105 x 45 | `LABEL_FONT_SIZE` / `LABEL_LINE_H` | 11 / 14 |
+| `ICON_FOOTPRINT_H` | 142 | `MAX_LABEL_LINES` | 3 |
+| `PAD` / `GAP` | 20 / 20 | `ROW1_Y` | 50 |
+| `COL_W` / `ROW_H` (icon pitch) | 130 / 160 | `TITLE_BOX` / `REGION_XY` | (20, 8, 600, 55) / (20, 75) |
+| `VCN_Y` / `VCN_BOTTOM_PAD` | 40 / 40 | `H_GAP` / `V_GAP` (subnets) | 20 / 40 |
+| `PANEL_GAP` / `GW_GAP` / `GW_PITCH` | 40 / 30 / 180 | `SUBNET_EXTRA_W` / `SUBNET_BOTTOM_PAD` | 50 / 28 |
+| `HUB_X` / `HUB_W` / `HUB_GAP` | 15 / 180 / 45 | `HUB_ICON_Y0` / `HUB_PITCH` | 70 / 200 |
+| `VCN_COLUMN_GAP` | 45 | `MAX_ROW_W` | 1000 |
+
+## 4. Icon selection
+
+1. Keys are either a short alias (206, `drawio_builder.ICON_ALIASES`) or an SVG file stem (159, e.g. `compute_virtual_machine_vm`); both forms are listed in `references/icon-catalog.md`. Unknown keys raise `Unknown icon_key ... Did you mean ...` - use the suggestion, never invent a key.
+2. Fallback: the closest catalog key by service family (compute -> `vm`, database -> `generic_database`, networking -> `vcn`, storage -> `block_storage`, anything else -> `cloud`) and say so in the report.
+3. No dedicated glyph exists for Generative AI (`ai`; `generative_ai` is an alias of the same glyph), OCI Cache / Redis (`nosql`), VPN / IPSec (`cpe`), FastConnect (`backbone`), LPG (`rpg`), Network Load Balancer (`load_balancer`), PostgreSQL (`generic_database`), Container Instances (`container`), Dedicated VM Host (`bare_metal`).
+4. To search: `python3 -c "import sys; sys.path.insert(0,'<abs>/scripts'); import drawio_builder as d; print(sorted(k for k in d.ICON_MAP if 'gateway' in k))"`.
+
+| Terraform resource | Icon key | Model placement |
+|--------------------|----------|-----------------|
+| `oci_core_vcn` / `oci_core_subnet` | (containers) | `vcns[]` / `subnets[]` |
+| `oci_core_internet_gateway` / `_nat_gateway` / `_service_gateway` | `internet_gateway` / `nat_gateway` / `service_gateway` | `gateways` |
+| `oci_core_drg` / `oci_core_drg_attachment` | `drg` | `hub.items` / `gateways` |
+| `oci_core_local_peering_gateway` / `_remote_peering_connection` | `rpg` | `gateways` |
+| `oci_core_cpe` / `oci_core_ipsec` / `oci_core_virtual_circuit` | `cpe` / `cpe` / `backbone` | `hub.items` |
+| `oci_network_firewall_network_firewall` | `firewall` | `hub.items` or mgmt subnet |
+| `oci_core_network_security_group` | `nsg` | last item of its subnet |
+| `oci_core_security_list` / `oci_core_route_table` | `security_list` / `route_table` | omit (or `add_table` on page 2) |
+| `oci_load_balancer_load_balancer` / `oci_network_load_balancer_*` | `load_balancer` (`flexible_lb`) | lb subnet |
+| `oci_apigateway_gateway` / `oci_waf_web_app_firewall` / `oci_certificates_management_certificate` | `api_gateway` / `waf` / `certificates` | lb subnet |
+| `oci_core_instance` (shape `BM.*` -> `bare_metal`) | `vm` | app / compute / mgmt subnet |
+| `oci_core_instance_pool` / `oci_autoscaling_auto_scaling_configuration` | `instance_pool` / `autoscaling` | app subnet |
+| `oci_containerengine_cluster` / `_node_pool` | `oke` | compute subnet |
+| `oci_container_instances_container_instance` / `oci_functions_*` | `container` / `functions` | app subnet or `services` |
+| `oci_bastion_bastion` | `bastion` | mgmt subnet |
+| `oci_database_autonomous_database` (`db_workload` DW -> `adw`, OLTP -> `atp`) | `autonomous_db` | data subnet |
+| `oci_database_db_system` / `oci_database_cloud_exadata_infrastructure` | `db_system` / `exadata` | data subnet |
+| `oci_mysql_mysql_db_system` / `oci_psql_db_system` / `oci_nosql_table` | `mysql` / `generic_database` / `nosql` | data subnet |
+| `oci_redis_redis_cluster` / `oci_opensearch_opensearch_cluster` | `nosql` / `opensearch` | data subnet |
+| `oci_core_volume` / `oci_core_boot_volume` / `oci_file_storage_*` | `block_storage` / `block_storage` / `file_storage` | next to the VM |
+| `oci_objectstorage_bucket` | `buckets` | `services` |
+| `oci_kms_vault` / `oci_vault_secret` / `oci_kms_key` | `vault` / `vault` / `kms` | `services` |
+| `oci_logging_log_group` / `oci_monitoring_alarm` / `oci_ons_notification_topic` | `logging` / `alarms` / `notifications` | `services` |
+| `oci_apm_apm_domain` / `oci_streaming_stream` / `oci_queue_queue` / `oci_dns_*` | `apm` / `streaming` / `queuing` / `dns` | `services` |
+| `oci_artifacts_container_repository` / `oci_devops_project` | `container_registry` / `devops` | `services` |
+| `oci_sch_service_connector` / `oci_events_rule` / `oci_resourcemanager_stack` | `service_connector_hub` / `events` / `resource_manager` | `services` |
+| `oci_datascience_*` / `oci_generative_ai_*` / `oci_analytics_analytics_instance` | `data_science` / `ai` / `analytics` | data subnet or `services` |
+| `oci_dataintegration_workspace` / `oci_dataflow_application` / `oci_datacatalog_catalog` | `data_integration` / `data_flow` / `data_catalog` | `services` |
+| `oci_integration_integration_instance` / `oci_goldengate_deployment` | `oic` / `goldengate` | `services` |
+| `oci_identity_compartment` / `_policy` / `_dynamic_group` / `_user` | (container `compartment`) / `policy` / `user_group` / `user` | custom layouts only |
+| `oci_cloud_guard_*` / `oci_data_safe_*` / `oci_vulnerability_scanning_*` | `cloud_guard` / `data_safe` / `vuln_scanning` | `services` |
+| `oci_core_public_ip` / `oci_core_vtap` / `oci_*_private_endpoint` | `ip_pools` / `vtap` / `private_endpoint` | lb subnet / mgmt / data |
+
+## 5. Style rules
+
+| Profile | Use when | Differences |
+|---------|----------|-------------|
+| `default` | always, unless asked otherwise | reference look: 12 px container labels, 11 px subnet labels, 1.5 px rounded edges, dash pattern `6 3`, dashed edges without arrowheads |
+| `official` | the customer wants strict OCI Architecture Diagram Toolkit v24.2 fidelity | 12 px everywhere, 1 px square edges, 10.5 px edge labels, dashed edges keep the open arrow, AD/FD arcs 8/7 |
+| `v1.0` (`sample` alias) | regenerating diagrams made with plugin v1.0.x without a visual diff | 13 px VCN label, `spacingLeft=3` |
+
+1. Fonts: `Oracle Sans,Arial,Helvetica,sans-serif` for everything (title 18 px bold + italic line, captions 11 px, edge labels 12 px). Override with `DrawioBuilder(font_family=...)` only on request.
+2. Colours come from `drawio_builder.COLORS`; full table and every container style string in `references/oracle-styles.md`. The ones you will meet: Bark `#312D2A` (text, edges, services border), Sienna `#AE562C` (VCN/subnet/compartment borders, analytics edges), Neutral 3 `#9E9892` (region/tenancy/AD/FD borders), Neutral 1 `#F5F4F2` (region/onprem fill), Rose `#A36472` (Oracle Services Network), `#7B61FF` (datalake edges, project extension).
+3. Never restyle cells by hand (`style_extra` is for one-off tweaks such as `fontStyle=2`); container looks are fixed per `group_type`.
+
+## 6. Custom layouts with DrawioBuilder
+
+Use only when the recipe cannot express the architecture (availability/fault domains, nested compartments, several regions, third-party cloud, tables, extra pages). Order: containers with provisional sizes -> `place_icons` -> `fit_to_children` innermost first -> position siblings from `bbox()` + `GAP` -> edges -> `fit_page` -> `validate` gate -> `write`.
+
+| Method (exact signature) | Notes |
+|--------------------------|-------|
+| `DrawioBuilder(page_name="Architecture", width=1600, height=1100, style_profile="default", font_family=None)` | first page is created |
+| `add_page(name, width=1600, height=1100) -> int`; `use_page(index_or_name) -> int`; `add_layer(name, visible=True, key=None) -> str` | edges cannot cross pages |
+| `add_group(label, x, y, w, h, parent="1", group_type="region", metadata=None, tooltip=None, label_position=None, style_extra="", key=None, link=None, raw_html=False) -> str` | types: region, tenancy, availability_domain, fault_domain, compartment, vcn, subnet, services, oracle_services_network, onprem (`hub` alias), other, metro_or_realm, third_party_cloud, internet; `label_position` "left"/"center" |
+| `add_icon(label, icon_key, x, y, parent="1", w=None, h=None, metadata=None, tooltip=None, key=None, label_w=None, label_h=None, raw_html=False, font_size=None, link=None) -> str` | (x, y) = top-left of the 75x95 slot; caption auto-height; `raw_html=True` passes markup unescaped |
+| `place_icons(parent, items, cols, x0=20, y0=50, col_w=130, row_h=160, **icon_kwargs) -> (ids, (x, y, right, bottom))` | items: `(label, icon)` tuples or dicts with label, icon, metadata, tooltip, key, link |
+| `fit_to_children(cid, pad=20, min_w=None, min_h=None) -> (w, h)`; `resize(cid, w=None, h=None, x=None, y=None)` | fit after children exist; x/y unchanged |
+| `bbox(cid)` / `abs_bbox(cid)` / `footprint(cid) -> (x, y, w, h)`; `content_bbox(page_idx=None) -> (x, y, right, bottom)`; `fit_page(margin=20) -> (w, h)` | footprint = slot + caption |
+| `add_title(subject, region_label=None, region=None, compartment=None, tenancy=None, x=20, y=8, w=600, h=55, font_size=18, font_family=None, logo=None, logo_w=148, logo_h=39, page_w=None, key="title") -> {"title", "logo"}` | missing Pillow/logo file prints a warning, does not fail |
+| `add_image(image_path, x, y, w, h, parent="1", key=None) -> str`; `add_text(label, x, y, w=200, h=30, parent="1", font_size=10, font_style=0, align="left", font_color=None, font_family=None, key=None, vertical_align="middle", raw_html=True, style_extra="") -> str` | SVG embedded directly, PNG/JPEG via Pillow |
+| `add_table(rows, x, y, parent="1", col_widths=None, header=True, font_size=10, row_h=18, title=None, key=None) -> str` | rows = list of string lists; first row = header |
+| `add_legend(x, y, parent="1", entries=None, title="Legend", width=230, key=None) -> str` | entries `("edge", <style>, text)` with style `solid`, `dashed`, `accent` or `purple`, or `("group", <group_type>, text)`; default entries when None |
+| `add_edge(source, target, label="", parent=None, dashed=False, color=None, style_extra="", exit_x=None, exit_y=None, entry_x=None, entry_y=None, waypoints=None, orthogonal=None, route=None, label_pos=None, arrow=None, key=None, raw_html=False) -> str` | parent defaults to the common ancestor; `label_pos` -1..1 |
+| `validate(strict=False) -> list[str]`; `check_overlaps(strict=False) -> list[str]`; `write(path) -> Path` | messages start with `ERROR:`, `OVERLAP:` or `WARNING:` (prefixed `[page: X]` on multi-page files); `check_overlaps` returns blocking ones only; `write` accepts str or Path |
+| module: `render(drawio_path, fmt="png", out=None, scale=1.0, timeout=120) -> Path or None`, `find_drawio_binary()`, `validate_file(path, strict=False)`, `set_icon_dir(path)`, `add_icons_to_map({key: "category/file.svg"})`, `escape_label(text)`, constants `PAD, GAP, ROW1_Y, COL_W, ROW_H, ICON_W, ICON_H, ICON_FOOTPRINT_H, COLORS` | |
+
+Worked example (runs as-is once the path is replaced; produces `hub_spoke.drawio`, 4 containers, gate clean):
 
 ```python
-# Default: modern, port-less, same-container
-d.add_edge(lb, vm, "443", parent=sn)
+import sys
+sys.path.insert(0, "/ABSOLUTE/PATH/TO/oci-drawio-architect/scripts")
+from drawio_builder import DrawioBuilder, PAD, ROW1_Y, GAP
 
-# Cross-container, still port-less: parent is the common ancestor
-d.add_edge(drg, lb, "", parent=region)
-
-# Tight control: any port or waypoint switches to legacy pinned mode
-d.add_edge(drg, lb, "", parent=region,
-           exit_x=1.0, exit_y=0.5, entry_x=0.0, entry_y=0.5,
-           waypoints=[(gap_x, drg_y), (gap_x, lb_y)])
+d = DrawioBuilder(page_name="Hub-and-Spoke")
+d.add_title("Hub-and-Spoke - Architecture", region_label="Frankfurt", region="eu-frankfurt-1", compartment="network")
+region = d.add_group("eu-frankfurt-1", PAD, 75, 800, 400, group_type="region", key="region")
+hub = d.add_group("VCN: hub-vcn (10.0.0.0/16)", PAD, 40, 300, 200, parent=region, group_type="vcn", key="vcn-hub")
+(drg, fw), _ = d.place_icons(hub, [("DRG\nhub-drg", "drg"), ("Network Firewall\n10.0.1.10", "firewall")], cols=2)
+d.fit_to_children(hub)
+_, _, hub_w, _ = d.bbox(hub)
+spoke = d.add_group("VCN: spoke-a (10.1.0.0/16)", PAD + hub_w + GAP, 40, 300, 200, parent=region, group_type="vcn", key="vcn-spoke-a")
+sn = d.add_group("sn-app (10.1.1.0/24)", PAD, ROW1_Y, 200, 150, parent=spoke, group_type="subnet", key="sn-app")
+(vm,), _ = d.place_icons(sn, [{"label": "App VM\n10.1.1.5", "icon": "vm", "key": "app-vm",
+                               "metadata": {"ocid": "ocid1.instance.oc1..x"}, "tooltip": "primary app node"}], cols=1)
+for cid in (sn, spoke, region):
+    d.fit_to_children(cid)
+d.add_edge(drg, vm, "443")                    # route="auto": parent = region, path through gutters
+d.add_edge(fw, drg, "inspect", dashed=True)   # dashed = control / management
+d.fit_page()
+problems = d.validate()
+print("\n".join(problems))
+if any(not p.split("] ")[-1].startswith("WARNING") for p in problems):
+    raise SystemExit("layout errors; diagram not written")
+d.write("hub_spoke.drawio")
 ```
 
-**Exit/entry port reference** (legacy pinned mode, or `orthogonal=True` with full pins):
-| Position | exitX/entryX | exitY/entryY |
-|----------|-------------|-------------|
-| Top | 0.5 | 0.0 |
-| Bottom | 0.5 | 1.0 |
-| Left | 0.0 | 0.5 |
-| Right | 1.0 | 0.5 |
+Edge routing modes (`route=`):
+1. `"auto"` (default when no ports/waypoints): common-ancestor parent, docking sides and gutter waypoints computed from all cells at `validate()`/`write()` time; add edges in any order. Use this.
+2. `"direct"` (or `orthogonal=True` without pins): draw.io's orthogonal router, no fixed ports - the v1.1.0 behaviour; may cross icons (the checker warns).
+3. `"pinned"`: fixed `exit_x/exit_y/entry_x/entry_y` (0.5,0 top; 0.5,1 bottom; 0,0.5 left; 1,0.5 right) and `waypoints` in the parent's coordinates; selected automatically when any pin or waypoint is passed. `orthogonal=True` plus pins keeps the router with docked sides. Use only to route around a specific obstacle.
+4. `dashed=True` -> control; `color=COLORS["edge_accent"]` -> analytics; `color=COLORS["edge_purple"], dashed=True` -> datalake; `arrow="none"|"open"|"block"|"classic"` overrides the profile arrowhead; `label_pos` moves the label along the edge.
 
-**Semantics:** solid = data flow, dashed (`dashed=True`) = user interaction. This is the official Oracle toolkit convention - don't invert it.
+Metadata, tooltips, links: `metadata={"ocid": "...", "shape": "VM.Standard.E5.Flex"}` (keys `^[A-Za-z_][A-Za-z0-9_-]*$`, not id/label/placeholders/tooltip/link) and `tooltip="..."` wrap the cell in an `<object>` (`<UserObject>` when `link=` is given) so the data survives draw.io round-trips and shows in Edit Data. `key="app-vm"` gives a stable cell id (slugged: other characters become `-`).
 
-### Phase 5: Finalize
+Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_page(0)` to return); call `add_title`/`fit_page` per page; `validate()` covers all pages. Legend: `_, _, _, bottom = d.content_bbox(); d.add_legend(PAD, bottom + GAP)` before `fit_page()`. Table: `d.add_table([["Direction", "Source", "Ports"], ["Ingress", "0.0.0.0/0", "443"]], PAD, 75, col_widths=[80, 170, 60], title="nsg-app (1 rule)")`. Complete demonstration of every type, all three edge modes, legend, table and a second page: `examples/generate_demo_diagram.py`.
 
-1. Add logos via `d.add_image()` (PNG files, resized automatically)
-2. Add title text via `d.add_text()` (Georgia for titles, Oracle Sans for labels)
-3. Call `d.write(Path("output.drawio"))` to generate the file
-4. Open in draw.io desktop to verify rendering
-5. If fonts look wrong, close and reopen the file (draw.io caches renders)
+## 7. Acceptance criteria (all mandatory)
 
-## Quick Reference
+1. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" <file>.drawio` exits 0 and prints `OK: no container overlaps or layout errors (...)`.
+2. Zero `ERROR:`/`OVERLAP:` lines (unknown parents or endpoints, intersecting containers, shapes outside their parent, icon/caption collisions).
+3. Every `WARNING:` line was read and either fixed (caption > 3 lines; estimated crossing; content exceeds page) or confirmed harmless in the PNG.
+4. PNG self-review (`render_drawio.py <file> -f png`, then Read the PNG): glyphs uniform; captions legible, 3 lines max, inside their container, no overlaps; edges in gutters, none across icons or captions, labels readable; hub centred on the VCN; gateways in the bottom row; nothing outside the region; no large empty area; title and region label follow section 1.
+5. The generated script imports from the plugin `scripts` directory and contains no copied builder code; file size is roughly 7-13 KB per icon (the 31-icon reference is 280 KB).
 
-### Container Types
+## 8. Failure handling
 
-11 group types are defined in `_GROUP_STYLES`:
+| Message | Fix |
+|---------|-----|
+| `Unknown icon_key 'x'. Did you mean a, b?` | take the suggestion or look the key up in `references/icon-catalog.md` |
+| `OCI icon directory not found ... Searched: ...` | fix `sys.path.insert` to the plugin `scripts` dir, or `export OCI_SVG_DIR=<plugin>/icons` / `set_icon_dir()` |
+| `Pillow is required for PNG/JPEG logos` | SVG logo, `python3 -m pip install --user Pillow`, or drop the logo |
+| `edge endpoint 'x' not found` / `matches N items; use an 'address'` | give the item an `address` and reference it |
+| `Unknown group_type` / `unknown source id` / `is on another page` | use the listed type; pass returned ids; keep edge ends on one page |
+| `OVERLAP` / `extends outside its parent` / `overlaps` | recipe: split the VCN or move items; custom: `fit_to_children` innermost first, siblings at `bbox()` + `GAP`, icon pitch `COL_W`/`ROW_H` |
+| `WARNING: caption ... needs ~N lines` | rewrite as `Role\nidentifier\nsize` |
+| `WARNING: edge ... is estimated to cross` | reorder items / change tier; custom: `route="direct"` or explicit `waypoints`; accept only if the PNG is clean |
+| `draw.io desktop not found` (render exit 3) | skip the PNG and say so; `DRAWIO_BIN=/path/to/drawio` overrides discovery |
+| `detect_settings.py` slow / `cli_warning` | rerun with `--no-cli` |
 
-| Type | Border | Fill | Font Color | Use For |
-|------|--------|------|------------|---------|
-| `region` | `#9E9892` solid, rounded | `#F5F4F2` | `#312D2A` bold | OCI region |
-| `tenancy` | `#9E9892` dashed 1px, square | none | `#312D2A` bold | Tenancy boundary |
-| `availability_domain` | `#9E9892` solid, rounded | `#DFDCD8` | `#312D2A` bold | Availability Domain |
-| `fault_domain` | `#9E9892` solid, rounded | `#FCFBFA` | `#312D2A` bold | Fault Domain |
-| `compartment` | `#AE562C` dotted 1px, square | none | `#312D2A` bold | Compartment |
-| `vcn` | `#AE562C` dashed 2px, square | none | `#AE562C` bold | VCN |
-| `subnet` | `#AE562C` dashed 1px, square | none | `#AE562C` bold | Subnet |
-| `services` | `#9E9892` dashed 2px, square | none | `#312D2A` bold | OCI services panel |
-| `oracle_services_network` | `#A36472` dashed 2px, square | none | `#A36472` bold | Oracle Services Network |
-| `onprem` | `#9E9892` solid, rounded | `#F5F4F2` | `#312D2A` bold | On-premises / hub network |
-| `hub` | *(deprecated alias of `onprem`)* | | | Use `onprem` in new diagrams |
+## 9. Key references
 
-### DrawioBuilder API
-
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `add_group(label, x, y, w, h, parent, group_type, metadata=None, tooltip=None)` | cell ID | Container rectangle |
-| `add_icon(label, icon_key, x, y, parent, w=None, h=None, metadata=None, tooltip=None)` | cell ID | OCI SVG icon + text label; derived aspect-correct sizing when w/h omitted |
-| `add_image(path, x, y, w, h, parent)` | cell ID | PNG/image (logo embedding) |
-| `add_text(label, x, y, w, h, parent, ...)` | cell ID | Text-only label |
-| `add_edge(src, tgt, label, parent, dashed, color, ..., orthogonal=None)` | cell ID | Edge; port-less orthogonal router by default, legacy pinned mode when ports/waypoints are passed, or forced either way via `orthogonal=True`/`orthogonal=False` |
-| `check_overlaps()` | list of `"OVERLAP: ..."` strings | Sibling-container overlap check; call before `write()` |
-| `write(path)` | None | Write .drawio XML to disk |
-
-### Helper Functions
-
-| Function | Description |
-|----------|-------------|
-| `add_icons_to_map({"key": "category/file.svg"})` | Add icons to global ICON_MAP |
-| `find_container_overlaps(root)` | Module-level function `check_overlaps()` delegates to; takes an `mxGraphModel` `<root>` Element, returns the same overlap-message list |
-
-## Key References
-
-- **Full style details:** `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/oracle-styles.md`
-- **All available icons:** `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/icon-catalog.md` (~160 icons across 14 categories)
-- **Common pitfalls:** `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/gotchas.md` (12 issues)
-- **OCI SVG icons:** Bundled at `${CLAUDE_PLUGIN_ROOT}/icons/` (override with `OCI_SVG_DIR` env var)
-- **Working example:** `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (exercises every container type, the main icon-sizing and edge modes, metadata, and the overlap gate)
-- **Overlap checker CLI:** `${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py`
-
-## Common Mistakes
-
-1. **Using a raw base64 data URI** - `image=data:image/png;base64,iVBOR...` gets truncated at the `;base64,` marker because draw.io/mxGraph splits cell styles on `;`. Always URL-encode instead: `image=data:image/svg+xml,{urllib.parse.quote(svg, safe='')}`.
-2. **Missing `container=1`** - Children render at root level if parent lacks `container=1`. All `_GROUP_STYLES` include it, but custom styles must too.
-3. **Wrong edge parent** - Cross-container edges must use a common ancestor as parent. Icons in different containers cannot share an edge parented to either container.
-4. **Forgetting viewBox fix** - OCI SVGs clip without the transform-based viewBox expansion. Use `_load_svg()` which handles this automatically.
-5. **Hardcoded cell IDs** - Always use `_next_id()`. Duplicate IDs cause silent rendering failures.
-6. **Don't stretch icons** - default derived sizing preserves aspect; pass explicit `w`/`h` only for wide logical/physical connector shapes.
+- Command workflow: `${CLAUDE_PLUGIN_ROOT}/commands/drawio-architect.md`
+- Layout recipe and MODEL schema: `${CLAUDE_PLUGIN_ROOT}/scripts/oci_layout.py`
+- Builder API: `${CLAUDE_PLUGIN_ROOT}/scripts/drawio_builder.py` (v1.2.0, standard library only)
+- Model producers: `${CLAUDE_PLUGIN_ROOT}/scripts/parse_terraform.py` (Terraform dir / plan / state -> model.json), `${CLAUDE_PLUGIN_ROOT}/scripts/query_tenancy.py` (experimental as-built via OCI CLI)
+- Gate and tools: `${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/render_drawio.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/detect_settings.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/smoke_test.sh`
+- Examples: `${CLAUDE_PLUGIN_ROOT}/examples/generate_reference_layout.py` (MODEL -> `write_diagram`, reproduces the reference), `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (custom layout, every container type, three edge modes, legend, table, second page)
+- Icons: `${CLAUDE_PLUGIN_ROOT}/icons/` - 159 SVGs in 12 categories, 206 aliases; catalog `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/icon-catalog.md`
+- Styles: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/oracle-styles.md`; pitfalls: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/gotchas.md`

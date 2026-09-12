@@ -1,264 +1,178 @@
 ---
 name: drawio-architect
-description: Generate an OCI architecture draw.io diagram from Terraform configs or description
-allowed-tools: Read, Write, Edit, Glob, Grep, Bash, Agent, AskUserQuestion
+description: Generate an OCI architecture .drawio diagram (and PNG) from a Terraform directory, a terraform show -json file, a VCN name or a description, using the deterministic v1.2.0 layout recipe
+argument-hint: [terraform-dir | plan.json | vcn-name | "description"]
+allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 ---
 
-# /drawio-architect - OCI Architecture Diagram Generator
+# /drawio-architect
 
-Generate a production-quality `.drawio` diagram for an OCI architecture using the DrawioBuilder Python class, embedded OCI SVG icons, and Oracle template styles.
+Produce `<Subject>_Architecture.drawio` (+ `.png`) that matches the plugin's reference look. The layout is computed by `scripts/oci_layout.py` from a model dict; your job is to fill the model correctly and pass the gate. Conventions, schema and the custom-layout API are in `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/SKILL.md`.
 
-## Workflow
+Global rules:
+1. NEVER copy `drawio_builder.py` (or any script) into the project. Generated scripts import from the plugin: `sys.path.insert(0, "<abs>/scripts")`. Resolve the absolute path first with `echo "$CLAUDE_PLUGIN_ROOT"` and paste it literally (the user runs the script outside Claude Code).
+2. Use the recipe (`oci_layout.write_diagram`) unless the architecture cannot be expressed by it (see Step 3.4).
+3. Never report success while Step 5's gate fails. Iterate at most 3 times, then report the remaining problems verbatim.
+4. Input is `$ARGUMENTS`; if empty, ask (Step 1).
 
-### Step 0: Load Project Settings
+## Step 0 - Settings
 
-Check for settings file at `.claude/oci-drawio-architect.local.md`.
-
-**If the file exists:** Read it and parse the YAML frontmatter to get:
-- `tenancy_name` - Tenancy display name (e.g., "mytenancy")
-- `region` - OCI region identifier (e.g., "eu-frankfurt-1")
-- `region_label` - Display name for titles (e.g., "Frankfurt")
-- `compartment` - Default compartment name
-- `logo_light` - Logo path for light backgrounds
-- `logo_dark` - Logo path for dark backgrounds
-- `oci_profile` - OCI CLI profile
-- `terraform_dir` - Default Terraform directory
-
-Use these values throughout the diagram (title, region container label, logo placement).
-
-**If the file does NOT exist:** Run auto-detection:
-
-```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/detect_settings.py" [terraform_dir_if_known]
-```
-
-This probes (in order):
-1. **Terraform files** - `provider.tf` for region/profile, `*.tfvars` for tenancy_ocid
-2. **OCI CLI** - `oci iam tenancy get` for tenancy name
-3. **~/.oci/config** - fallback for tenancy OCID and region
-4. **Logo files** - scans `logos/`, `assets/logos/`, `assets/images/`
-
-Show the user what was detected and ask them to confirm or adjust. Then write the settings file:
+1. If `.claude/oci-drawio-architect.local.md` exists, read its YAML frontmatter and use the keys below.
+2. Else run `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/detect_settings.py" [terraform_dir]` (add `--no-cli` when the OCI CLI is absent, unconfigured or hangs; each CLI call is bounded to 8 s). Exit 1 = nothing detected; exit 2 = the directory does not exist. Stdout is the frontmatter; stderr is the summary.
+3. Required values: `region` (settings) and `subject` (Step 1). Ask with AskUserQuestion ONLY for values that are still missing. Do not ask about logos, tenancy or compartment; use them when present, omit them otherwise.
+4. Write the settings file from this template, keeping only detected/answered keys (values are JSON-quoted scalars; lists as JSON):
 
 ```markdown
 ---
 tenancy_name: "mytenancy"
-tenancy_ocid: "ocid1.tenancy.oc1..aaaa..."
+tenancy_ocid: "ocid1.tenancy.oc1..aaaa"
 region: "eu-frankfurt-1"
 region_label: "Frankfurt"
 oci_profile: "DEFAULT"
-compartment: ""
+compartment: "prod"
+vcns: [{"name": "app-vcn", "cidr": "10.0.0.0/16"}]
 logo_light: "logos/company_logo_dark.png"
-logo_dark: "logos/company_logo_light.png"
-terraform_dir: "terraform/environments/frankfurt"
+terraform_dir: "terraform/environments/prod"
 ---
 
 # OCI draw.io Architect Settings
-
-Auto-detected on YYYY-MM-DD. Edit values above as needed.
-Restart Claude Code after changes.
+Detected on YYYY-MM-DD by /drawio-architect. Edit values above; delete the file to re-detect.
 ```
 
-If auto-detection finds nothing, use AskUserQuestion to gather:
-1. Tenancy name (for diagram title)
-2. Region (for region container label)
-3. Logo file path (optional)
-4. Default compartment (optional)
+5. The file may contain OCIDs: make sure the project `.gitignore` has the line `.claude/*.local.md` (`grep -qxF '.claude/*.local.md' .gitignore 2>/dev/null || echo '.claude/*.local.md' >> .gitignore`).
 
-### Step 1: Gather Requirements
+## Step 1 - Input
 
-Ask the user what to diagram. Accept one of:
-- **Terraform path** (e.g., `terraform/environments/prod/`) - parse `.tf` files to extract topology
-- **VCN name** (e.g., "prod-vcn") - look up in `VCN.auto.tfvars` and related service files
-- **Free-form description** (e.g., "hub-and-spoke with firewall") - build from description
+Classify `$ARGUMENTS`; if empty, ask one AskUserQuestion with these five options.
 
-Use AskUserQuestion if the user didn't specify in the command invocation:
-```
-What OCI architecture would you like to diagram?
+| Input | Recognise by | Model source (Step 2) |
+|-------|--------------|-----------------------|
+| Terraform directory | contains `*.tf` / `*.tfvars` | `parse_terraform.py TF_DIR` |
+| Plan or state JSON | `terraform show -json` output (`planned_values` or `values` key) | `parse_terraform.py --plan-json FILE` or `--state-json FILE` |
+| VCN name | matches `vcns` in settings or a `display_name` in `terraform_dir` | `parse_terraform.py TF_DIR --vcn NAME` |
+| Free-form description | anything else ("hub-and-spoke with a firewall and two spokes") | MODEL written by hand |
+| Live tenancy (experimental) | user asks for "as-built" / "what is deployed" and gives a compartment OCID | `query_tenancy.py` |
 
-Options:
-1. Provide a Terraform directory path (I'll parse the configs)
-2. Name a VCN (I'll look it up in .auto.tfvars)
-3. Describe the architecture in plain text
-```
+## Step 2 - Build the model
 
-### Step 2: Read Terraform Configs
+1. Terraform present: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/parse_terraform.py" [TF_DIR] [--plan-json FILE | --state-json FILE] [--vcn NAME] --out model.json`, then read `model.json`. Add `--no-inferred-edges` when you want only edges backed by explicit Terraform references.
+2. Live tenancy (EXPERIMENTAL, needs the OCI CLI): `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/query_tenancy.py" --compartment-id OCID [--vcn-id OCID] [--profile P] [--region R] [--from-json FILE] --out model.json`. Tell the user the mode is experimental and to verify resource counts.
+3. Otherwise write the MODEL dict by hand (schema: SKILL.md section 2; template: `${CLAUDE_PLUGIN_ROOT}/examples/generate_reference_layout.py`).
+4. Enrich every model, in this order:
+   1. `subject` = VCN name for a single VCN, else the system name; `region`, `region_label`, `compartment`, `tenancy_name` from settings.
+   2. Captions follow `"Role\nidentifier\nsize"`: max 3 lines of about 16 characters (`"App VM\n10.0.1.5\n4 OCPU / 32 GB"`, `"ADB prod\napp-db\n16 ECPU / 4 TB"`). Shorten with `...` instead of adding lines.
+   3. `tier` per subnet: `lb`, `app`, `compute`, `mgmt`, `data` (`other` for the rest). Infer from names when Terraform gives none (lb/web/dmz/pub, app/api/worker, oke/node/compute, mgmt/bastion/ops, db/data/database).
+   4. Item order inside a subnet: primary resource (LB, VM, DB) -> attached (block volume, certificate, WAF) -> NSG last.
+   5. Regional services (Vault, KMS, Logging, Object Storage, DevOps, OCIR, Queues, Streaming, DNS, APM, Alarms, Notifications, Functions without a subnet) go to `vcn.services` (one VCN) or `model.services` (several VCNs) - never inside a subnet.
+   6. Gateways (SGW, NAT, IGW, DRG attachment, LPG) go to `vcn.gateways` with two-line captions (`"Service\nGateway"`).
+   7. DRG, CPE, VPN, FastConnect, on-prem firewall go to `model.hub` with `name = "Hub Network\n<name>\n(<purpose>)"` and `link_label` ("IPSec VPN", "FastConnect") when two hub items are linked.
+   8. Give every item an `address`; edges use addresses (or `vcn:<name>`, `subnet:<name>`, `hub`, `services`). Add an edge only where a route rule, security rule, LB backend set or DB connection justifies it; `label` = port(s) (`"443"`, `"1522"`, `"3000 / 8000"`); `kind` = `data` for traffic, `control` for management/API calls, `analytics`/`datalake` for those flows. Target 0.3-0.6 edges per icon.
+   9. Keep OCIDs and shapes in item `metadata` and a one-line `tooltip`.
 
-Based on the input, read relevant files to extract:
-- **VCNs**: Name, CIDR, compartment from `VCN.auto.tfvars`
-- **Subnets**: Name, CIDR, public/private, route targets
-- **Services**: Compute, databases, LBs, functions, OKE from service `.tf` files
-- **DRG**: Attachments, VPNs, FastConnect from `DRG.auto.tfvars`
-- **NSGs/Security**: From `networking.tf` or port CSV files
-- **Gateways**: IGW, NAT, SGW from VCN config
+## Step 3 - Generate `generate_<subject>_drawio.py`
 
-Build a mental model of the architecture:
-- Container hierarchy (Region > VCN > Subnets > Services)
-- Service-to-subnet placement
-- Connection topology (LB->App, App->DB, DRG attachments)
+1. The file MUST start with the plugin path insert and use `write_diagram`:
 
-### Step 3: Plan the Layout
-
-Design the container hierarchy and grid constants before writing code.
-
-**Container hierarchy pattern:**
-```
-Region ({region_label} - {region})     <-- from settings
-  +-- Hub (left side, narrow) - for DRG, Firewall, VPN/CPE
-  +-- VCN (right side, wide)
-        +-- Subnet rows (each with service icons)
-        +-- Services panel (cross-cutting: Vault, DevOps, Logging)
-        +-- Gateways row (bottom: IGW, NAT, SGW)
-```
-
-**Title block** (from settings):
 ```python
-# Title: "<b>{tenancy_name} - {diagram_subject}</b><br/><i>{region_label} ({region})</i>"
-# Logo: d.add_image(settings["logo_light"], x=PAGE_W-170, y=8, w=148, h=39)
+import sys
+sys.path.insert(0, "/ABSOLUTE/PATH/TO/oci-drawio-architect/scripts")   # ${CLAUDE_PLUGIN_ROOT}/scripts, resolved
+from oci_layout import write_diagram
+
+MODEL = {
+    "subject": "app-prod", "region": "eu-frankfurt-1", "region_label": "Frankfurt", "compartment": "prod",
+    "vcns": [{"name": "app-vcn", "cidr": "10.0.0.0/16", "subnets": [
+        {"name": "sn-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": True,
+         "items": [{"icon": "load_balancer", "label": "Load Balancer\n10.0.0.7", "address": "lb"}]},
+        {"name": "sn-app", "cidr": "10.0.1.0/24", "tier": "app",
+         "items": [{"icon": "vm", "label": "App VM\n10.0.1.5\n4 OCPU / 32 GB", "address": "app"},
+                   {"icon": "nsg", "label": "NSG\nnsg-app", "address": "nsg-app"}]},
+        {"name": "sn-db", "cidr": "10.0.2.0/24", "tier": "data",
+         "items": [{"icon": "autonomous_db", "label": "ADB prod\napp-db\n4 ECPU / 1 TB", "address": "adb"}]}],
+        "services": [{"icon": "logging", "label": "Logging", "address": "logging"}],
+        "gateways": [{"icon": "internet_gateway", "label": "Internet\nGateway", "address": "igw"},
+                     {"icon": "service_gateway", "label": "Service\nGateway", "address": "sgw"}]}],
+    "edges": [{"source": "igw", "target": "lb", "label": "443", "kind": "data"},
+              {"source": "lb", "target": "app", "label": "8080", "kind": "data"},
+              {"source": "app", "target": "adb", "label": "1522", "kind": "data"},
+              {"source": "app", "target": "sgw", "label": "OCI APIs", "kind": "control"}],
+}
+
+write_diagram(MODEL, "app-prod_Architecture.drawio", render_fmt="png")
 ```
 
-**Mandatory overlap prevention:**
-1. Compute bounding boxes for every sibling container
-2. Derive each row's y-position from the tallest sibling above + gap (`row_start_y = max(bottom_of_all_containers_above) + gap`) - never hardcode row positions
-3. Use named variables (ROW1_Y, ROW2_Y, GW_Y), never magic numbers
-4. Account for icon label overflow: each icon uses ICON_H(95) + LABEL_GAP(2) + label_h(45) = 142px vertical
-5. Don't hand-roll an overlap check - the generated script MUST call the shipped `d.check_overlaps()` before `d.write()` (see Step 5), and Step 6 REQUIRES running the standalone `check_overlaps.py` CLI gate afterward
+2. Optional `write_diagram` kwargs: `style_profile="official"|"v1.0"`, `legend=True` (only when asked or with 3+ edge kinds), `logo=<settings logo_light>`, `strict=True` (crossings become errors). A large `model.json` may be loaded with `json.load` instead of inlined.
+3. `write_diagram` validates, refuses to write on errors (`SystemExit`), writes the file and renders the PNG when draw.io desktop is installed.
+4. Custom layout ONLY when the recipe cannot express the architecture (availability/fault domains, nested compartments, several regions, third-party cloud, rule tables, extra pages). Then use `DrawioBuilder` from the same `scripts` directory with `place_icons` -> `fit_to_children` (innermost first) -> `fit_page` -> `validate` gate exactly as in SKILL.md section 6; never hand-compute container sizes.
 
-**Grid constants** (adjust per diagram):
-```python
-R1 = 50        # first icon row y (below container title)
-R2 = 210       # second icon row y
-COL = 130      # column gap between icons
-SN_H = 380     # subnet height for 2 rows of icons
-ICON_W = 75    # nominal slot width (actual cell width derived from the SVG's aspect)
-ICON_H = 95    # fixed icon cell height
-GAP = 20       # gap between containers
-```
+## Step 4 - Run
 
-**Page dimensions:** Calculate from content. Typical: 1600x1100 for single-VCN, 2400x1400 for multi-VCN.
+`python3 generate_<subject>_drawio.py`. Expect `Wrote <file> (<n> bytes)` and either `Rendered <file>.png` or `draw.io desktop not found; render skipped`. Any `ERROR`/`OVERLAP` line means the file was not written: fix the model and rerun.
 
-### Step 4: Copy DrawioBuilder
+## Step 5 - Gate (mandatory)
 
-Copy the builder class from the plugin's scripts directory into the working directory:
+1. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" "<Subject>_Architecture.drawio"` must exit 0 (1 = errors, 2 = unreadable/unparsable file). Add `--strict` to make crossings blocking.
+2. Fix every `ERROR`/`OVERLAP` line (table below). Read every `WARNING`: long caption -> shorten to 3 lines; estimated crossing -> look at the PNG, then reorder items, move the item to the right tier/panel, or (custom layouts) add `label_pos`/`route="direct"`; accept only when the PNG shows no real crossing.
+3. If Step 4 did not render: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_drawio.py" "<Subject>_Architecture.drawio" -f png` (exit 3 = draw.io absent -> skip and say so).
+4. READ the PNG with the Read tool and check: all glyphs the same size; every caption legible, inside its container, not overlapping; edges run in gutters and cross no icon or caption; hub centred on the VCN; gateways in the bottom row; nothing outside the region; no large empty areas.
+5. Anything failing -> back to Step 2. At most 3 iterations.
 
-```bash
-cp "${CLAUDE_PLUGIN_ROOT}/scripts/drawio_builder.py" ./drawio_builder.py
-```
+## Step 6 - Report
 
-If the file already exists in the working directory, skip the copy.
+- Output path and size (expect roughly 7-13 KB per icon; the 31-icon reference is 280 KB), page size (`pageWidth` x `pageHeight` in the file), counts (VCNs, subnets, icons, edges).
+- Settings used (region, compartment, tenancy, profile, logo) and the gate line verbatim (`OK: no container overlaps ...`).
+- Assumptions: guessed icons and their fallbacks, inferred tiers, edges not backed by Terraform, resources left out.
+- PNG path, or "render skipped: draw.io desktop not installed".
+- Open the file in draw.io desktop; reopen if fonts look wrong (render cache).
 
-### Step 5: Generate the Diagram Script
+## Diagram types
 
-Create a `generate_<name>_drawio.py` script that:
+| Type | Model shape | Files |
+|------|-------------|-------|
+| Single VCN | one `vcns` entry, optional `hub`, services in `vcn.services` | one |
+| Hub-and-spoke | `hub` + hub VCN first + spoke VCNs as columns; shared services in `model.services` (panel right of the columns) | one while <= 3 VCNs and <= 40 icons |
+| Multi-VCN overview | several VCNs with 0-2 key items per subnet; edges between `vcn:<name>` endpoints | one |
+| Service inventory | custom layout: `compartment` groups + `place_icons`, no subnets (SKILL.md section 6) | one |
 
-1. Imports `DrawioBuilder`, `add_icons_to_map`, `COLORS` from `drawio_builder`
-2. Calls `add_icons_to_map()` for any icons not in the default ICON_MAP (check `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/icon-catalog.md` for available icons)
-3. Defines a `build_diagram()` function that:
-   - Creates a `DrawioBuilder` with appropriate page dimensions
-   - Adds title text using `tenancy_name`, `region_label`, and `region` from settings
-   - Adds logo via `d.add_image()` using `logo_light` path from settings (if set)
-   - Builds the container hierarchy (Region > VCN > Subnets)
-   - Places service icons inside their containers
-   - Routes edges (see edge rules below)
-   - Calls `problems = d.check_overlaps()` before `d.write()` and aborts with `raise SystemExit(1)` (printing each problem) if the list is non-empty
-   - Writes the `.drawio` file
+Split when there are more than 3 VCNs or 45 icons, or when row 1 wraps to a third row (row budget 1000 px): one file per VCN plus an overview, or extra pages via `add_page()` in a custom layout (rule tables on page 2).
 
-**Edge rules (default to the orthogonal router, no ports):**
-- Default: `d.add_edge(source, target, label, parent=...)` with no `exit_x`/`exit_y`/`entry_x`/`entry_y`/`waypoints` - draw.io's orthogonal router picks the path
-- **Cross-container edges:** still set `parent` to the common ancestor of the two endpoints, even in this default port-less mode
-- **Explicit ports/waypoints (legacy pinned mode):** only pass `exit_x`/`exit_y`/`entry_x`/`entry_y` or `waypoints` when tight control is needed (e.g., routing around obstacles or docking at a specific side) - this disables the router
-- Solid edges = data flow, dashed (`dashed=True`) = user interaction - don't invert this convention
+## Settings reference (`.claude/oci-drawio-architect.local.md`)
 
-**Follow these rules from the skill:**
-- URL-encode SVGs, never base64
-- Use `container=1` on all group styles (handled by DrawioBuilder)
-- Use `_next_id()` for all cell IDs (handled by DrawioBuilder)
-- Derive row positions from computed bottoms, never hardcode
-- Where Terraform/OCID context is available, the script SHOULD attach it via `add_group()`/`add_icon()`'s `metadata=`/`tooltip=` parameters (e.g., `metadata={"ocid": "..."}`, `tooltip="Primary OLTP database"`) so it survives round-trips through draw.io
-- The script MUST call `problems = d.check_overlaps()` before `d.write()` and abort (`raise SystemExit(1)`, printing each problem) if `problems` is non-empty
+| Key | Source | Used for |
+|-----|--------|----------|
+| `tenancy_name` | `oci iam tenancy get` / manual | title prefix (`model.tenancy_name`) |
+| `tenancy_ocid`, `auth_tenancy_ocid`, `terraform_tenancy_ocid` | Terraform provider / `~/.oci/config` | CLI queries; `auth_*` set when the config identity differs from Terraform's |
+| `region`, `region_label` | provider `region` / `~/.oci/config`; label derived | region container label, title |
+| `home_region`, `subscribed_regions` | `oci iam region-subscription list` | choosing a region when several are in play |
+| `oci_profile`, `oci_auth` | `config_file_profile` / config (`security_token`) | `query_tenancy.py --profile` |
+| `compartment`, `compartment_ocid`, `compartments` | `oci_identity_compartment` resources / vars | title `Compartment:` line, `query_tenancy.py --compartment-id` |
+| `vcns` | `oci_core_vcn` resources / tfvars (`[{"name","cidr"}]`) | VCN-name lookup, subject default |
+| `logo_light`, `logo_dark` | file scan (`*dark*`/`*black*` -> `logo_light`; `*white*`/`*light*` -> `logo_dark`) | `write_diagram(..., logo=logo_light)` on the white page |
+| `terraform_dir`, `terraform_dirs` | shallowest dir with `provider "oci"`; ties listed | default Terraform input |
 
-**Reference files for style details:**
-- Oracle styles: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/oracle-styles.md`
-- Icon catalog: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/icon-catalog.md`
-- Gotchas: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/gotchas.md`
-- Full skill guide: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/SKILL.md`
-- Working example: `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (exercises every container type, the main icon-sizing and edge modes, metadata, and the overlap gate)
+Delete the file to re-detect.
 
-### Step 6: Run the Script and Verify
+## Failure handling
 
-Execute the generated script:
-
-```bash
-python3 generate_<name>_drawio.py
-```
-
-Verify:
-- Script runs without errors
-- Output `.drawio` file exists and has reasonable size (typically 10-100KB)
-
-**Mandatory overlap check gate.** After the script runs, REQUIRE the standalone checker CLI on the output file:
-
-```bash
-python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" <output>.drawio
-```
-
-- **Exit 0:** clean - proceed to Step 7.
-- **Exit 1:** overlaps found - fix the layout math (derive each row's Y from `max(bottoms) + GAP`, per Step 3's overlap-prevention rule), regenerate, and re-run the checker. Do NOT report success to the user while this fails.
-- **Exit 2:** the file/setup is broken (missing/unreadable file, unparsable XML, unsupported compressed content, or a missing sibling `drawio_builder.py`) - diagnose before continuing.
-
-Report the output path and file size to the user only after the checker exits 0.
-
-### Step 7: Report Results
-
-Tell the user:
-- Output file path
-- File size
-- Overlap check passed (Step 6's `check_overlaps.py` gate exited 0)
-- What's in the diagram (VCNs, subnets, services, connections)
-- Settings used (tenancy, region, logo)
-- Suggest opening in draw.io desktop to verify rendering
-- Note: close and reopen if fonts look wrong (draw.io caches renders)
-
-## Diagram Types
-
-This command can produce several diagram types:
-
-### Single-VCN Topology
-Best for application stacks (e.g., a single app VCN). Shows one VCN with all subnets, services, and connections.
-
-### Hub-and-Spoke Network
-Shows the hub VCN with DRG, Firewall, and spoke VCN connections.
-
-### Service Inventory
-Shows compartments with deployed services (compute, databases, etc.) without network details.
-
-### Multi-VCN Overview
-Shows multiple VCNs with their interconnections via DRG.
-
-## Settings Reference
-
-Settings are stored in `.claude/oci-drawio-architect.local.md` (per-project, gitignored).
-
-| Setting | Source | Description |
-|---------|--------|-------------|
-| `tenancy_name` | OCI CLI / manual | Tenancy display name for title |
-| `tenancy_ocid` | Terraform / OCI config | Tenancy OCID (used for CLI queries) |
-| `region` | Terraform provider.tf | OCI region identifier |
-| `region_label` | Auto-derived / manual | Human-readable region name |
-| `oci_profile` | Terraform provider.tf | OCI CLI profile name |
-| `compartment` | Manual | Default compartment for diagrams |
-| `logo_light` | Auto-detected / manual | Logo path for light backgrounds |
-| `logo_dark` | Auto-detected / manual | Logo path for dark backgrounds |
-| `terraform_dir` | Auto-detected / manual | Default Terraform directory |
-
-**Auto-detection script:** `${CLAUDE_PLUGIN_ROOT}/scripts/detect_settings.py`
-
-To re-detect settings, delete `.claude/oci-drawio-architect.local.md` and run `/drawio-architect` again.
+| Symptom | Action |
+|---------|--------|
+| `Unknown icon_key '...'. Did you mean ...` | Use the suggestion or look the key up in `references/icon-catalog.md` (aliases or file stems); never invent keys |
+| `OCI icon directory not found ... Searched:` | Import path wrong (copied builder?) - fix `sys.path.insert` to the plugin `scripts` dir, or `export OCI_SVG_DIR="${CLAUDE_PLUGIN_ROOT}/icons"` |
+| `Pillow is required for PNG/JPEG logos` | Use an SVG logo, or `python3 -m pip install --user Pillow`, or drop `logo=` |
+| `detect_settings.py` hangs or prints `cli_warning` | Rerun with `--no-cli`; fill `tenancy_name` by hand |
+| `draw.io desktop not found` / render exit 3 | Skip the PNG step, report it; `DRAWIO_BIN=/path/to/drawio` overrides discovery |
+| `edge endpoint 'x' not found` / `matches N items` | Use the item's `address` (or `vcn:`/`subnet:`/`hub`/`services`) as endpoint |
+| `OVERLAP: 'A' intersects 'B'` | Recipe: split the VCN or move items between subnets. Custom: call `fit_to_children` innermost-first and place siblings from `bbox()` + `GAP` |
+| `ERROR: '...' extends outside its parent` | Custom layout: `fit_to_children(parent)` after adding children; never hardcode container sizes |
+| `ERROR: '...' overlaps '...'` (icons/captions) | Use `place_icons` pitches (`COL_W` 130, `ROW_H` 160); shorten captions to 3 lines |
+| `ERROR: ... unknown parent id` / `source id does not exist` | Pass ids returned by `add_group`/`add_icon`; edges only between cells on the same page |
+| `WARNING: caption ... needs ~N lines` | Rewrite the caption as Role / identifier / size, 3 lines max |
+| `WARNING: edge ... is estimated to cross` | Check the PNG; reorder items or change tier; custom: `route="direct"` or `label_pos` |
+| `WARNING: content ... exceeds the page` | Call `fit_page()` last (custom layouts) |
+| checker exit 2 | File missing, not XML, or the checker was moved away from `drawio_builder.py` |
 
 ## Prerequisites
 
-- Python 3.9+
-- `Pillow` package (for PNG logo embedding): `pip install Pillow`
-- OCI SVG icons are bundled in `${CLAUDE_PLUGIN_ROOT}/icons/` (no external dependency needed; override with `OCI_SVG_DIR` env var)
-- draw.io desktop for viewing generated diagrams
-- (Optional) OCI CLI configured for auto-detection of tenancy name
+- Python 3.9+ (standard library only); Pillow only for PNG/JPEG logos.
+- draw.io desktop for PNG export and viewing (`/Applications/draw.io.app`, `drawio` on PATH or `DRAWIO_BIN`).
+- OCI CLI (optional) for tenancy-name detection and the experimental `query_tenancy.py`; Terraform (optional) for `terraform show -json`.
+- Icons ship in `${CLAUDE_PLUGIN_ROOT}/icons/` (159 SVGs); `OCI_SVG_DIR` overrides the location.

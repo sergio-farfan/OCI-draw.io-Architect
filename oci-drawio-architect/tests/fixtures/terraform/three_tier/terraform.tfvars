@@ -1,0 +1,6 @@
+region           = "eu-frankfurt-1"
+tenancy_ocid     = "ocid1.tenancy.oc1..aaaafixture"
+compartment_ocid = "ocid1.compartment.oc1..aaaafixture"
+vcn_name         = "vcn-shop"
+vcn_cidr         = "10.0.0.0/16"
+image_ocid       = "ocid1.image.oc1.eu-frankfurt-1.aaaafixture"

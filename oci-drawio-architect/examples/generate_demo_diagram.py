@@ -1,32 +1,33 @@
 #!/usr/bin/env python3
-"""Demo / smoke test for DrawioBuilder v1.1.0 — exercises every container
-type, icon sizing, edge modes, metadata, and the overlap checker.
+"""Demo / smoke test for DrawioBuilder v1.2.0 - exercises every container
+type, the sizing helpers, all three edge modes, metadata/tooltips, a legend,
+a rules table, a second page and the validation gate.
 
-Builds a single-page architecture diagram:
-
+Page 1 "Architecture":
+    Title block + optional logo
     Tenancy
-      +-- On-Premises (onprem)               -- cpe icon
+      +-- On-Premises (onprem)                       cpe icon
       +-- Region
-            +-- Availability Domain -> Fault Domain  -- vm icon
-            +-- Compartment -> VCN -> Subnet (load_balancer + vm icons)
+            +-- Availability Domain -> Fault Domain  vm icon
+            +-- Compartment -> VCN -> Subnet (load_balancer + vm)
             |                      -> Subnet (autonomous_db, metadata+tooltip)
-            +-- Services panel                 -- vault + buckets (explicit size)
-            +-- Oracle Services Network panel  -- service_gateway icon
+            +-- Services panel                       vault + buckets (explicit size)
+            +-- Oracle Services Network panel        service_gateway icon
+    Legend
+Page 2 "Security": an NSG rule table.
 
 Edge modes exercised:
-  - modern, same-container      (load_balancer -> vm, label "443")
-  - modern, cross-container     (cpe -> load_balancer, parent=tenancy)
-  - legacy, pinned + waypoints  (vm -> autonomous_db, parent=vcn)
-  - modern, dashed               (vm -> vault, parent=region)
+  - auto  (default): load_balancer -> vm, cpe -> load_balancer, vm -> vault (dashed)
+  - pinned + waypoints (legacy): vm -> autonomous_db through the subnet gap
+  - direct (port-less orthogonal router): buckets -> service_gateway (adjacent panels)
+  - auto, long cross-container route: autonomous_db -> service_gateway
 
-Layout discipline (see skills/oci-drawio-architect/references/gotchas.md
-#11): every container's position is derived from a sibling's computed
-right/bottom edge plus a gap constant - never a hardcoded coordinate that
-could drift into an overlap. check_overlaps() is run as a mandatory gate
-before the file is written.
+Every container is sized with fit_to_children() after its children exist, the
+page is sized with fit_page(), and validate() must return no errors before the
+file is written.
 
 Usage:
-    python3 generate_demo_diagram.py [output_path]
+    python3 generate_demo_diagram.py [output_path] [--render]
 """
 from __future__ import annotations
 
@@ -35,206 +36,129 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from drawio_builder import DrawioBuilder, ICON_H, LABEL_GAP, LABEL_H
+from drawio_builder import (  # noqa: E402
+    GAP, ICON_H, PAD, ROW1_Y, DrawioBuilder, __version__, render,
+)
 
-# ---------------------------------------------------------------------------
-# Layout constants - every container/icon position below is derived from
-# these plus a sibling's computed right/bottom edge. No magic coordinates.
-# ---------------------------------------------------------------------------
-PAD = 20                                    # inner padding + outer page margin
-GAP = 30                                    # gap between sibling containers
-ROW_Y = 50                                  # first icon row y (icon-only container)
-NESTED_ROW_Y = 40                           # first child y (container-nesting container)
-ICON_COL_W = 140                            # x-spacing between two icons in a row
-ICON_ROW_H = ICON_H + LABEL_GAP + LABEL_H   # 95 + 2 + 45 = 142: one icon's footprint
-ONE_ICON_ROW_H = ROW_Y + ICON_ROW_H         # 192: min height for a 1-icon-row container
-ONE_ICON_PANEL_W = PAD + ICON_COL_W         # 160: width for a single-icon panel
+NESTED_Y = 40   # first child y inside a container that nests containers
 
 
-def build(out_path: Path) -> None:
-    # -- Fault Domain (single vm icon) --------------------------------------
-    fd_w, fd_h = ONE_ICON_PANEL_W, ONE_ICON_ROW_H
-    fd_icon_x, fd_icon_y = PAD, ROW_Y
+def build(out_path: Path, do_render: bool = False) -> None:
+    d = DrawioBuilder(page_name="Architecture")
+    d.add_title(f"DrawioBuilder v{__version__} Demo", region_label="Ashburn",
+                region="us-ashburn-1", compartment="demo-compartment", tenancy="demo-tenancy")
 
-    # -- Availability Domain (wraps the Fault Domain) -----------------------
-    ad_w = PAD + fd_w + PAD
-    ad_h = NESTED_ROW_Y + fd_h + PAD
+    # Containers are created with provisional sizes and fitted afterwards.
+    tenancy = d.add_group("Tenancy: demo-tenancy", PAD, 75, 400, 300, group_type="tenancy", key="tenancy")
+    onprem = d.add_group("On-Premises", PAD, NESTED_Y, 160, 200, parent=tenancy, group_type="onprem", key="onprem")
+    cpe = d.add_icon("Customer Premises\nEquipment", "cpe", PAD, ROW1_Y, parent=onprem, key="cpe")
+    d.fit_to_children(onprem)
 
-    # -- Subnet 1: load_balancer + vm side by side ---------------------------
-    sub1_icon1_x = PAD
-    sub1_icon2_x = PAD + ICON_COL_W
-    subnet1_w = sub1_icon2_x + ICON_COL_W
-    subnet1_h = ONE_ICON_ROW_H
-    subnet_icon_y = ROW_Y
+    region = d.add_group("us-ashburn-1", 0, NESTED_Y, 400, 300, parent=tenancy, group_type="region", key="region")
 
-    # -- Subnet 2: autonomous_db (metadata + tooltip) ------------------------
-    subnet2_w = ONE_ICON_PANEL_W
-    subnet2_h = ONE_ICON_ROW_H
-    sub2_icon_x = PAD
+    ad = d.add_group("Availability Domain 1", PAD, NESTED_Y, 200, 200, parent=region,
+                     group_type="availability_domain", key="ad1")
+    fd = d.add_group("Fault Domain 1", PAD, NESTED_Y, 160, 160, parent=ad, group_type="fault_domain", key="fd1")
+    vm_fd = d.add_icon("App VM\n10.0.9.10", "vm", PAD, ROW1_Y, parent=fd, key="vm-fd")
+    d.fit_to_children(fd)
+    d.fit_to_children(ad)
 
-    # -- VCN (wraps the two subnets, side by side) ---------------------------
-    subnet1_x, subnet1_y = PAD, NESTED_ROW_Y
-    subnet2_x = subnet1_x + subnet1_w + GAP
-    subnet2_y = NESTED_ROW_Y
-    vcn_w = subnet2_x + subnet2_w + PAD
-    vcn_h = NESTED_ROW_Y + max(subnet1_h, subnet2_h) + PAD
+    compartment = d.add_group("Compartment: demo-compartment", 0, NESTED_Y, 400, 300, parent=region,
+                              group_type="compartment", key="compartment")
+    vcn = d.add_group("VCN: demo-vcn (10.0.0.0/16)", PAD, NESTED_Y, 400, 300, parent=compartment,
+                      group_type="vcn", key="vcn")
+    subnet1 = d.add_group("sn-public-1 (10.0.1.0/24)", PAD, NESTED_Y, 300, 200, parent=vcn,
+                          group_type="subnet", key="sn-public-1")
+    (lb, vm_sn1), _ = d.place_icons(subnet1, [("Load Balancer", "load_balancer"), ("Web VM", "vm")], cols=2)
+    d.fit_to_children(subnet1)
 
-    # -- Compartment (wraps the VCN) ------------------------------------------
-    compartment_w = PAD + vcn_w + PAD
-    compartment_h = NESTED_ROW_Y + vcn_h + PAD
-
-    # -- Services panel: vault (derived size) + buckets (explicit 75x95) ----
-    svc_icon1_x = PAD
-    svc_icon2_x = PAD + ICON_COL_W
-    services_w = svc_icon2_x + ICON_COL_W
-    services_h = ONE_ICON_ROW_H
-    services_icon_y = ROW_Y
-
-    # -- Oracle Services Network panel: single service_gateway icon --------
-    osn_w, osn_h = ONE_ICON_PANEL_W, ONE_ICON_ROW_H
-    osn_icon_x, osn_icon_y = PAD, ROW_Y
-
-    # -- Region row: Availability Domain, Compartment, Services, OSN --------
-    ad_x, ad_y = PAD, NESTED_ROW_Y
-    compartment_x = ad_x + ad_w + GAP
-    compartment_y = NESTED_ROW_Y
-    services_x = compartment_x + compartment_w + GAP
-    services_y = NESTED_ROW_Y
-    osn_x = services_x + services_w + GAP
-    osn_y = NESTED_ROW_Y
-    region_w = osn_x + osn_w + PAD
-    region_h = NESTED_ROW_Y + max(ad_h, compartment_h, services_h, osn_h) + PAD
-
-    # -- On-Premises panel: single cpe icon -----------------------------------
-    onprem_w, onprem_h = ONE_ICON_PANEL_W, ONE_ICON_ROW_H
-    onprem_icon_x, onprem_icon_y = PAD, ROW_Y
-
-    # -- Tenancy row: On-Premises, Region --------------------------------------
-    onprem_x, onprem_y = PAD, NESTED_ROW_Y
-    region_x = onprem_x + onprem_w + GAP
-    region_y = NESTED_ROW_Y
-    tenancy_w = region_x + region_w + PAD
-    tenancy_h = NESTED_ROW_Y + max(onprem_h, region_h) + PAD
-
-    # -- Page: title, then the tenancy row -------------------------------------
-    title_x, title_y, title_w, title_h = PAD, 10, 900, 30
-    tenancy_x = PAD
-    tenancy_y = title_y + title_h + GAP
-    page_w = tenancy_x + tenancy_w + PAD
-    page_h = tenancy_y + tenancy_h + PAD
-
-    d = DrawioBuilder(page_name="DrawioBuilder v1.1.0 Demo", width=page_w, height=page_h)
-
-    d.add_text(
-        "DrawioBuilder v1.1.0 Demo Diagram",
-        x=title_x, y=title_y, w=title_w, h=title_h,
-        font_size=18, font_style=1,
-    )
-
-    tenancy = d.add_group("Tenancy: demo-tenancy", tenancy_x, tenancy_y,
-                           tenancy_w, tenancy_h, group_type="tenancy")
-
-    onprem = d.add_group("On-Premises", onprem_x, onprem_y, onprem_w, onprem_h,
-                          parent=tenancy, group_type="onprem")
-    cpe = d.add_icon("Customer Premises Equipment", "cpe",
-                      onprem_icon_x, onprem_icon_y, parent=onprem)
-
-    region = d.add_group("Region: us-ashburn-1", region_x, region_y,
-                          region_w, region_h, parent=tenancy, group_type="region")
-
-    ad = d.add_group("Availability Domain 1", ad_x, ad_y, ad_w, ad_h,
-                      parent=region, group_type="availability_domain")
-    fd = d.add_group("Fault Domain 1", PAD, NESTED_ROW_Y, fd_w, fd_h,
-                      parent=ad, group_type="fault_domain")
-    vm_fd = d.add_icon("App VM", "vm", fd_icon_x, fd_icon_y, parent=fd)
-
-    compartment = d.add_group("Compartment: demo-compartment", compartment_x,
-                               compartment_y, compartment_w, compartment_h,
-                               parent=region, group_type="compartment")
-    vcn = d.add_group("VCN: demo-vcn (10.0.0.0/16)", PAD, NESTED_ROW_Y,
-                       vcn_w, vcn_h, parent=compartment, group_type="vcn")
-
-    subnet1 = d.add_group("sn-public-1 (10.0.1.0/24)", subnet1_x, subnet1_y,
-                           subnet1_w, subnet1_h, parent=vcn, group_type="subnet")
-    lb = d.add_icon("Load Balancer", "load_balancer",
-                     sub1_icon1_x, subnet_icon_y, parent=subnet1)
-    vm_sn1 = d.add_icon("Web VM", "vm",
-                         sub1_icon2_x, subnet_icon_y, parent=subnet1)
-
-    subnet2 = d.add_group("sn-data-1 (10.0.2.0/24)", subnet2_x, subnet2_y,
-                           subnet2_w, subnet2_h, parent=vcn, group_type="subnet")
+    subnet2 = d.add_group("sn-data-1 (10.0.2.0/24)", 0, NESTED_Y, 160, 200, parent=vcn,
+                          group_type="subnet", key="sn-data-1")
     adb = d.add_icon(
-        "Autonomous Database", "autonomous_db", sub2_icon_x, subnet_icon_y,
-        parent=subnet2,
+        "Autonomous\nDatabase", "autonomous_db", PAD, ROW1_Y, parent=subnet2, key="adb",
         metadata={"ocid": "ocid1.autonomousdatabase.oc1..demo", "workload": "OLTP"},
         tooltip="Autonomous DB (demo metadata)",
     )
+    d.fit_to_children(subnet2)
+    # place subnet2 to the right of subnet1 now that subnet1 has its final width
+    _, _, w1, _ = d.bbox(subnet1)
+    d.resize(subnet2, x=PAD + w1 + GAP)
+    d.fit_to_children(vcn)
+    d.fit_to_children(compartment)
 
-    services = d.add_group("Services", services_x, services_y,
-                            services_w, services_h, parent=region, group_type="services")
-    vault = d.add_icon("Vault", "vault", svc_icon1_x, services_icon_y, parent=services)
-    buckets = d.add_icon("Object Storage", "buckets", svc_icon2_x, services_icon_y,
-                          parent=services, w=75, h=95)
+    _, _, ad_w, _ = d.bbox(ad)
+    d.resize(compartment, x=PAD + ad_w + GAP)
+    _, _, comp_w, _ = d.bbox(compartment)
 
-    osn = d.add_group("Oracle Services Network", osn_x, osn_y, osn_w, osn_h,
-                       parent=region, group_type="oracle_services_network")
-    svc_gw = d.add_icon("Service Gateway", "service_gateway",
-                         osn_icon_x, osn_icon_y, parent=osn)
+    services = d.add_group("Services", PAD + ad_w + GAP + comp_w + GAP, NESTED_Y, 300, 200,
+                           parent=region, group_type="services", key="services")
+    vault = d.add_icon("Vault", "vault", PAD, ROW1_Y, parent=services, key="vault")
+    buckets = d.add_icon("Object Storage", "buckets", PAD + 130, ROW1_Y, parent=services, key="buckets",
+                         w=75, h=75)   # explicit size path
+    d.fit_to_children(services)
+    _, _, svc_w, _ = d.bbox(services)
 
-    containers = [tenancy, onprem, region, ad, fd, compartment, vcn,
-                  subnet1, subnet2, services, osn]
-    icons = [cpe, vm_fd, lb, vm_sn1, adb, vault, buckets, svc_gw]
+    osn = d.add_group("Oracle Services Network", PAD + ad_w + GAP + comp_w + GAP + svc_w + GAP, NESTED_Y,
+                      160, 200, parent=region, group_type="oracle_services_network", key="osn")
+    svc_gw = d.add_icon("Service Gateway", "service_gateway", PAD, ROW1_Y, parent=osn, key="sgw")
+    d.fit_to_children(osn)
+    d.fit_to_children(region)
+
+    _, _, onprem_w, _ = d.bbox(onprem)
+    d.resize(region, x=PAD + onprem_w + GAP)
+    d.fit_to_children(tenancy)
 
     # -- Edges ----------------------------------------------------------------
-    # 1. Modern, same-container: load_balancer -> vm inside subnet 1.
-    e1 = d.add_edge(lb, vm_sn1, "443", parent=subnet1)
+    d.add_edge(lb, vm_sn1, "443")                       # auto (same subnet, straight)
+    d.add_edge(cpe, lb, "IPSec")                        # auto, cross-container, parent = tenancy
+    d.add_edge(vm_fd, vault, "secrets", dashed=True)    # auto, dashed (management)
+    gap_x = PAD + w1 + GAP / 2                          # legacy pinned + waypoint, vcn-relative
+    d.add_edge(vm_sn1, adb, "1522", parent=vcn,
+               exit_x=1.0, exit_y=0.5, entry_x=0.0, entry_y=0.5,
+               waypoints=[(gap_x, NESTED_Y + ROW1_Y + ICON_H / 2)])
+    d.add_edge(buckets, svc_gw, "OSN", dashed=True, route="direct")   # v1.1.0-style port-less router
+    d.add_edge(adb, svc_gw, "OSN", dashed=True)                       # auto, long cross-container route
 
-    # 2. Modern, cross-container: cpe -> load_balancer. The common ancestor
-    #    of cpe (tenancy/onprem) and load_balancer (tenancy/region/.../subnet1)
-    #    is the tenancy container.
-    e2 = d.add_edge(cpe, lb, "", parent=tenancy)
+    # -- Legend under the tenancy ---------------------------------------------
+    _, _, _, bottom = d.content_bbox()
+    d.add_legend(PAD, bottom + GAP, entries=[
+        ("edge", "solid", "Data flow"),
+        ("edge", "dashed", "Management / API traffic"),
+        ("group", "vcn", "VCN"),
+        ("group", "subnet", "Subnet"),
+    ])
+    d.fit_page()
 
-    # 3. Legacy, pinned + waypoints: vm (subnet 1) -> autonomous_db
-    #    (subnet 2), routed through the gap between the two subnets.
-    #    Coordinates are vcn-relative since parent=vcn.
-    gap_x = (subnet1_x + subnet1_w + subnet2_x) / 2
-    wp_y = subnet1_y + subnet_icon_y + ICON_H / 2
-    e3 = d.add_edge(
-        vm_sn1, adb, "", parent=vcn,
-        exit_x=1.0, exit_y=0.5, entry_x=0.0, entry_y=0.5,
-        waypoints=[(gap_x, wp_y)],
-    )
+    # -- Page 2: security rules table -----------------------------------------
+    d.add_page("Security", 800, 400)
+    d.add_title("NSG rules - demo-vcn", region_label="Ashburn", region="us-ashburn-1", key="title2")
+    d.add_table([
+        ["Direction", "Source / Destination", "Protocol", "Ports", "Description"],
+        ["Ingress", "0.0.0.0/0", "TCP", "443", "HTTPS from the internet"],
+        ["Ingress", "10.0.1.0/24", "TCP", "1522", "App to Autonomous Database"],
+        ["Egress", "all-iad-services", "TCP", "443", "OCI services via Service Gateway"],
+    ], PAD, 75, col_widths=[80, 170, 80, 60, 260], title="nsg-app (3 rules)", key="nsg-table")
+    d.fit_page()
 
-    # 4. Modern, dashed: vm (fault domain) -> vault. parent=region is the
-    #    common ancestor of the availability-domain and services branches.
-    e4 = d.add_edge(vm_fd, vault, "", parent=region, dashed=True)
-
-    edges = [e1, e2, e3, e4]
-
-    # -- Optional logo: embed the first bundled PNG if Pillow + logos/ exist.
-    logos_dir = Path(__file__).resolve().parent.parent / "logos"
-    if logos_dir.is_dir():
-        pngs = sorted(logos_dir.glob("*.png"))
-        if pngs:
-            try:
-                d.add_image(pngs[0], x=page_w - PAD - 148, y=title_y, w=148, h=39)
-            except ImportError:
-                pass  # Pillow not installed - skip the logo, not an error
-
-    # -- Mandatory overlap gate before writing --------------------------------
-    problems = d.check_overlaps()
-    if problems:
-        for p in problems:
-            print(p)
+    # -- Mandatory validation gate before writing -------------------------------
+    problems = d.validate()
+    errors = [p for p in problems if "WARNING" not in p.split("] ")[-1][:8]]
+    for p in problems:
+        print(p)
+    if errors:
         raise SystemExit(1)
 
     d.write(out_path)
-    print(
-        f"{out_path} | page {page_w}x{page_h} | "
-        f"{len(containers)} containers, {len(icons)} icons, {len(edges)} edges"
-    )
+    n_groups = sum(1 for c in d._cells.values() if c["kind"] == "group")
+    n_icons = sum(1 for c in d._cells.values() if c["kind"] == "icon")
+    n_edges = sum(1 for c in d._cells.values() if c["kind"] == "edge" and c.get("source"))
+    print(f"{out_path} | {len(d._pages)} pages | {n_groups} containers, {n_icons} icons, {n_edges} edges")
+    if do_render:
+        png = render(out_path, fmt="png")
+        print(f"Rendered {png}" if png else "draw.io desktop not found; render skipped")
 
 
 if __name__ == "__main__":
-    out = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("demo_architecture.drawio")
-    build(out)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    out = Path(args[0]) if args else Path("demo_architecture.drawio")
+    build(out, do_render="--render" in sys.argv)

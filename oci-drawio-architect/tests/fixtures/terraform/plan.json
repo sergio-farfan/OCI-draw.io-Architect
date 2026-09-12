@@ -1,0 +1,262 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.5",
+  "variables": {
+    "region": {"value": "uk-london-1"},
+    "compartment_ocid": {"value": "ocid1.compartment.oc1..aaaaplan"}
+  },
+  "planned_values": {
+    "root_module": {
+      "resources": [
+        {
+          "address": "oci_core_vcn.main",
+          "mode": "managed",
+          "type": "oci_core_vcn",
+          "name": "main",
+          "provider_name": "registry.terraform.io/oracle/oci",
+          "values": {
+            "id": "ocid1.vcn.oc1.uk-london-1.existingvcn",
+            "display_name": "vcn-plan",
+            "cidr_blocks": ["10.1.0.0/16"],
+            "compartment_id": "ocid1.compartment.oc1..aaaaplan",
+            "freeform_tags": {"display_name": "tag-must-not-leak"}
+          }
+        },
+        {
+          "address": "oci_core_subnet.web",
+          "mode": "managed",
+          "type": "oci_core_subnet",
+          "name": "web",
+          "values": {
+            "display_name": "sn-web",
+            "cidr_block": "10.1.0.0/24",
+            "prohibit_public_ip_on_vnic": false,
+            "compartment_id": "ocid1.compartment.oc1..aaaaplan"
+          }
+        },
+        {
+          "address": "oci_core_subnet.app",
+          "mode": "managed",
+          "type": "oci_core_subnet",
+          "name": "app",
+          "values": {
+            "display_name": "sn-app",
+            "cidr_block": "10.1.1.0/24",
+            "prohibit_public_ip_on_vnic": true,
+            "compartment_id": "ocid1.compartment.oc1..aaaaplan"
+          }
+        },
+        {
+          "address": "oci_core_subnet.data",
+          "mode": "managed",
+          "type": "oci_core_subnet",
+          "name": "data",
+          "values": {
+            "id": "ocid1.subnet.oc1.uk-london-1.existingdata",
+            "vcn_id": "ocid1.vcn.oc1.uk-london-1.existingvcn",
+            "display_name": "sn-data",
+            "cidr_block": "10.1.2.0/24",
+            "prohibit_public_ip_on_vnic": true,
+            "compartment_id": "ocid1.compartment.oc1..aaaaplan"
+          }
+        },
+        {
+          "address": "oci_core_instance.app[0]",
+          "mode": "managed",
+          "type": "oci_core_instance",
+          "name": "app",
+          "index": 0,
+          "values": {
+            "display_name": "app-0",
+            "shape": "VM.Standard.E4.Flex",
+            "availability_domain": "AD-1",
+            "create_vnic_details": [{"assign_public_ip": false}],
+            "shape_config": [{"ocpus": 1, "memory_in_gbs": 8}]
+          }
+        },
+        {
+          "address": "oci_core_instance.app[1]",
+          "mode": "managed",
+          "type": "oci_core_instance",
+          "name": "app",
+          "index": 1,
+          "values": {
+            "display_name": "app-1",
+            "shape": "VM.Standard.E4.Flex",
+            "availability_domain": "AD-2",
+            "create_vnic_details": [{"assign_public_ip": false}]
+          }
+        },
+        {
+          "address": "oci_load_balancer_load_balancer.web",
+          "mode": "managed",
+          "type": "oci_load_balancer_load_balancer",
+          "name": "web",
+          "values": {"display_name": "lb-web", "shape": "flexible", "is_private": false}
+        },
+        {
+          "address": "oci_load_balancer_backend.app[0]",
+          "mode": "managed",
+          "type": "oci_load_balancer_backend",
+          "name": "app",
+          "index": 0,
+          "values": {"port": 8080, "backendset_name": "bs-app"}
+        },
+        {
+          "address": "oci_load_balancer_backend.app[1]",
+          "mode": "managed",
+          "type": "oci_load_balancer_backend",
+          "name": "app",
+          "index": 1,
+          "values": {"port": 8080, "backendset_name": "bs-app"}
+        },
+        {
+          "address": "oci_core_internet_gateway.igw",
+          "mode": "managed",
+          "type": "oci_core_internet_gateway",
+          "name": "igw",
+          "values": {"display_name": "igw-plan", "enabled": true}
+        },
+        {
+          "address": "oci_mysql_mysql_db_system.db",
+          "mode": "managed",
+          "type": "oci_mysql_mysql_db_system",
+          "name": "db",
+          "values": {
+            "display_name": "mysql-app",
+            "shape_name": "MySQL.VM.Standard.E4.1.8GB",
+            "subnet_id": "ocid1.subnet.oc1.uk-london-1.existingdata",
+            "mysql_version": "8.4.0"
+          }
+        },
+        {
+          "address": "data.oci_identity_availability_domains.ads",
+          "mode": "data",
+          "type": "oci_identity_availability_domains",
+          "name": "ads",
+          "values": {"compartment_id": "ocid1.compartment.oc1..aaaaplan"}
+        }
+      ],
+      "child_modules": [
+        {
+          "address": "module.storage",
+          "resources": [
+            {
+              "address": "module.storage.oci_objectstorage_bucket.logs",
+              "mode": "managed",
+              "type": "oci_objectstorage_bucket",
+              "name": "logs",
+              "values": {"name": "plan-logs", "access_type": "NoPublicAccess"}
+            }
+          ],
+          "child_modules": [
+            {
+              "address": "module.storage.module.nested",
+              "resources": [
+                {
+                  "address": "module.storage.module.nested.oci_kms_vault.main",
+                  "mode": "managed",
+                  "type": "oci_kms_vault",
+                  "name": "main",
+                  "values": {"display_name": "vault-plan", "vault_type": "DEFAULT"}
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "resource_changes": [],
+  "configuration": {
+    "provider_config": {
+      "oci": {"name": "oci", "full_name": "registry.terraform.io/oracle/oci",
+              "expressions": {"region": {"references": ["var.region"]}}}
+    },
+    "root_module": {
+      "resources": [
+        {
+          "address": "oci_core_vcn.main", "mode": "managed", "type": "oci_core_vcn", "name": "main",
+          "expressions": {"display_name": {"constant_value": "vcn-plan"},
+                          "compartment_id": {"references": ["var.compartment_ocid"]}}
+        },
+        {
+          "address": "oci_core_subnet.web", "mode": "managed", "type": "oci_core_subnet", "name": "web",
+          "expressions": {"vcn_id": {"references": ["oci_core_vcn.main.id", "oci_core_vcn.main"]},
+                          "display_name": {"constant_value": "sn-web"}}
+        },
+        {
+          "address": "oci_core_subnet.app", "mode": "managed", "type": "oci_core_subnet", "name": "app",
+          "expressions": {"vcn_id": {"references": ["oci_core_vcn.main.id", "oci_core_vcn.main"]}}
+        },
+        {
+          "address": "oci_core_subnet.data", "mode": "managed", "type": "oci_core_subnet", "name": "data",
+          "expressions": {"vcn_id": {"references": ["oci_core_vcn.main.id", "oci_core_vcn.main"]}}
+        },
+        {
+          "address": "oci_core_instance.app", "mode": "managed", "type": "oci_core_instance", "name": "app",
+          "count_expression": {"constant_value": 2},
+          "expressions": {
+            "display_name": {"references": ["count.index"]},
+            "create_vnic_details": [
+              {"subnet_id": {"references": ["oci_core_subnet.app.id", "oci_core_subnet.app"]},
+               "assign_public_ip": {"constant_value": false}}
+            ]
+          }
+        },
+        {
+          "address": "oci_load_balancer_load_balancer.web", "mode": "managed",
+          "type": "oci_load_balancer_load_balancer", "name": "web",
+          "expressions": {"subnet_ids": {"references": ["oci_core_subnet.web.id", "oci_core_subnet.web"]}}
+        },
+        {
+          "address": "oci_load_balancer_backend.app", "mode": "managed", "type": "oci_load_balancer_backend",
+          "name": "app", "count_expression": {"constant_value": 2},
+          "expressions": {
+            "load_balancer_id": {"references": ["oci_load_balancer_load_balancer.web.id",
+                                                "oci_load_balancer_load_balancer.web"]},
+            "ip_address": {"references": ["oci_core_instance.app[count.index].private_ip",
+                                          "oci_core_instance.app[count.index]", "oci_core_instance.app",
+                                          "count.index"]},
+            "port": {"constant_value": 8080}
+          }
+        },
+        {
+          "address": "oci_core_internet_gateway.igw", "mode": "managed", "type": "oci_core_internet_gateway",
+          "name": "igw",
+          "expressions": {"vcn_id": {"references": ["oci_core_vcn.main.id", "oci_core_vcn.main"]}}
+        },
+        {
+          "address": "oci_mysql_mysql_db_system.db", "mode": "managed", "type": "oci_mysql_mysql_db_system",
+          "name": "db",
+          "expressions": {"subnet_id": {"references": ["data.oci_core_subnets.data.subnets[0].id",
+                                                        "data.oci_core_subnets.data"]}}
+        }
+      ],
+      "module_calls": {
+        "storage": {
+          "source": "./modules/storage",
+          "module": {
+            "outputs": {"bucket_name": {"expression": {"references": ["oci_objectstorage_bucket.logs.name",
+                                                                       "oci_objectstorage_bucket.logs"]}}},
+            "resources": [
+              {"address": "oci_objectstorage_bucket.logs", "mode": "managed", "type": "oci_objectstorage_bucket",
+               "name": "logs", "expressions": {"name": {"constant_value": "plan-logs"}}}
+            ],
+            "module_calls": {
+              "nested": {
+                "source": "./vault",
+                "module": {
+                  "resources": [
+                    {"address": "oci_kms_vault.main", "mode": "managed", "type": "oci_kms_vault", "name": "main",
+                     "expressions": {"display_name": {"constant_value": "vault-plan"}}}
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

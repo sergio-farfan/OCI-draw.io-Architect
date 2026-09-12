@@ -1,9 +1,12 @@
 {
   "name": "oci-drawio-architect",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Generate production-quality draw.io diagrams for OCI architectures using Python, embedded SVG icons, and Oracle template styles",
   "author": {
     "name": "Sergio Farfan"
   },
+  "license": "MIT",
+  "homepage": "https://github.com/sergio-farfan/OCI-draw.io-Architect",
+  "repository": "https://github.com/sergio-farfan/OCI-draw.io-Architect",
   "keywords": ["oci", "drawio", "architecture", "diagrams", "oracle-cloud", "terraform"]
 }

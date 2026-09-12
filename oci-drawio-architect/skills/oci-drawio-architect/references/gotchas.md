@@ -1,139 +1,242 @@
-# draw.io + OCI Icons - Gotchas & Workarounds
+# draw.io + OCI Icons - Gotchas & Workarounds (v1.2.0)
 
-12 issues learned the hard way building OCI draw.io diagrams.
+18 verified pitfalls. Every claim below was reproduced against `scripts/drawio_builder.py`
+1.2.0 (error texts are quoted verbatim). Items marked *migration* matter when updating a
+v1.0/v1.1 script.
 
-## 1. URL-encode SVG data URIs — `;base64,` breaks the style tokenizer
+## 1. URL-encode SVG data URIs - `;base64,` breaks the style tokenizer
 
-draw.io/mxGraph parses a cell style by splitting on `;`. A standard data URI like `image=data:image/png;base64,iVBOR...` gets truncated right at the marker's semicolon: the image value becomes a useless `data:image/png` and everything after the marker becomes a garbage style token.
-
-It is **not** that draw.io "ignores base64" outright — draw.io's own writer strips the `;base64` marker when it places images (the comma-form `data:image/png,iVBOR...` works fine) and its reader re-adds the marker on the way back in. The builder sidesteps the whole problem by standardizing on URL-encoded SVG, which also percent-encodes any interior semicolons so they can never collide with the style tokenizer:
-
-```python
-encoded = urllib.parse.quote(svg_text, safe='')
-data_uri = f"data:image/svg+xml,{encoded}"
-```
-
-**Symptom:** Blank/invisible icon cells in the diagram.
-
-## 2. PNG logo SVG wrapper trick
-
-Wrap the PNG inside an SVG so the final data URI can be URL-encoded with no raw `;base64,` marker sitting in the style string (see #1), then URL-encode the SVG:
+draw.io/mxGraph splits a cell style on `;`. A standard data URI such as
+`image=data:image/svg+xml;base64,PHN2...` is cut at the marker's semicolon: the image value
+becomes `data:image/svg+xml` and the rest turns into garbage style tokens. The builder
+therefore emits **URL-encoded** SVG (`urllib.parse.quote(svg, safe="")`), which also
+percent-encodes any semicolon inside the SVG (`%3B`), so nothing can collide with the
+tokenizer:
 
 ```python
-svg_wrapper = (
-    f'<svg xmlns="http://www.w3.org/2000/svg" '
-    f'xmlns:xlink="http://www.w3.org/1999/xlink" '
-    f'width="{w}" height="{h}">'
-    f'<image width="{w}" height="{h}" '
-    f'xlink:href="data:image/png;base64,{png_b64}"/>'
-    f'</svg>'
-)
-encoded = urllib.parse.quote(svg_wrapper, safe='')
+data_uri = "data:image/svg+xml," + urllib.parse.quote(svg_text, safe="")
 ```
 
-Resize large PNGs first (max ~300px wide) to keep the URL-encoded string manageable.
+**Symptom of doing it wrong:** blank icon cells. A written `.drawio` from the builder
+contains no `;base64,` at all.
 
-## 3. OCI SVG viewBox overflow fix
+## 2. PNG/JPEG logos need Pillow; SVG logos need nothing
 
-OCI SVGs have content that extends beyond the declared `viewBox`. Translate offsets + scaled paths exceed the width/height, causing icons to appear cropped or clipped.
+`add_image()` embeds SVG files directly (URL-encoded, see #1). PNG/JPEG logos are resized to
+at most 300px wide, base64-encoded and wrapped in an `<svg><image xlink:href="data:image/png;base64,..."/></svg>`
+shell so the outer URI can still be URL-encoded. That path imports Pillow and fails with
 
-**Fix:** Parse `translate(tx,ty) scale(sx,sy)` transforms, compute actual bounds (`tx + 100*sx`, `ty + 100*sy`), and expand the viewBox. The `_load_svg()` function in `drawio_builder.py` handles this automatically.
+```
+ImportError: Pillow is required for PNG/JPEG logos: run `python3 -m pip install --user Pillow`, or supply an SVG logo instead.
+```
 
-## 4. Cross-container edge parent rule
+`add_title(..., logo="x.png")` catches this (and a missing file) and prints
+`WARNING: logo skipped: ...` to stderr, returning `{"logo": None}` - the diagram is still
+written. Prefer an SVG logo when Pillow is not available.
 
-When connecting icons in different containers (e.g., DRG in Hub to LB in VCN), the edge's `parent` must be a **common ancestor** (e.g., the Region container).
+## 3. Icon resolution when the builder is imported from another directory
+
+At import time `drawio_builder` picks the first existing directory among, in order:
+`$OCI_SVG_DIR`, `<module dir>/../icons` (plugin layout), `<module dir>/icons`,
+`$CLAUDE_PLUGIN_ROOT/icons`, `~/.claude/plugins/marketplaces/*/plugins/oci-drawio-architect/icons`,
+`~/.claude/plugins/cache/*/oci-drawio-architect/*/icons`, `~/.claude/plugins/cache/*/oci-drawio-architect/icons`,
+`~/.claude/plugins/oci-drawio-architect/icons`. If none exists, the first `add_icon()` raises
+
+```
+FileNotFoundError: OCI icon directory not found. Set the OCI_SVG_DIR environment variable (or call set_icon_dir()) to the plugin's icons/ folder. Searched:
+  <each candidate path>
+```
+
+A copy of `drawio_builder.py` dropped into a project folder has no `../icons`, so **import
+it from the plugin instead of copying it**:
 
 ```python
-# DRG is in hub, LB is in sn_lb inside vcn
-# parent=region (common ancestor), NOT parent=hub or parent=vcn
-d.add_edge(drg, lb, "", parent=region, ...)
+import sys
+sys.path.insert(0, "<plugin>/scripts")   # e.g. os.environ["CLAUDE_PLUGIN_ROOT"] + "/scripts"
+from drawio_builder import DrawioBuilder
 ```
 
-Waypoint coordinates are then in the **parent's coordinate space** (region-relative, not VCN-relative).
+or export `OCI_SVG_DIR=<plugin>/icons`, or call `drawio_builder.set_icon_dir(path)`.
+Unknown icon keys raise `ValueError: Unknown icon_key 'virtual_machine'. Did you mean
+compute_virtual_machine_vm? ...` - every bundled SVG is addressable by file stem or alias.
 
-**Symptom:** Edge appears in wrong position or is invisible.
+## 4. Unknown parent / source / target ids raise at call time
 
-## 5. draw.io render caching
+draw.io stops rendering a page at the first cell whose `parent` cannot be resolved, so a
+typo used to blank the whole diagram. Since v1.2.0 the builder validates ids immediately:
 
-draw.io desktop caches rendered diagrams. After changing fonts, styles, or icon data URIs, you must **close and reopen the file** to see changes. Saving and switching tabs is not enough.
-
-**Workaround:** Close the `.drawio` file completely, then reopen it.
-
-## 6. Cell ID uniqueness
-
-Every `mxCell` must have a unique `id`. Duplicate IDs cause silent rendering failures - some cells disappear or edges attach to wrong nodes.
-
-**Fix:** Use an incrementing counter (`DrawioBuilder._next_id()`). Never hardcode IDs.
-
-## 7. `container=1` requirement
-
-Group cells (Region, VCN, Subnet) **must** have `container=1` in their style for child cells to nest correctly. Without it, children placed with `parent=group_id` will render at the root level instead.
-
-**Symptom:** Icons appear at wrong position, outside their intended container.
-
-## 8. Data URI size limits (~20KB)
-
-Very large SVGs or high-resolution PNGs can produce data URIs exceeding ~20KB. draw.io may silently truncate or fail to render these.
-
-**Mitigations:**
-- Resize PNGs to max 300px wide before encoding
-- OCI SVGs are typically small (~2-5KB) - not usually a problem
-- If an SVG is too large, simplify it or convert to optimized PNG first
-
-## 9. Font availability (system fonts only)
-
-draw.io desktop (Electron) only renders **system-installed fonts**. Web fonts, Google Fonts, and CDN-hosted fonts do NOT work.
-
-- **Oracle Sans** - Oracle's brand font. Must be installed manually. The Oracle templates assume this font.
-- **Georgia** - Web-safe serif font, works everywhere. Good fallback for titles.
-- **Helvetica/Arial** - Safe fallbacks for body text if Oracle Sans is unavailable.
-
-**Symptom:** Text appears in a default font (usually Times New Roman) instead of the specified font.
-
-## 10. Avoid multi-cell OCI Library.xml stencils
-
-The official `OCI Library.xml` for draw.io uses 10-14 cells per icon (multiple layers with fills, strokes, masks). Embedding these programmatically causes:
-- Dark rectangle artifacts from `fillColor=#2d5967` background layers
-- Massive XML size (each icon is ~2KB of XML vs ~200 bytes for SVG approach)
-- Difficulty positioning and connecting edges to multi-cell icons
-
-**Use single-cell SVG embedding instead** (the `add_icon()` approach in `drawio_builder.py`). Clean, single cells that connect and position correctly.
-
-## 11. Container overlap from staggered rows
-
-When subnets of different heights share a visual row, the next row's y-position must be computed from the **tallest** sibling's bottom - not from the main row's height.
-
-**Example failure:**
 ```
-OKE-Worker:    y=50,  h=380 -> bottom=430
-OKE-CP-LB:    y=300, h=230 -> bottom=530  (staggered below OKE-Worker-LB)
-Bastion:       y=450  <- WRONG, overlaps OKE-CP-LB (bottom 530)!
+ValueError: add_group: unknown parent id 'nope'. Pass the id returned by add_group()/add_layer()
+ValueError: add_group: parent must be a cell id (use '1' for the default layer)
+ValueError: add_edge: unknown target id 'zzz'; pass the id returned by add_icon()/add_group()
 ```
 
-**Fix:** Derive every row position from computed bottoms:
-```python
-ROW1_BOTTOM = ROW1_Y + SN_H          # 430
-CPLB_BOTTOM = CPLB_Y + 230           # 530
-ROW2_Y = max(ROW1_BOTTOM, CPLB_BOTTOM) + GAP  # 550 - no overlap
+(the same for `add_icon`, `add_text`, `add_image`, `add_table`, `add_legend`). Parents that
+are edges or live on another page are rejected too. For hand-written or externally edited
+files, `scripts/check_overlaps.py` reports
+
+```
+ERROR: cell 'Orphan VCN' (id orphan) has unknown parent id 'missing-parent'; draw.io drops the rest of the diagram when a parent is missing
+ERROR: edge '(unlabelled)' (id e1) target id 'ghost' does not exist
 ```
 
-**Prevention:** Always run a post-generation overlap check that parses the `.drawio` XML and tests all sibling containers (same parent) for bounding-box intersection. Zero tolerance - any overlap means the layout math is wrong.
+and exits 1.
 
-**v1.1.0 ships this check** - stop hand-rolling it: `scripts/check_overlaps.py` (CLI, run against the written `.drawio` file) and `DrawioBuilder.check_overlaps()` (call before `write()`).
+## 5. Cross-container edges: parent = common ancestor, waypoints in the parent's space
 
-## 12. `imageAspect=0` stretches icons
+When source and target sit in different containers (DRG in the hub, LB in a subnet) the
+edge's `parent` must be an ancestor of both; `add_edge()` picks the **common ancestor**
+automatically when `parent` is omitted (e.g. the region for hub -> subnet, the VCN for
+subnet -> subnet, the subnet for two icons in the same subnet). Waypoints - yours or the
+auto-router's - are expressed in **that parent's** coordinate space, not the page's and not
+the VCN's. Passing a parent that is not an ancestor of both ends makes draw.io draw the
+edge in the wrong place.
 
-Pre-1.1.0, the builder stretched every icon into a fixed 75x95 cell regardless of the source SVG's proportions - OCI SVGs are natively around 84x109 to 84x130, so this produced roughly 15-20% distortion on most icons.
+## 6. Edge routing modes, and when auto routes are resolved
 
-v1.1.0 uses `imageAspect=1` plus a per-icon derived cell width at a fixed height of 95, computed from the SVG's native aspect ratio (see `add_icon()` in `drawio_builder.py`). Only pass explicit `w`/`h` when you deliberately want a non-native aspect - typically wide logical/physical connector shapes (aspect ratio < 0.8).
+- `route="auto"` (default when no ports/waypoints are given): the builder picks the exit/entry
+  sides and gutter waypoints on an orthogonal lattice so the connector avoids icons,
+  captions and foreign containers. Routes are computed **lazily at `validate()` / `write()`
+  / `route_edges()`**, once - so add every container and icon before the first `validate()`,
+  or an icon added afterwards will not be avoided.
+- `route="direct"`: draw.io's own orthogonal router, no pins. Use it for short
+  neighbour-to-neighbour links where you want the editor to keep re-routing when a user
+  drags shapes.
+- `route="pinned"` (automatic when any of `exit_x/exit_y/entry_x/entry_y` or `waypoints` is
+  passed): fixed ports, router off, exactly what v1.0.0 did. Use it when you need a specific
+  side or a specific corridor; ports are 0..1 fractions (`0` = left/top, `1` = right/bottom).
+  Passing pins together with `orthogonal=True` keeps the router and only fixes the sides.
 
----
+`validate()` estimates the polyline draw.io will draw and emits
+`WARNING: edge '443' (Load Balancer -> App VM) is estimated to cross: Blocker` when it passes
+through an icon or caption that is not an endpoint. It is a **heuristic** (it does not know
+draw.io's exact jetty behaviour); `--strict` / `validate(strict=True)` turns it into an
+ERROR. Neither router avoids obstacles for pinned edges - that is what waypoints are for.
 
-## Bonus: Arrow Routing Tips
+## 7. draw.io render caching and system-only fonts
 
-`add_edge()` now defaults to draw.io's orthogonal router (`edgeStyle=orthogonalEdgeStyle`) with router-chosen paths and no fixed ports. The tips below apply when you opt into **legacy mode** (pass explicit ports/waypoints) for tight control over a specific edge:
+draw.io desktop keeps rendered pages cached: after regenerating a file, changing styles or
+swapping icon data URIs, **close the file and reopen it** - saving or switching tabs is not
+enough. Fonts are system fonts only (no web fonts); Oracle Sans is proprietary and must be
+installed manually, which is why every style carries the stack
+`Oracle Sans,Arial,Helvetica,sans-serif` (a bare `fontFamily=Oracle Sans` falls back to a
+serif face). To check a result without the editor, `python3 scripts/render_drawio.py
+out.drawio -f png` exports through the draw.io desktop CLI when it is installed.
 
-- draw.io's router - orthogonal or legacy - does **NOT** auto-avoid unrelated obstacles - always use explicit waypoints for complex routes around containers that aren't part of the edge
-- Route edges along container margins, then through gaps between containers
-- Offset parallel routes by ~8px to prevent overlap
-- `exitX/exitY` and `entryX/entryY` use 0-1 range: `0`=left/top, `0.5`=center, `1`=right/bottom
+## 8. Cell ids: `key=` slugs, duplicates raise, deterministic output
+
+Ids are generated by a per-builder counter (`2`, `3`, ...) unless you pass `key=`. Keys are
+slugged with `[^A-Za-z0-9_.-]+ -> "-"` and trimmed (`"sn-app/lb 01"` -> `sn-app-lb-01`); the
+caption cell gets `<key>-label`. Empty keys and `"0"`/`"1"` are rejected
+(`ValueError: Invalid cell key '0'`), and a second use of the same slug raises
+`ValueError: Duplicate cell key 'sn-app-lb-01'` - even across pages, because the id set is
+per file. The same script always yields the same ids, so keyed diagrams are diffable in git
+and stable for `add_edge(source, target)` references, metadata and links.
+
+## 9. What `container=1` actually does
+
+draw.io nests cells purely by the `parent` attribute; children render inside their parent
+with or without `container=1`. The token matters for two other reasons: in the editor it
+makes the rectangle a drop target / group (with `collapsible=0;expand=0` hiding the fold
+handle and `recursiveResize=0` keeping children unscaled on resize), and in this toolchain it
+is how `check_overlaps.py` / `validate_file()` **classify** a vertex as a container for the
+overlap, containment and routing checks (`shape=image` = icon, a leading `text` token =
+text). A hand-written rectangle without `container=1` is treated as a leaf shape, not a
+container. The old "children render at root level without it" symptom was actually an
+unresolved parent id (#4).
+
+## 10. Data URI size: there is no ~20 KB limit
+
+Measured on the bundled set: SVG files are 1.3-25 KB on disk and encode to **2.1-35.5 KB
+data URIs each** (median ~9 KB). The 31-icon reference sample is 276,659 bytes and a
+31-distinct-icon probe built with the builder was ~342 KB; a single-icon file is ~7 KB.
+Both render fine (the probe was exported to PNG through the draw.io desktop CLI with every
+icon intact) - file size simply scales with icon count. Keep PNG
+logos small (the builder caps them at 300px wide) for file size and editor responsiveness,
+not because of a hard limit.
+
+## 11. Overlap, containment and collision checks are errors for *any* two containers
+
+`validate()` (and the `check_overlaps.py` CLI gate) reports, with absolute page coordinates:
+
+- `OVERLAP: 'Hub' [abs [...]] intersects 'sn-lb' [abs [...]] (different parents)` - any two
+  containers that are not in an ancestor relationship, **not just siblings** (a subnet
+  intruding into an adjacent hub panel is caught even though their parents differ).
+- `ERROR: 'sn-app' [[x=600,y=50,w=300,h=220]] extends outside its parent 'VCN' [w=700,h=500]`
+  - every vertex must fit inside its parent container (1px tolerance).
+- `ERROR: 'App' [abs [...]] overlaps 'Load Balancer' [abs [...]]` - icons, captions and text
+  cells may not intersect each other.
+- `WARNING: caption '...' needs ~5 lines at 11px in 105px but its box is 45px tall` - long
+  captions are warnings, and only when the box is too short: `add_icon()` grows the caption
+  by ~14px per line, so this fires for fixed `label_h=` captions and hand-written files.
+
+`check_overlaps()` returns only the blocking messages (OVERLAP/ERROR); `validate()` returns
+errors followed by warnings. Derive row positions from computed bottoms
+(`fit_to_children()`, `footprint()`, `place_icons()`'s bbox) rather than hardcoding them.
+
+## 12. Labels are HTML-escaped by default; `add_text` is not
+
+`add_group`, `add_icon` and `add_edge` run labels through `escape_label()`: `&`, `<`, `>`
+become entities and `\n` becomes `<br>` (`"a & b\n<x>"` -> `a &amp; b<br>&lt;x&gt;`), so
+CIDRs in angle brackets and ampersands survive. Pass `raw_html=True` for intentional markup
+(`"<b>bold</b>"`). `add_text()` is **raw by default** (`raw_html=True`) because it is meant
+for HTML snippets; use `raw_html=False` there for untrusted plain text. `add_title()` and
+`add_table()` escape their inputs before building their markup.
+
+## 13. Empty SVGs and the stencil placeholder box
+
+Oracle's `OCI Library.xml` export left 55 stencil shells with no drawable content and, in
+some icons, an empty 100x100 caption rectangle (`M 0 100 L 100 100 L 100 0 L 0 0 L 0 100`,
+`fill="none" stroke="#000000"`). The v1.2.0 bundle drops the shells and `_load_svg()` strips
+the placeholder before measuring, so bundled icons are clean - but custom icon sets
+registered through `add_icons_to_map()` / `set_icon_dir()` may still contain both. An SVG
+with nothing drawable raises `ValueError: Icon 'empty' (/path/empty.svg) has no drawable content`
+instead of producing an invisible cell; a leftover placeholder would enlarge the viewBox and
+shrink the glyph.
+
+## 14. The viewBox crop only understands flat `<g transform><path>` SVGs
+
+`_load_svg()` computes the glyph's bounding box from `<path d="...">` coordinates inside
+top-level `<g transform="translate(...) scale(...)">` groups (absolute `M/L/C/Z` commands
+only), then rewrites the root viewBox/width/height to hug it with 1 unit of padding. All 159
+bundled icons match this form. Anything else - nested groups, `<rect>`/`<circle>`/`<use>`,
+relative path commands, other transforms - keeps its **declared** viewBox, which for a
+padded logo or stencil means the glyph renders smaller than its neighbours. For such icons
+pass explicit `w`/`h`, or pre-crop the SVG.
+
+## 15. `fit_to_children()` works inside-out; `resize()` moves siblings
+
+`fit_to_children(cid)` sizes a container from the children **already registered** (icon
+footprints include captions), keeping its x/y. Call it after the children exist and from the
+innermost container outwards: `fit(subnet); fit(vcn); fit(region)`. Fitting the region first
+leaves it at its minimum size and `validate()` then reports the VCN as extending outside it.
+A grown container does not push its siblings - reposition them with
+`resize(sibling, x=..., y=...)` using the new width plus `GAP`. Finish with `fit_page()` so
+the page follows the content (otherwise `validate()` warns `content ... exceeds the page`).
+
+## 16. Multi-page files: unique ids, no cross-page edges
+
+`add_page()` appends a `<diagram id="pageN">`; the only ids that repeat per page are the
+mandatory root cells `0` and `1`. Every id the builder generates is unique across the whole
+file (one counter and one key set per builder). Edges cannot join cells on different pages
+(`ValueError: add_edge: source '3' is on another page`) and a parent from another page is
+rejected (`add_icon: parent '2' lives on another page`). Use `use_page(index_or_name)` to
+switch the current page; `validate()` / `check_overlaps.py` check every page.
+
+## 17. *migration* - `services` changed look; the old style is `metro_or_realm`
+
+The v1.1.0 `services` container (grey `#9E9892` 2px dashed) was in fact Oracle's "Metro
+Area or Realm" grouping. In v1.2.0 `services` renders as the sample's charcoal 1px dashed
+panel and the former look is `group_type="metro_or_realm"`. `hub` still works as a
+deprecated alias of `onprem`. Scripts that hardcoded `spacingLeft=3`, 13px VCN labels or
+`fontSize=11` on region/AD/FD should switch to `DrawioBuilder(style_profile="v1.0")`
+instead of `style_extra` patches.
+
+## 18. *migration* - explicit `w`/`h` bypasses the 75x95 slot
+
+Pre-1.1.0 every icon was stretched into a 75x95 cell (`imageAspect=0`). Now the glyph is
+fitted into a 70x70 box inside the 75x95 slot with `imageAspect=1`. Passing `w` and/or `h`
+to `add_icon()` switches to explicit sizing: the image cell sits at exactly `(x, y)`, the
+slot *is* the cell, and the caption widens to `max(105, w + 30)` - so grids built with
+`COL_W=130` may collide (see #11). Only do this for deliberately wide shapes; otherwise let
+the slot geometry do the work.

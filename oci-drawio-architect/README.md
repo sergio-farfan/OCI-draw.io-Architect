@@ -2,25 +2,28 @@
 
 Generate production-quality draw.io diagrams for Oracle Cloud Infrastructure architectures using Python, embedded SVG icons, and Oracle template styles.
 
-## What's new in 1.1.0
+## What's new in 1.2.0
 
-- Aspect-correct icons: `imageAspect=1` with per-icon derived cell width (fixed 95px height) — pre-1.1.0 stretched every icon ~15-20%
-- Official Oracle v24.2 container styles; 5 new container types (`tenancy`, `availability_domain`, `fault_domain`, `oracle_services_network`, `onprem`); `hub` is now a deprecated alias of `onprem`
-- Edges default to draw.io's orthogonal router; explicit ports/waypoints are still supported (legacy pinned mode)
-- Shipped overlap checker: `scripts/check_overlaps.py` CLI + `DrawioBuilder.check_overlaps()` — mandatory gate in the `/drawio-architect` workflow
-- Optional `metadata=`/`tooltip=` on icons and containers (`<object>` wrappers; visible in draw.io tooltips/Edit Data)
-- Friendlier errors (unknown icon keys get close-match suggestions); `.drawio` files are written with `compressed="false"`
-- `detect_settings`: bounded tenancy-OCID regex (no more cross-variable false matches), deterministic Terraform-dir discovery, robust OCI CLI JSON handling, optional plugin-local `logos/` fallback
-- New `examples/generate_demo_diagram.py` demo / post-install smoke test
+Driven by the full code review and output-quality audit of 1.1.0. Highlights (full list in [CHANGELOG.md](CHANGELOG.md)):
+
+- **Workflow runs as written**: generated scripts import the builder from the plugin (`sys.path.insert(0, "<plugin>/scripts")`) instead of copying `drawio_builder.py`; icons resolve via `$OCI_SVG_DIR`, the plugin `icons/`, `$CLAUDE_PLUGIN_ROOT/icons` and the `~/.claude/plugins` install locations
+- **Reference look restored**: 12px top-left region / on-prem / compartment labels, charcoal 1px dashed services panel, dashed edges `dashPattern=6 3`, font stack `Oracle Sans,Arial,Helvetica,sans-serif`; style profiles `default` / `official` / `v1.0`; new container types `other`, `metro_or_realm`, `third_party_cloud`, `internet`; `ocean` and `neutral_4` added to `COLORS`
+- **Icons**: 16 icons lost their ghost placeholder rectangle, every viewBox is cropped to the glyph, every glyph is fitted into a uniform 70x70 area of the 75x95 slot; 55 empty stencil shells deleted, 4 scrape-artifact files renamed; 159 icons in 12 categories, all addressable by file stem plus 206 short aliases
+- **Self-routing edges**: `add_edge()` defaults to the common-ancestor parent and routes through container margins and gutters, avoiding icons, captions and titles; `route="direct"` / `route="pinned"` keep the old behaviours
+- **Stronger validation**: any-two-container overlaps, containment, icon/caption collisions, unknown `parent` / `source` / `target` ids, long captions, estimated edge crossings; compressed pages and `UserObject` wrappers handled
+- **Helpers**: `place_icons`, `fit_to_children`, `resize`, `fit_page`, `add_title`, `add_legend`, `add_table`, `add_page` / `use_page` / `add_layer`, `key=` for deterministic ids, `metadata` / `tooltip` / `link`, `write()` accepts `str`, `render()`
+- **New scripts**: `oci_layout.py` (model -> diagram), `render_drawio.py`, `build_icon_catalog.py`, `smoke_test.sh`, `parse_terraform.py` (HCL dir / `--plan-json` / `--state-json` -> model), experimental `query_tenancy.py` (live tenancy -> model); `examples/generate_reference_layout.py`; `tests/` (builder, settings detection, icon set)
+- **detect_settings rewritten**: `var.region` resolution, comment stripping, provider-block scoping, brace-matched variables, `.terraform` pruning, complete region table, `[DEFAULT]` inheritance, CLI timeouts and `security_token` auth, fixed logo classification, relative logo paths; new keys `vcns`, `compartments`, `terraform_dirs`, `auth_tenancy_ocid`, `oci_auth`, `subscribed_regions`, `home_region`
+- **Installer / packager**: `python3 -m pip --user`, Pillow optional, `rsync` or `cp`, JSON upsert of `marketplace.json`, 8 verification checks incl. smoke test, better uninstall; reproducible `pack.sh` with `LICENSE` + `icons/NOTICE`, SHA256 printed
 
 ## Installation
 
 ```bash
-tar -xzf oci-drawio-architect-v1.1.0.tar.gz
+tar -xzf oci-drawio-architect-v1.2.0.tar.gz
 ./oci-drawio-architect/install.sh
 ```
 
-Or manually place this directory at `~/.claude/plugins/oci-drawio-architect/`.
+Then, inside Claude Code: `/plugin marketplace add ~/.claude/plugins/marketplaces/local`, `/plugin install oci-drawio-architect@local`, restart. `install.sh --uninstall` reverses everything.
 
 ## Usage
 
@@ -30,13 +33,14 @@ Or manually place this directory at `~/.claude/plugins/oci-drawio-architect/`.
 /drawio-architect
 ```
 
-Interactive workflow that:
-1. Auto-detects project settings (tenancy, region, logos) or loads from config
-2. Asks what to diagram (Terraform path, VCN name, or description)
-3. Reads Terraform configs to extract topology
-4. Plans container hierarchy and grid layout
-5. Generates a Python script using `DrawioBuilder`
-6. Runs the script to produce a `.drawio` file
+Interactive workflow:
+1. **Settings** - load `.claude/oci-drawio-architect.local.md` or auto-detect (tenancy, region, VCNs, compartments, logos)
+2. **Input** - Terraform path, VCN name, or free-form description
+3. **Model** - normalize the input into the diagram model (VCNs, subnets, services, gateways, hub, edges)
+4. **Generate** - write `generate_<name>_drawio.py` on top of `DrawioBuilder` / `oci_layout`
+5. **Run** - execute it to produce the `.drawio`
+6. **Validate + render** - `scripts/check_overlaps.py` must exit 0; `scripts/render_drawio.py` exports a PNG when draw.io desktop is installed
+7. **Report** - path, size, contents, settings used
 
 ### Skill (Auto-Activated)
 
@@ -47,19 +51,29 @@ The `oci-drawio-architect` skill activates automatically when you mention:
 
 ## Project Settings
 
-On first run, `/drawio-architect` auto-detects settings from your Terraform configs and OCI CLI, then saves them to `.claude/oci-drawio-architect.local.md` (per-project, gitignored).
+On first run, `/drawio-architect` runs `scripts/detect_settings.py` and saves the result to `.claude/oci-drawio-architect.local.md` (per-project, gitignored via `.claude/*.local.md`).
+
+```bash
+python3 scripts/detect_settings.py [-h] [--no-cli] [terraform_dir]   # exit 0 ok, 1 nothing found, 2 bad dir
+```
 
 ### Auto-Detection Sources
 
-| Setting | Terraform | OCI CLI | OCI Config |
-|---------|-----------|---------|------------|
-| `region` | `provider.tf` | - | `~/.oci/config` |
-| `oci_profile` | `provider.tf` | - | - |
+| Setting | Terraform | OCI CLI | `~/.oci/config` |
+|---------|-----------|---------|-----------------|
+| `region`, `region_label` | non-aliased `provider "oci"` block; `var.` / `local.` resolved via `terraform.tfvars`, `*.auto.tfvars[.json]`, variable defaults | - | profile region (fallback) |
+| `oci_profile`, `oci_auth` | `config_file_profile`, `auth` | - | `security_token_file` -> `security_token` |
+| `tenancy_ocid`, `auth_tenancy_ocid` | provider block / tfvars (`^ocid1.tenancy.`) | corrected from `oci iam tenancy get` | profile tenancy |
 | `tenancy_name` | - | `oci iam tenancy get` | - |
-| `tenancy_ocid` | `*.tfvars` | - | `~/.oci/config` |
-| `logo_light/dark` | File scan | - | - |
+| `home_region`, `subscribed_regions` | - | `oci iam region-subscription list` | - |
+| `compartment`, `compartment_ocid`, `compartments` | `oci_identity_compartment` resources, `compartment_ocid` / `compartment_id` | - | - |
+| `vcns` | `oci_core_vcn` resources, `vcns = {...}` tfvars maps | - | - |
+| `terraform_dir`, `terraform_dirs` | shallowest dir with a `provider "oci"` block (else tfvars); ties reported | - | - |
+| `logo_light`, `logo_dark` | file scan (see below) | - | - |
 
-Logo file scan checks project-level locations first (`Network/Documents/logos`, `logos/`, `assets/logos`, `images/`), then falls back to an optional plugin-local `logos/` directory (`oci-drawio-architect/logos/`) — drop your own PNGs there if you want a default logo without adding one to every project.
+Comments are stripped before parsing, `terraform {}` / `backend {}` blocks and non-OCI providers are ignored, `.terraform`, `.git`, `node_modules`, `.venv` and `__pycache__` are pruned. `~/.oci/config` (or `$OCI_CLI_CONFIG_FILE`) keys inherit from `[DEFAULT]`. CLI calls time out after 8 s and use `--auth security_token` when session auth is configured; `--no-cli` skips them. The region table has 55 entries (`uk-london-1` is London; `eu-london-1` does not exist) and unknown regions get a derived label.
+
+Logo scan: `logos/`, `assets/logos/`, `assets/images/`, `docs/logos/` (stored as project-relative paths), then the optional plugin-local `logos/` directory (absolute paths) - drop your own PNG/SVG files there for a default logo. Files named `*dark*` / `*black*` become `logo_light` (dark artwork for light backgrounds); `*white*` / `*light*` become `logo_dark`.
 
 ### Settings File Format
 
@@ -68,75 +82,103 @@ Logo file scan checks project-level locations first (`Network/Documents/logos`, 
 ---
 tenancy_name: "mytenancy"
 tenancy_ocid: "ocid1.tenancy.oc1..aaaa..."
-region: "eu-frankfurt-1"
-region_label: "Frankfurt"
+region: "uk-london-1"
+region_label: "London"
+home_region: "uk-london-1"
+subscribed_regions: ["uk-london-1", "eu-frankfurt-1"]
 oci_profile: "DEFAULT"
 compartment: "my-compartment"
+compartment_ocid: "ocid1.compartment.oc1..aaaa..."
+vcns: [{"name": "hub-vcn", "cidr": "10.0.0.0/16"}, {"name": "spoke-vcn", "cidr": "10.1.0.0/16"}]
 logo_light: "logos/company_logo_dark.png"
 logo_dark: "logos/company_logo_light.png"
-terraform_dir: "terraform/environments/frankfurt"
+terraform_dir: "terraform/environments/london"
 ---
 
 # OCI draw.io Architect Settings
 Auto-detected. Edit values above as needed.
 ```
 
-To re-detect: delete the file and run `/drawio-architect` again.
-
-### Manual Override
-
-You can edit any field in the settings file. Common manual settings:
-- `compartment` - not auto-detected, set for diagram scope
-- `region_label` - override the display name
-- `logo_light` / `logo_dark` - point to your organization's logos
+To re-detect: delete the file and run `/drawio-architect` again. Any field can be edited by hand; `compartment`, `region_label` and the logo paths are the usual overrides.
 
 ## Diagram Types
 
-| Type | Best For | Typical Size |
-|------|----------|-------------|
-| Single-VCN Topology | Application stacks (single VCN) | 1600x1100 |
-| Hub-and-Spoke Network | Network overview with DRG | 2400x1400 |
-| Service Inventory | Compartment-level resource view | 1800x1200 |
-| Multi-VCN Overview | VCN interconnections via DRG | 2400x1600 |
+All types share one model schema (see `scripts/oci_layout.py`) and the page is sized from the content with `fit_page()`.
+
+| Type | Best For | Layout |
+|------|----------|--------|
+| Single-VCN Topology | Application stacks (single VCN) | Region > optional hub panel + one VCN column: subnet rows in traffic order, data tier, OCI Services panel, gateway row |
+| Hub-and-Spoke Network | Network overview with DRG | Hub / on-prem panel left, spoke VCN columns, DRG edges through the gutters |
+| Service Inventory | Compartment-level resource view | Compartment / services panels via `place_icons()` + `fit_to_children()`, rule lists via `add_table()` |
+| Multi-VCN Overview | VCN interconnections via DRG | Several VCN columns, regional OCI Services panel, auto-parented cross-VCN edges |
 
 ## Prerequisites
 
-- **Python 3.9+**
-- **Pillow**: `pip install Pillow` (for PNG logo embedding)
-- **draw.io desktop**: For viewing generated diagrams
-- (Optional) **OCI CLI**: For auto-detecting tenancy name
+- **Python 3.9+** (standard library only)
+- **draw.io desktop**: for viewing generated diagrams and for the optional PNG/SVG/PDF export
+- (Optional) **Pillow**: `python3 -m pip install --user Pillow` - only for embedding PNG/JPEG logos with `add_image()`
+- (Optional) **OCI CLI**: for auto-detecting tenancy name and region subscriptions
 
-OCI SVG icons (220 icons, 1.7MB) are bundled in `icons/`. No external icon dependency needed.
+OCI SVG icons (159 files, 12 categories, about 1.4 MB) are bundled in `icons/`; no external icon dependency is needed. Override the location with `OCI_SVG_DIR`.
 
 ## Plugin Structure
 
 ```
 oci-drawio-architect/
 ├── .claude-plugin/
-│   └── plugin.json              # Plugin manifest
+│   └── plugin.json                    # Plugin manifest (version 1.2.0)
 ├── commands/
-│   └── drawio-architect.md      # /drawio-architect slash command
+│   └── drawio-architect.md            # /drawio-architect slash command
 ├── skills/
 │   └── oci-drawio-architect/
-│       ├── SKILL.md             # Auto-activated skill
+│       ├── SKILL.md                   # Auto-activated skill
 │       └── references/
-│           ├── oracle-styles.md # Oracle template color/style reference
-│           ├── icon-catalog.md  # ~160 OCI SVG icons across 14 categories
-│           └── gotchas.md       # 12 battle-tested workarounds
+│           ├── oracle-styles.md       # Container / edge / colour reference
+│           ├── icon-catalog.md        # Generated: 159 icons, 206 aliases
+│           ├── gotchas.md             # Known pitfalls and workarounds
+│           └── templates/             # physical_example_*.svg composites (docs only)
 ├── scripts/
-│   ├── drawio_builder.py        # DrawioBuilder Python class
-│   ├── detect_settings.py       # Auto-detection from Terraform/OCI CLI
-│   └── check_overlaps.py        # Overlap-checker CLI (mandatory workflow gate)
+│   ├── drawio_builder.py              # DrawioBuilder (v1.2.0): icons, styles, routing, validation
+│   ├── oci_layout.py                  # Model dict/JSON -> .drawio layout recipe (CLI + API)
+│   ├── check_overlaps.py              # Validator CLI: --strict, --quiet; exit 0/1/2
+│   ├── render_drawio.py               # PNG/SVG/PDF export via draw.io desktop; exit 0/1/3
+│   ├── detect_settings.py             # Settings probe: Terraform, ~/.oci/config, OCI CLI
+│   ├── parse_terraform.py             # HCL dir / plan JSON / state JSON -> model (--vcn, --out)
+│   ├── query_tenancy.py               # Experimental: live tenancy -> model via OCI CLI
+│   ├── build_icon_catalog.py          # Regenerate / --check references/icon-catalog.md
+│   └── smoke_test.sh                  # Demo -> overlap gate -> PNG (if draw.io present)
 ├── examples/
-│   └── generate_demo_diagram.py # Demo / post-install smoke test
-├── icons/                        # Bundled OCI SVG icons (220 files, 14 categories)
-├── install.sh                    # Installer script
-├── pack.sh                       # Packaging script
+│   ├── generate_demo_diagram.py       # Two-page demo: every container type, edge modes, legend, table
+│   ├── generate_reference_layout.py   # Rebuilds the reference sample from a MODEL dict
+│   └── make_screenshots.py            # Regenerates the README screenshots from the reference example
+├── tests/
+│   ├── test_builder.py                # DrawioBuilder: styles, routing, validation, helpers
+│   ├── test_detect_settings.py        # Settings probe over tests/fixtures/detect/*
+│   ├── test_icons.py                  # SVG integrity, viewBox, aliases, ICON_MAP
+│   └── fixtures/
+├── icons/                             # 159 OCI SVG icons in 12 category dirs + NOTICE
+├── LICENSE                            # MIT (plugin code)
+├── install.sh                         # Installer / --uninstall
+├── pack.sh                            # Reproducible release tarball
+├── CHANGELOG.md
 └── README.md
 ```
 
-## Phase 2 (Planned)
+## Development
 
-Future agents for autonomous Terraform-to-diagram generation:
-- `diagram-planner` - Extracts VCN topology from `.auto.tfvars`
-- `architecture-mapper` - Maps services to VCNs/subnets from `.tf` files
+```bash
+python3 -m unittest discover -s tests          # builder, settings detection, icons
+scripts/smoke_test.sh                          # demo -> check_overlaps -> PNG (SMOKE_SKIP_PNG=1 to skip)
+python3 examples/generate_reference_layout.py out.drawio --render
+python3 scripts/parse_terraform.py <tf_dir> [--vcn NAME] [--plan-json F | --state-json F] --out model.json
+python3 scripts/check_overlaps.py --strict out.drawio
+python3 scripts/oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo f] [--render png]
+python3 scripts/build_icon_catalog.py --check   # after touching icons/
+./pack.sh [/output/dir]                         # oci-drawio-architect-v1.2.0.tar.gz + SHA256
+```
+
+Generated files weigh roughly 7-9 KB per embedded icon (demo: 8 icons, ~77 KB; reference sample: 31 icons, ~280 KB).
+
+## Icon licensing
+
+The plugin code is MIT (see `LICENSE`). The SVGs under `icons/` are Oracle Cloud Infrastructure architecture icons, Copyright (c) Oracle and/or its affiliates, from the [OCI Architecture Diagram Toolkit](https://docs.oracle.com/en-us/iaas/Content/General/Reference/graphicsfordiagrams.htm). They are not covered by the MIT license and are bundled only to document OCI architectures - see `icons/NOTICE`.

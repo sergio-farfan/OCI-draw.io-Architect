@@ -1,150 +1,89 @@
 #!/usr/bin/env python3
-"""Validate a .drawio file for overlapping containers.
+"""Validate a .drawio file: overlaps, containment, references, captions, crossings.
 
-Standalone CLI wrapper around find_container_overlaps() from the sibling
-drawio_builder.py. Run this after generating a diagram to catch overlapping
-sibling containers (regions/VCNs/subnets/etc.) before opening the file in
-draw.io. Intended as a mandatory post-generation gate.
+Standalone CLI around ``drawio_builder.validate_file()``. Run it after
+generating a diagram; it is the mandatory gate in the /drawio-architect
+workflow. Compressed pages are inflated transparently, ``<object>`` and
+``<UserObject>`` wrappers are understood, and every page is checked.
+
+Checks (ERROR = exit 1):
+  - cells whose parent id does not exist, edges whose source/target is missing
+  - any two containers (not just siblings) whose boxes intersect
+  - any shape extending outside its parent container
+  - icons / captions / text cells overlapping each other
+Checks (WARNING = exit 0 unless --strict):
+  - captions that need more lines than their box provides
+  - connectors estimated to cross icons or captions that are not endpoints
+  - pages without content
 
 Usage:
-    python3 check_overlaps.py <file.drawio>
+    python3 check_overlaps.py [--strict] [--quiet] <file.drawio> [more files...]
 
 Exit codes:
-    0 - no overlaps found
-    1 - one or more overlapping container pairs found
-    2 - usage error, missing/unreadable file, unparsable XML,
-        unsupported (compressed) diagram content, or a missing sibling
-        drawio_builder.py (ImportError)
+    0 - clean (warnings may have been printed unless --strict)
+    1 - one or more errors (or warnings with --strict)
+    2 - usage error, missing/unreadable file, unparsable XML or a missing
+        sibling drawio_builder.py (ImportError)
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from drawio_builder import build_cell_registry, find_container_overlaps, _fmt_num
-except ImportError:
+    from drawio_builder import __version__, validate_file
+except ImportError as exc:
     print(
         "check_overlaps.py must live next to drawio_builder.py (plugin scripts "
-        "directory), or copy drawio_builder.py alongside it.",
+        f"directory), or copy drawio_builder.py alongside it. ({exc})",
         file=sys.stderr,
     )
     sys.exit(2)
 
 
-def _registered_containers(registry: dict[str, dict]) -> set[str]:
-    return {
-        cid for cid, e in registry.items()
-        if e["vertex"] == "1" and "container=1" in e["style"]
-    }
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("files", nargs="+", metavar="file.drawio")
+    ap.add_argument("--strict", action="store_true",
+                    help="treat warnings (e.g. estimated edge crossings) as errors")
+    ap.add_argument("--quiet", action="store_true", help="print only the summary lines")
+    ap.add_argument("--version", action="version", version=f"drawio_builder {__version__}")
+    args = ap.parse_args(argv)
 
+    worst = 0
+    for name in args.files:
+        path = Path(name)
+        try:
+            errors, warnings, pages, containers = validate_file(path, strict=args.strict)
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"Cannot read '{path}': {exc}", file=sys.stderr)
+            return 2
+        except ET.ParseError as exc:
+            print(f"Failed to parse '{path}' as XML: {exc}", file=sys.stderr)
+            return 2
+        except ValueError as exc:
+            print(f"'{path}': {exc}", file=sys.stderr)
+            return 2
 
-def _find_nested_container_warnings(root) -> list[str]:
-    """Vertices with container=1 that spill outside their parent container.
-
-    A vertex's geometry is already expressed relative to its immediate
-    parent's origin, so containment can be checked in that local frame
-    without walking the full absolute-coordinate ancestor chain: converting
-    both sides to absolute page coordinates would add the same ancestor
-    offset to the child and the parent alike, so it cancels out of the
-    comparison. Only checked when the parent is itself a registered
-    container (top-level containers whose parent is the default layer are
-    skipped).
-    """
-    registry = build_cell_registry(root)
-    containers = _registered_containers(registry)
-    warnings = []
-    for cid in containers:
-        entry = registry[cid]
-        parent = entry["parent"]
-        if parent not in containers:
-            continue
-        p = registry[parent]
-        if (entry["x"] < 0 or entry["y"] < 0
-                or entry["x"] + entry["w"] > p["w"]
-                or entry["y"] + entry["h"] > p["h"]):
-            warnings.append(
-                "WARNING: '{}' [x={},y={},w={},h={}] is not fully inside "
-                "parent container '{}' [w={},h={}]".format(
-                    entry["value"], _fmt_num(entry["x"]), _fmt_num(entry["y"]),
-                    _fmt_num(entry["w"]), _fmt_num(entry["h"]),
-                    p["value"], _fmt_num(p["w"]), _fmt_num(p["h"]),
-                )
-            )
-    return warnings
-
-
-def _count_containers(root) -> int:
-    return len(_registered_containers(build_cell_registry(root)))
-
-
-def main() -> int:
-    if len(sys.argv) != 2:
-        print("Usage: python3 check_overlaps.py <file.drawio>", file=sys.stderr)
-        return 2
-
-    path = Path(sys.argv[1])
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as exc:
-        print(f"Cannot read '{path}': {exc}", file=sys.stderr)
-        return 2
-
-    try:
-        mxfile = ET.fromstring(text)
-    except ET.ParseError as exc:
-        print(f"Failed to parse '{path}' as XML: {exc}", file=sys.stderr)
-        return 2
-
-    diagrams = mxfile.findall("diagram")
-    multi_page = len(diagrams) > 1
-
-    all_overlaps = []
-    all_warnings = []
-    total_containers = 0
-
-    for diagram in diagrams:
-        name = diagram.get("name") or diagram.get("id", "")
-        model = diagram.find("mxGraphModel")
-        if model is None:
-            if (diagram.text or "").strip():
-                print(
-                    'compressed .drawio content is not supported; regenerate '
-                    'with DrawioBuilder v1.1.0+ (writes compressed="false")',
-                    file=sys.stderr,
-                )
-                return 2
-            continue
-
-        root = model.find("root")
-        if root is None:
-            continue
-
-        overlaps = find_container_overlaps(root)
-        warnings = _find_nested_container_warnings(root)
-        total_containers += _count_containers(root)
-
-        prefix = f"[page: {name}] " if multi_page else ""
-        all_overlaps.extend(prefix + msg for msg in overlaps)
-        all_warnings.extend(prefix + msg for msg in warnings)
-
-    for msg in all_overlaps:
-        print(msg)
-    for msg in all_warnings:
-        print(msg)
-
-    if all_overlaps:
-        print(f"FAIL: {len(all_overlaps)} overlapping pair(s).")
-        return 1
-
-    print(
-        f"OK: no container overlaps ({total_containers} containers checked "
-        f"across {len(diagrams)} page(s))."
-    )
-    return 0
+        if not args.quiet:
+            for msg in errors:
+                print(msg)
+            for msg in warnings:
+                print(msg)
+        label = f"{path}: " if len(args.files) > 1 else ""
+        if errors:
+            print(f"{label}FAIL: {len(errors)} error(s), {len(warnings)} warning(s) "
+                  f"({containers} containers across {pages} page(s)).")
+            worst = max(worst, 1)
+        else:
+            extra = f", {len(warnings)} warning(s)" if warnings else ""
+            print(f"{label}OK: no container overlaps or layout errors "
+                  f"({containers} containers checked across {pages} page(s){extra}).")
+    return worst
 
 
 if __name__ == "__main__":
