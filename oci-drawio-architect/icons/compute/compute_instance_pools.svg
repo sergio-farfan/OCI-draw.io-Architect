@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 84.0 125.00000000000001" width="84" height="125">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-1 -1 86 86" width="86" height="86">
   <g transform="translate(1.00,1.00) scale(0.8200,0.8200)">
     <path d="M 5.35 99.76 C 2.43,99.76 0,97.32 0,94.4 L 0 5.35 C 0,2.43 2.43,0 5.35,0 L 94.65 0 C 97.57,0 100,2.43 100,5.35 L 100 94.65 C 100,97.57 97.57,100 94.65,100 L 5.35 99.76 L 5.35 99.76" fill="#FFFFFF" stroke="none" stroke-width="0.5"/>
   </g>
@@ -28,8 +28,5 @@
   </g>
   <g transform="translate(8.00,49.00) scale(0.6800,0.1700)">
     <path d="M 95.6 47.13 C 90.62,57.47 76.25,82.76 50.15,82.76 C 20.24,82.76 8.21,59.77 4.4,49.42 L 4.4 0 L 0 0 L 0 58.62 L 0.88 60.92 C 4.69,72.42 17.3,100 50.15,100 C 79.47,100 94.72,68.96 98.83,59.77 L 100 57.47 L 100 0 L 95.6 0 L 95.6 47.13 L 95.6 47.13" fill="#2d5967" stroke="none" stroke-width="0.5"/>
-  </g>
-  <g transform="translate(8.00,89.00) scale(0.6800,0.3600)">
-    <path d="M 0 100 L 100 100 L 100 0 L 0 0 L 0 100" fill="none" stroke="#000000" stroke-width="0.5"/>
   </g>
 </svg>

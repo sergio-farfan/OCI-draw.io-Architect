@@ -1,0 +1,21 @@
+NOTICE - Oracle Cloud Infrastructure architecture icons
+
+The SVG files in this directory (and its subdirectories) are Oracle Cloud
+Infrastructure (OCI) architecture icons.
+
+    Copyright (c) Oracle and/or its affiliates.
+
+They are sourced from the OCI Architecture Diagram Toolkit published by
+Oracle:
+
+    https://docs.oracle.com/en-us/iaas/Content/General/Reference/graphicsfordiagrams.htm
+
+These icons are provided under Oracle's own terms for the toolkit and are
+NOT covered by the MIT license that applies to the rest of the
+oci-drawio-architect plugin (see ../LICENSE). The plugin author claims no
+ownership of, or rights in, these icons; they are bundled here solely so
+the plugin can embed them when documenting OCI architectures.
+
+Their intended use within this plugin is the documentation of Oracle Cloud
+Infrastructure architectures. Refer to Oracle's page above for the
+applicable terms before using the icons for any other purpose.
