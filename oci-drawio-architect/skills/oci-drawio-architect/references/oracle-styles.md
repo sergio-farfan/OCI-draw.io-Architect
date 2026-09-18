@@ -31,6 +31,7 @@ Facts established from the official sources that drive the profiles:
 - **Oracle Sans for all diagram text**, with Arial/Calibri as sanctioned fallbacks. Georgia titles (v1.0/v1.1) were a project convention and are no longer emitted.
 - The v1.1.0 `services` style (`#9E9892`, 2px dashed) was byte-for-byte Oracle's **"Metro Area or Realm"** grouping; it is now exposed as `group_type="metro_or_realm"`. `services` now uses the charcoal 1px dashed style that matches both the sample's services panel and the official logical **"Other Group"** stroke (there is no official "services panel").
 - **Oracle Services Network**: Rose 1px dashed border, Air fill (PPTX slide 19 "Optional" grouping spec; slide 19's Oracle Services Network spec is Neutral 3 2pt dashed with a Bark label and the v24.2 `.drawio` uses Sienna 2px dashed). The recipe labels it "Oracle Services Network" left-aligned (`label_position="left"`).
+- **Route table / security list / NSG badges**: PPTX slide 18 - "VCN, routing table, and security list icons are used at half size as labels to differentiate the VCN and subnet"; the v24.2 `.drawio` changelog - "Add a combination icon for situations when both a route table and security list icon are needed". The bundled set has the separate glyphs (`route_table`, `security_list`, `nsg`) and no combined one, so `add_badge()` draws 22 px badges: route table centred on the subnet's top-right corner, security lists 26 px to its left, the NSG shield over the top-right of the resource's slot (**project** geometry, **official** rule).
 - Rounded-corner radii differ between the two official sources: **AD arcSize 8 / FD arcSize 7** in `OCI Library.xml`, **1 / 3** in the physical templates. `official` uses the library values, `default`/`v1.0` the template values.
 
 ## 2. Palette (`drawio_builder.COLORS`)
@@ -152,7 +153,7 @@ whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strok
 ```
 whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#AE562C;fontSize=11;fontStyle=1;fontColor=#AE562C;align=left;spacingLeft=5;ociGroup=subnet;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
-Like `vcn` with a 1px border. `fontSize` is `subnet_font` (11 sample / 12 official).
+Like `vcn` with a 1px border. `fontSize` is `subnet_font` (11 sample / 12 official). Route table / security list badges (`add_badge()`, section 5) straddle its top-right corner.
 
 ### services
 ```
@@ -236,6 +237,20 @@ text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=top;white
 - overrides: `label_w`, `label_h`, `font_size`; `key="lb"` names the cells `lb` and `lb-label`.
 - `label_fill=<hex>` replaces the caption's `fillColor=none` with an opaque colour (e.g. `COLORS["region_fill"]`) so the text stays legible where a border-straddling gateway's caption crosses a dashed VCN or region line.
 - `footprint(cid)` returns slot + caption; `place_icons()` returns the bounding box of all footprints so `fit_to_children()` includes captions.
+
+### add_badge()
+
+`add_badge(icon_key, cx, cy, parent="1", host=None, size=BADGE_SIZE, key=None, metadata=None, tooltip=None)`
+emits one image cell of `size` x `size` (22) centred on `(cx, cy)` in the parent's coordinates,
+no caption:
+```
+shape=image;verticalLabelPosition=bottom;verticalAlign=top;imageAspect=1;aspect=fixed;ociRole=badge;ociHost=<host id>;image=data:image/svg+xml,<url-encoded svg>;
+```
+`ociRole=badge` marks the cell for the validator (it may straddle its parent's border and overlap the
+cell named by `ociHost`); `fit_to_children()` ignores badges; the router ignores badges hosted by an
+icon and treats corner badges as obstacles. Recipe geometry: route table centre `(w, 0)` and
+security lists `(w - 26, 0)` in subnet coordinates (`BADGE_GAP` = 4); NSG box `(53, 0, 22, 22)` in
+the host's 75x95 slot. Ids `<subnet>-rt`, `<subnet>-sl`, `<icon>-nsg`.
 
 ## 6. Edge styles (`add_edge()`)
 

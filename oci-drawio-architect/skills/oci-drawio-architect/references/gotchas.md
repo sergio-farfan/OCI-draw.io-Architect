@@ -288,3 +288,17 @@ and the box height grows to `label_lines(text, w - 8, 11) * LABEL_LINE_H + 8` (m
 hint as a space, so the estimate matches what the browser does. Validator rule 5 now covers
 `add_box()` cells too: any wrapped label taller than its box is a `WARNING: label '...' needs
 ~N lines ...` - a caption still has to exceed three lines to be reported, a box does not.
+
+## 22. Security constructs are badges, not workload icons
+
+A route table or security list drawn as a captioned icon inside a subnet reads as a workload,
+and an NSG icon next to a VM says nothing about which VNIC it protects. The team's diagram
+guidelines and Oracle's toolkit (slide 18: half-size icons as labels of the subnet box) attach
+them to what they govern, so the recipe reads `subnet.route_table`, `subnet.security_lists` and
+`item.nsgs` and calls `add_badge()`: 22 px caption-less icons on the subnet's top-right corner
+(route table on the corner, security lists to its left) and a shield over the top-right of the
+resource's slot. Names live in the tooltip / metadata. Two validator details: a badge may
+overlap **only** the cell named in its `ociHost` token (any other overlap is still an error), and
+`fit_to_children()` skips badges, so calling it again after the badges exist does not move the
+corner. Custom layouts: place the badge after the host's final size is known and pass
+`host=<subnet id or icon id>`.
