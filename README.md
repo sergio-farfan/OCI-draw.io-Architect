@@ -70,6 +70,14 @@ All four types share the same model and layout recipe; the page is sized from th
 | Service Inventory | Compartment-level resource view | Compartment and services panels built with `place_icons()` / `fit_to_children()`; NSG or route rules as `add_table()` pages |
 | Multi-VCN Overview | VCN interconnections via DRG | Several VCN columns, LPG pairs on facing borders, OSN panel, cross-VCN edges |
 
+### Why not the draw.io MCP connector
+
+draw.io offers a connector for AI hosts — its hosted MCP server at `mcp.draw.io`, which can be added as a remote connector. This plugin deliberately does not use it:
+
+- **No Oracle Cloud shapes.** draw.io's built-in shape libraries cover AWS, Azure, GCP and IBM but not OCI (adding Oracle's library to the standard product is still an open request on the draw.io issue tracker), so the plugin bundles Oracle's official OCI Architecture Diagram Toolkit icons and embeds them in the file.
+- **Generation stays local.** The `.drawio` file is built on your machine by the bundled Python scripts, so diagram content — VCN names, CIDRs, hostnames, OCIDs — never leaves it. Using the connector means sending the diagram to a server outside your machine for rendering.
+- **The preview does not work here.** The connector's inline preview needs a host that implements the MCP Apps protocol; Claude Code does not, so the diagram never appears. draw.io desktop covers viewing, and `scripts/render_drawio.py` exports PNG, SVG and PDF from the command line.
+
 ---
 
 ## What's new in 1.3.0

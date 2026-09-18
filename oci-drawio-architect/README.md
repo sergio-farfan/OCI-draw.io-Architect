@@ -133,6 +133,8 @@ All types share one model schema (see `scripts/oci_layout.py`) and the page is s
 
 OCI SVG icons (159 files, 12 categories, about 1.4 MB) are bundled in `icons/`; no external icon dependency is needed. Override the location with `OCI_SVG_DIR`.
 
+Diagrams are built locally by these scripts; the plugin does not use draw.io's MCP connector (no OCI shapes in draw.io's built-in libraries, diagram content would leave the machine, and its inline preview does not work in Claude Code) - see "Why not the draw.io MCP connector" in the repository README.
+
 ## Plugin Structure
 
 ```
