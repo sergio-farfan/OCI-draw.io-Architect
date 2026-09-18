@@ -257,5 +257,33 @@ class MigrationTests(unittest.TestCase):
         self.assertIn(("cpe2", "drg"), pairs)
 
 
+class HelperAndExportTests(unittest.TestCase):
+    def test_first_line_is_drg_item_and_is_rpc_item(self):
+        self.assertEqual(ot.first_line("  DRG\nhub "), "DRG")
+        self.assertEqual(ot.first_line(None), "")
+        self.assertTrue(ot.is_drg_item({"type": "oci_core_drg"}))
+        self.assertTrue(ot.is_drg_item({"icon": "drg"}))
+        self.assertFalse(ot.is_drg_item({"icon": "vm"}))
+        self.assertTrue(ot.is_rpc_item({"icon": "remote_peering_gateway"}))
+        self.assertFalse(ot.is_rpc_item({"icon": "cpe"}))
+
+    def test_attachment_fallback_labels(self):
+        self.assertEqual(ot.attachment_label({"type": "vcn", "vcn": "prod"}), "VCN attachment\nprod")
+        for atype in ("ipsec", "virtual_circuit", "rpc", "loopback"):
+            with self.subTest(atype=atype):
+                label = ot.attachment_label({"type": atype})
+                self.assertTrue(label and label != "Attachment", atype)
+        self.assertEqual(ot.attachment_label({"type": "vcn", "label": "custom"}), "custom")
+
+    def test_exported_tuples(self):
+        self.assertIn("hybrid", ot.TOPOLOGY_KINDS)
+        self.assertEqual(set(ot.ONPREM_ATTACHMENT_TYPES) - set(ot.ATTACHMENT_TYPES), set())
+        self.assertIn("drg", ot.DRG_ICON_KEYS)
+        self.assertIn("remote_peering_gateway", ot.RPC_ICON_KEYS)
+        self.assertEqual(ot.DRG_BOX_THRESHOLD, 4)
+        for name in ot.__all__:
+            self.assertTrue(hasattr(ot, name), name)
+
+
 if __name__ == "__main__":
     unittest.main()
