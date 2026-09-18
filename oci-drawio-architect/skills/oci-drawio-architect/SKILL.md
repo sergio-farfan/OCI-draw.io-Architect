@@ -92,6 +92,7 @@ Order of operations: migrate legacy model -> classify topology -> title -> regio
 | `SIDE_GW_Y0` / `LEFT_GW_Y0` / `SIDE_GW_PITCH` | 50 / 50 / 160 | `VCN_BOTTOM_PAD_GW` / `VCN_SIDE_PAD` / `SIDE_INSET` | 60 / 60 / 40 |
 | `VCN_COLUMN_GAP_GW` | 110 | | |
 | `BADGE_SIZE` (badge side) | 22 | `BADGE_GAP` (route table -> security list badge) | 4 |
+| `BADGE_RESERVE` (title width the corner badges reserve) | 52 | | |
 
 ## 4. Icon selection
 
@@ -235,6 +236,7 @@ Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_
 | `ERROR: '...' lies inside '...' but is not one of its children` | the icon's box overlaps a VCN / subnet it does not belong to; move it or make it a child of that container |
 | `ERROR: 'X' [abs ...] overlaps '(unlabelled)' [abs ...]` where the unlabelled cell is a badge | the badge covers an icon that is not its host: pass `host=<that icon id>` to `add_badge` (recipe: move the `nsgs` field to that item) |
 | `WARNING: caption ... needs ~N lines` | rewrite as `Role\nidentifier\nsize` |
+| `WARNING: title ... its badges leave` | widen the subnet (the recipe does this automatically) or shorten the subnet name / CIDR label |
 | `WARNING: edge ... is estimated to cross` | reorder items / change tier; custom: `route="direct"` or explicit `waypoints`; accept only if the PNG is clean |
 | `draw.io desktop not found` (render exit 3) | skip the PNG and say so; `DRAWIO_BIN=/path/to/drawio` overrides discovery |
 | `detect_settings.py` slow / `cli_warning` | rerun with `--no-cli` |

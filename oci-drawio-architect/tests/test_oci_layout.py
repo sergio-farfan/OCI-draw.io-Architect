@@ -780,5 +780,19 @@ class NsgBadgeTests(unittest.TestCase):
         edge = [e for e in d._cells.values() if e["kind"] == "edge" and e.get("source") == "vm-one"][0]
         self.assertEqual(edge["target"], "subnet-sn-one-rt")   # _slug() turns ':' into '-'
 
+    def test_a_badged_subnet_reserves_title_width_for_its_badges(self):
+        """A27: the recipe never emits a subnet whose title runs under its corner badges."""
+        long_name = "sn-shared-services-management"
+        model = {"subject": "reserve", "region": "us-ashburn-1", "vcns": [{
+            "name": "a", "cidr": "10.0.0.0/16", "services": [], "gateways": [], "subnets": [
+                {"name": long_name, "cidr": "10.0.240.0/24", "tier": "mgmt",
+                 "route_table": "rt-mgmt", "security_lists": ["sl-mgmt"],
+                 "items": [{"icon": "vm", "label": "Ops", "address": "ops"}]}]}]}
+        d = quiet(ol.build_diagram, model)
+        _, _, sw, _ = d.bbox(f"subnet-{long_name}")            # _slug() turns ':' into '-'
+        title_w, _ = db.edge_label_extent(f"{long_name} (10.0.240.0/24)", d.profile["subnet_font"])
+        self.assertGreaterEqual(sw - db.BADGE_RESERVE, title_w)
+        self.assertEqual([m for m in d.validate() if "its badges leave" in m], [])
+
 if __name__ == "__main__":
     unittest.main()
