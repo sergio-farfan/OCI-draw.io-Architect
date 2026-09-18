@@ -1303,6 +1303,33 @@ class TestHelpers(TempDirMixin, unittest.TestCase):
         with self.assertRaises(ValueError):
             self.d.add_legend(20, 300, entries=[("edge", "zigzag", "x")])
 
+    def test_default_legend_fits_its_box_and_the_page_after_fit_page(self):
+        """The default legend grew from 6 to 8 rows (4 connector kinds + 4
+        swatches): the extra height has to stay inside the legend box and be
+        absorbed by fit_page(), so the mandatory check_overlaps gate
+        (db.validate_file) still reports no errors for a diagram that places
+        the legend the way the layout recipe does - content first, then
+        add_legend(), then fit_page().
+        """
+        r = self.d.add_group("Region", 0, 0, 420, 320, group_type="region")
+        self.d.add_icon("VM", "vm", db.PAD, db.ROW1_Y, parent=r)
+        _, _, right, _ = self.d.content_bbox()
+        gid = self.d.add_legend(right + db.GAP, 0)
+        box = geom(cell(self.d.root, gid))
+        self.assertEqual(box["height"], 30 + 22 * 8 + 8)
+        rows = [geom(c) for _, c, _ in iter_cells(self.d.root)
+                if c.get("parent") == gid and c.get("vertex") == "1"]
+        self.assertEqual(len(rows), 12)  # 4 group swatches + 8 row texts
+        self.assertLessEqual(max(g["y"] + g["height"] for g in rows), box["height"])
+        self.assertLessEqual(max(g["x"] + g["width"] for g in rows), box["width"])
+        w, h = self.d.fit_page()
+        self.assertGreaterEqual(w, box["x"] + box["width"])
+        self.assertGreaterEqual(h, box["y"] + box["height"])
+        self.assertEqual(self.d.validate(strict=True), [])
+        path = quiet_write(self.d, self.tmp / "legend.drawio")
+        errors, warnings, _pages, _containers = db.validate_file(path)
+        self.assertEqual((errors, warnings), ([], []))
+
     def test_add_table_html_rows(self):
         tid = self.d.add_table([["Source", "Dest", "Port"], ["0.0.0.0/0", "10.0.1.0/24", "443"],
                                 ["10.0.0.0/16", "10.0.2.0/24", "1521"]], 20, 20,
