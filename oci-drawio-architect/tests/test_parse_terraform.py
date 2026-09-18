@@ -977,10 +977,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(proc.stdout, "")
         self.assertIn("Available: vcn-hub, vcn-spoke-app", proc.stderr)
 
-    def test_no_inferred_edges_flag(self):
-        proc = self.run_cli(str(FIXTURES / "three_tier"), "--no-inferred-edges")
+    def test_no_inferred_edges_flag_keeps_reference_backed_edges(self):
+        """A39: the hub_spoke fixture keeps exactly its Local Peering edge under the flag."""
+        proc = self.run_cli(str(FIXTURES / "hub_spoke"), "--no-inferred-edges")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout)["edges"], [])
+        edges = json.loads(proc.stdout)["edges"]
+        self.assertEqual([(e["label"], e["inferred"]) for e in edges], [("Local Peering", False)])
+        self.assertEqual((edges[0]["source"], edges[0]["target"]),
+                         ("oci_core_local_peering_gateway.hub", "oci_core_local_peering_gateway.spoke"))
 
     def test_bad_paths_exit_2(self):
         proc = self.run_cli(str(FIXTURES / "does_not_exist"))
