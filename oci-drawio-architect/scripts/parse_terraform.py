@@ -1115,6 +1115,9 @@ class ModelBuilder:
         self.item_index: Dict[str, dict] = {}
         self.hub_items: List[dict] = []
         self.drg_by_addr: Dict[str, dict] = {}
+        # (attachment, VCN, label-is-derived) triples: the VCN name is snapshotted only in
+        # _finish(), because _merge_loose() can still rename or drop a for_each placeholder VCN.
+        self.att_vcns: List[Tuple[dict, dict, bool]] = []
         self.explicit_lb_targets: Dict[str, bool] = {}
 
     # -- reference resolution ------------------------------------------------
@@ -1266,14 +1269,23 @@ class ModelBuilder:
             vcn = self._vcn_or_single(att, ("vcn_id", "id", "network_details"))
             if drg is None or vcn is None:
                 continue
-            self.drg_by_addr[drg.address]["attachments"].append(
-                new_attachment("vcn", att.address, att.label(f"VCN attachment\n{vcn['name']}"), vcn=vcn["name"]))
+            default = f"VCN attachment\n{vcn['name']}"
+            label = att.label(default)
+            self._add_vcn_attachment(self.drg_by_addr[drg.address],
+                                     new_attachment("vcn", att.address, label, vcn=vcn["name"]),
+                                     vcn, label == default)
         for drg in drgs:
             entry = self.drg_by_addr[drg.address]
             vcn = self._single_vcn()
             if not entry["attachments"] and vcn is not None:
-                entry["attachments"].append(new_attachment(
-                    "vcn", f"{drg.address}@{vcn['address']}", f"VCN attachment\n{vcn['name']}", vcn=vcn["name"]))
+                self._add_vcn_attachment(entry, new_attachment(
+                    "vcn", f"{drg.address}@{vcn['address']}", f"VCN attachment\n{vcn['name']}",
+                    vcn=vcn["name"]), vcn, True)
+
+    def _add_vcn_attachment(self, drg: dict, att: dict, vcn: dict, derived_label: bool) -> None:
+        """Append a VCN attachment and remember the VCN dict for the final name resolution."""
+        drg["attachments"].append(att)
+        self.att_vcns.append((att, vcn, derived_label))
 
     def _build_hub(self) -> None:
         onprem = 0
@@ -1498,7 +1510,35 @@ class ModelBuilder:
             self.model["edges"] = [e for e in self.model["edges"] if e["source"] in keep and e["target"] in keep]
 
     # -- finish ------------------------------------------------------------------------
+    def _resolve_attachment_vcns(self) -> None:
+        """Snapshot each VCN attachment's VCN name now that ``_merge_loose()`` has run.
+
+        ``_build_drgs()`` runs before the tfvars merge, so a ``for_each`` placeholder VCN may
+        since have been renamed from its resource key to its tfvars ``display_name`` - or dropped
+        altogether. Attachments whose VCN is gone are dropped with it.
+        """
+        if not self.att_vcns:
+            return
+        live = {id(v) for v in self.model["vcns"]}
+        by_att = {id(att): (vcn, derived) for att, vcn, derived in self.att_vcns}
+        for drg in self.model["drgs"]:
+            kept = []
+            for att in drg["attachments"]:
+                hit = by_att.get(id(att))
+                if hit is None:
+                    kept.append(att)
+                    continue
+                vcn, derived = hit
+                if id(vcn) not in live:
+                    continue
+                att["vcn"] = vcn["name"]
+                if derived:
+                    att["label"] = f"VCN attachment\n{vcn['name']}"
+                kept.append(att)
+            drg["attachments"] = kept
+
     def _finish(self) -> None:
+        self._resolve_attachment_vcns()
         for vcn in self.model["vcns"]:
             vcn.pop("_unresolved", None)
             vcn.pop("_dynamic", None)

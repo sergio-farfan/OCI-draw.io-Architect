@@ -284,6 +284,105 @@ class HclHubSpokeTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# HCL mode: a DRG attachment pointing at a for_each VCN whose name lives in tfvars
+# ---------------------------------------------------------------------------
+
+DRG_FOR_EACH_MAIN_TF = """
+variable "compartment_ocid" {
+  type = string
+}
+
+variable "vcns" {
+  type = any
+}
+
+resource "oci_core_vcn" "this" {
+  for_each       = var.vcns
+  compartment_id = var.compartment_ocid
+  display_name   = each.value.display_name
+  cidr_blocks    = [each.value.cidr]
+}
+
+resource "oci_core_drg" "core" {
+  compartment_id = var.compartment_ocid
+  display_name   = "drg-core"
+}
+
+%s"""
+
+DRG_FOR_EACH_ATTACHMENT = """
+resource "oci_core_drg_attachment" "hub" {
+  drg_id       = oci_core_drg.core.id
+  display_name = "att-hub"
+  network_details {
+    id   = oci_core_vcn.this["hub"].id
+    type = "VCN"
+  }
+}
+"""
+
+DRG_FOR_EACH_TFVARS = """
+compartment_ocid = "ocid1.compartment.oc1..aaaamap"
+
+vcns = {
+%s}
+"""
+
+VCN_ENTRY = """  %s = {
+    display_name = "%s"
+    cidr         = "%s"
+    subnets = {
+      mgmt = { name = "sn-%s", cidr = "%s", is_public = false }
+    }
+  }
+"""
+
+
+class DrgAttachmentTfvarsVcnTests(unittest.TestCase):
+    """``_build_drgs()`` runs before ``_merge_loose()``; the VCN back-reference must survive it."""
+
+    HUB = VCN_ENTRY % ("hub", "vcn-hub", "10.10.0.0/16", "mgmt", "10.10.0.0/24")
+    SPOKE = VCN_ENTRY % ("spoke", "vcn-spoke", "10.20.0.0/16", "app", "10.20.1.0/24")
+
+    @staticmethod
+    def write(tmp, entries, attachment=DRG_FOR_EACH_ATTACHMENT):
+        (Path(tmp) / "main.tf").write_text(DRG_FOR_EACH_MAIN_TF % attachment)
+        (Path(tmp) / "vcns.auto.tfvars").write_text(DRG_FOR_EACH_TFVARS % "".join(entries))
+        return Path(tmp)
+
+    def parse(self, entries, attachment=DRG_FOR_EACH_ATTACHMENT):
+        with tempfile.TemporaryDirectory() as tmp:
+            return pt.parse_terraform_dir(self.write(tmp, entries, attachment))
+
+    def test_renamed_placeholder_vcn_keeps_the_attachment(self):
+        model = self.parse([self.HUB])
+        self.assertEqual([v["name"] for v in model["vcns"]], ["vcn-hub"])
+        self.assertEqual(model["drgs"][0]["attachments"],
+                         [pt.new_attachment("vcn", "oci_core_drg_attachment.hub", "att-hub", vcn="vcn-hub")])
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+
+    def test_implicit_attachment_label_follows_the_renamed_vcn(self):
+        model = self.parse([self.HUB], attachment="")            # no attachment resource -> implicit one
+        self.assertEqual(model["drgs"][0]["attachments"],
+                         [pt.new_attachment("vcn", "oci_core_drg.core@oci_core_vcn.this",
+                                            "VCN attachment\nvcn-hub", vcn="vcn-hub")])
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+
+    def test_dropped_placeholder_vcn_drops_its_attachment(self):
+        model = self.parse([self.HUB, self.SPOKE])                          # placeholder dropped, not renamed
+        self.assertEqual([v["name"] for v in model["vcns"]], ["vcn-hub", "vcn-spoke"])
+        self.assertEqual(model["drgs"][0]["attachments"], [])               # the VCN it pointed at is gone
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+
+    def test_cli_exits_zero_for_the_renamed_case(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.write(tmp, [self.HUB])
+            proc = subprocess.run([sys.executable, str(SCRIPT), tmp], capture_output=True, text=True, timeout=60)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["drgs"][0]["attachments"][0]["vcn"], "vcn-hub")
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
