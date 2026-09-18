@@ -1061,6 +1061,12 @@ def _group_type_of(entry: dict) -> str:
 
 
 def _is_drg_icon(entry: dict) -> bool:
+    """True for a DRG glyph: the ``ociRole=drg`` token, else its caption text.
+
+    The caption fallback only works after ``_attach_captions()`` has bound the
+    caption to its icon, so call this from ``validate_registry`` (which does),
+    never on a raw registry.
+    """
     if _kind(entry) != "icon":
         return False
     if _style_tokens(entry.get("style", "")).get("ociRole") == "drg":
@@ -1101,9 +1107,9 @@ def _attach_captions(registry: dict, boxes: dict) -> None:
             if tb.x - 1 <= ib.cx <= tb.right + 1 and -2 <= tb.y - ib.bottom <= 40:
                 gap = tb.y - ib.bottom
                 if best is None or gap < best[0]:
-                    best = (gap, tid, te)
+                    best = (gap, te)
         if best is not None:
-            _, tid, te = best
+            _, te = best
             e["caption"] = re.sub(r"\s+", " ", _html.unescape(_TAG_RE.sub(" ", te.get("value", "")))).strip()
             te["owner"] = cid
 
