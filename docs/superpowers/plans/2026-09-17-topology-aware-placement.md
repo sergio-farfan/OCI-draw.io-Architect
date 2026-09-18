@@ -1096,7 +1096,7 @@ git commit -m "feat(layout): oci_topology module with classify_topology, legacy 
 - Consumes: `DrawioBuilder.place_icons(parent, items, cols, x0, y0, **icon_kwargs)` with `label_fill=` (Task 2); `COLORS["region_fill"]`; `ICON_W`, `ICON_FOOTPRINT_H`, `ROW_H`, `ROW1_Y`, `PAD` from `drawio_builder`.
 - Produces: constants `GW_STRADDLE = 40`, `GW_SIDE_DX = 38`, `SIDE_GW_Y0 = ROW1_Y`, `LEFT_GW_Y0 = SIDE_GW_Y0`, `SIDE_GW_PITCH = ROW_H`, `VCN_BOTTOM_PAD_GW = 60`, `VCN_SIDE_PAD = 60`, `SIDE_INSET = 40`, `VCN_COLUMN_GAP_GW = 110`; functions `_vcn_order(vcns: list) -> dict[str, int]`, `_gateway_side(gw: dict, vcn_index: int, order: dict) -> str` (`"bottom" | "right" | "left"`), `_gateway_sides(vcn: dict, vcn_index: int, order: dict) -> dict[str, list]` (keys `left`, `right`, `bottom`), `_place_edge_gateway(d, region_id, box: tuple, side: str, slot: int, gw: dict, reg) -> str`; `_layout_vcn(d, region_id, vcn, x, y, reg, max_row_w=MAX_ROW_W, inset_left=0, right_pad=PAD, bottom_pad=VCN_BOTTOM_PAD, min_h=200) -> tuple[str, int, int]` (no longer draws gateways). Gateways are children of the region with their address as cell id.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `oci-drawio-architect/tests/test_oci_layout.py`:
 
@@ -1238,12 +1238,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout 2>&1 | tail -5`
 Expected: FAIL/ERROR - `AttributeError: module 'oci_layout' has no attribute 'GW_STRADDLE'`, and `parent` assertions `'vcn-a' != 'region'`.
 
-- [ ] **Step 3: Add the constants and side helpers**
+- [x] **Step 3: Add the constants and side helpers**
 
 In `oci-drawio-architect/scripts/oci_layout.py` after `DATA_TIERS = ("data",)` (line 92) add:
 
@@ -1320,7 +1320,7 @@ def _place_edge_gateway(d: DrawioBuilder, region_id, box, side: str, slot: int, 
     return ids[0]
 ```
 
-- [ ] **Step 4: Rework `_layout_vcn` and `build_diagram`**
+- [x] **Step 4: Rework `_layout_vcn` and `build_diagram`**
 
 Change the `_layout_vcn` signature to:
 
@@ -1385,12 +1385,12 @@ In `build_diagram`, replace the VCN loop (`vcn_boxes = [] ... x += w + VCN_COLUM
 
 Update the module docstring line 14 to `+-- gateways centred on the VCN border (IGW / NAT bottom, SGW right, LPG facing its peer), parented to the region` and the schema example's gateway entry to include `"type": "sgw"`. Update SKILL.md is done in Task 12; leave docs for now.
 
-- [ ] **Step 5: Run the tests and the examples**
+- [x] **Step 5: Run the tests and the examples**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout -v 2>&1 | tail -12 && cd .. && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3 && python3 oci-drawio-architect/examples/generate_reference_layout.py /tmp/ref13.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/ref13.drawio`
 Expected: 8 layout tests PASS; suite `OK`; reference gate `OK` (its `sgw` now sits on the VCN's right border and `nat` on the bottom border, both children of `region`). If the reference reports a leaf collision between the SGW caption and the services panel, the services panel is still inside the VCN at this task - confirm `VCN_SIDE_PAD` was applied (`right_pad`), which pushes the border 40 px right of the panel.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/oci_layout.py oci-drawio-architect/tests/test_oci_layout.py

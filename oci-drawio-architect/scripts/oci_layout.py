@@ -11,7 +11,8 @@ generated diagram has the same structure as the reference sample:
             +-- row 1: lb -> app -> compute -> mgmt subnets (traffic order, 2 icon columns)
             +-- OCI Services panel (right of row 1)
             +-- data-tier subnets stretched to the row width
-            +-- gateway icons in the bottom row (SGW, NAT, IGW, DRG attachment)
+      +-- gateways centred on the VCN border (IGW / NAT bottom, SGW right,
+          LPG facing its peer), parented to the region
       edges auto-routed through the gutters; optional legend below the region.
 
 Model schema (JSON-serialisable dict; every key optional except vcns/subject):
@@ -31,7 +32,8 @@ Model schema (JSON-serialisable dict; every key optional except vcns/subject):
                                  "address": "lb", "metadata": {"ocid": "..."}, "tooltip": "..."}]}],
          "services": [{"icon": "devops", "label": "DevOps\\nProject + CI/CD", "address": "devops"}],
          "services_label": "OCI Services",
-         "gateways": [{"icon": "service_gateway", "label": "Service\\nGateway", "address": "sgw"}]
+         "gateways": [{"icon": "service_gateway", "type": "sgw",
+                       "label": "Service\\nGateway", "address": "sgw"}]
       }],
       "services": [ ... ],                  # regional services when there are several VCNs
       "edges": [{"source": "lb", "target": "app-vm", "label": "3000 / 8000", "kind": "data"}],
@@ -77,7 +79,6 @@ VCN_BOTTOM_PAD = 40
 H_GAP = 20            # between subnets in a row
 V_GAP = 40            # between subnet rows
 PANEL_GAP = 40        # between row 1 and the services panel
-GW_GAP = 30           # between the last row and the gateway icons
 GW_PITCH = 180        # gateway icon pitch
 SUBNET_EXTRA_W = 50   # 2 cols -> 310 wide like the sample
 SUBNET_BOTTOM_PAD = 28
@@ -90,6 +91,20 @@ VCN_COLUMN_GAP = 45
 MAX_ROW_W = 1000
 ROW_TIERS = ("lb", "app", "compute", "mgmt", "other")
 DATA_TIERS = ("data",)
+
+# Gateways straddle the VCN border (glyph centre on the line); parent = region.
+GW_STRADDLE = 40                 # slot top -> glyph centre (GLYPH_TOP + GLYPH_H / 2)
+GW_SIDE_DX = 38                  # slot left offset from a side border (round(ICON_W / 2))
+SIDE_GW_Y0 = ROW1_Y              # first right-border slot
+LEFT_GW_Y0 = SIDE_GW_Y0          # first left-border slot: same y series as the right-border slots (spec 7.3)
+SIDE_GW_PITCH = ROW_H
+VCN_BOTTOM_PAD_GW = 60           # VCN bottom padding when bottom-border gateways exist
+VCN_SIDE_PAD = 60                # VCN right padding when right-border gateways exist
+SIDE_INSET = 40                  # extra left inset of the VCN content when left-border gateways exist
+VCN_COLUMN_GAP_GW = 110          # column gap after a VCN with right-border gateways: two 105 px
+                                 # captions on facing borders must not touch (>= LABEL_W + 1)
+SGW_ICONS = ("service_gateway", "sgw", "networking_service_gateway")
+LPG_ICONS = ("remote_peering_gateway", "rpg", "networking_remote_peering_gateway")
 
 EDGE_KINDS = {
     "data": dict(dashed=False, color=None),
@@ -140,6 +155,61 @@ def _vcn_label(vcn: dict) -> str:
     name = vcn.get("name", "vcn")
     cidr = vcn.get("cidr")
     return f"VCN: {name} ({cidr})" if cidr else f"VCN: {name}"
+
+
+def _vcn_order(vcns) -> dict:
+    """VCN name / address / 'vcn:<name>' / gateway address -> column index (for LPG peers)."""
+    order = {}
+    for i, v in enumerate(vcns):
+        for key in (v.get("name"), v.get("address"), f"vcn:{v.get('name')}"):
+            if key:
+                order.setdefault(str(key), i)
+        for g in v.get("gateways") or []:
+            if g.get("address"):
+                order.setdefault(str(g["address"]), i)
+    return order
+
+
+def _gateway_side(gw: dict, vcn_index: int, order: dict) -> str:
+    """bottom (IGW, NAT, unknown), right (SGW; LPG whose peer is a later column), left (LPG, earlier peer)."""
+    gtype = str(gw.get("type") or "").lower()
+    icon = str(gw.get("icon") or "")
+    if gtype == "sgw" or (not gtype and icon in SGW_ICONS):
+        return "right"
+    if gtype == "lpg" or (not gtype and icon in LPG_ICONS):
+        peer = gw.get("peer")
+        peer_idx = order.get(str(peer)) if peer is not None else None
+        if peer_idx is None or peer_idx == vcn_index:
+            return "bottom"
+        return "right" if peer_idx > vcn_index else "left"
+    return "bottom"
+
+
+def _gateway_sides(vcn: dict, vcn_index: int, order: dict) -> dict:
+    sides = {"left": [], "right": [], "bottom": []}
+    for g in vcn.get("gateways") or []:
+        sides[_gateway_side(g, vcn_index, order)].append(g)
+    return sides
+
+
+def _place_edge_gateway(d: DrawioBuilder, region_id, box, side: str, slot: int, gw: dict, reg) -> str:
+    """One gateway icon centred on a VCN border; box = (x, y, w, h) of the VCN in region coordinates."""
+    vx, vy, vw, vh = box
+    if side == "bottom":
+        x, y = vx + PAD + slot * GW_PITCH, vy + vh - GW_STRADDLE
+    elif side == "right":
+        x, y = vx + vw - GW_SIDE_DX, vy + SIDE_GW_Y0 + slot * SIDE_GW_PITCH
+    else:
+        x, y = vx - GW_SIDE_DX + 1, vy + LEFT_GW_Y0 + slot * SIDE_GW_PITCH
+    spec = {"label": gw.get("label", ""), "icon": gw.get("icon", "service_gateway")}
+    if gw.get("address"):
+        spec["key"] = str(gw["address"])
+    for k in ("metadata", "tooltip"):
+        if gw.get(k):
+            spec[k] = gw[k]
+    ids, _ = d.place_icons(region_id, [spec], cols=1, x0=int(x), y0=int(y), label_fill=COLORS["region_fill"])
+    reg.add_item(gw, ids[0])
+    return ids[0]
 
 
 class _Registry:
@@ -213,7 +283,8 @@ def _layout_subnet(d: DrawioBuilder, vcn_id, subnet, x, y, max_cols, reg, min_w=
     return sid, w, h
 
 
-def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX_ROW_W):
+def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX_ROW_W,
+                inset_left=0, right_pad=PAD, bottom_pad=VCN_BOTTOM_PAD, min_h=200):
     vid = d.add_group(_vcn_label(vcn), x, y, 400, 300, parent=region_id, group_type="vcn",
                       key=f"vcn:{vcn.get('name', '')}" if vcn.get("name") else None,
                       metadata=vcn.get("metadata"), tooltip=vcn.get("tooltip"))
@@ -240,9 +311,9 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
         rows.append(cur)
 
     cy = ROW1_Y
-    row1_right = PAD
+    row1_right = PAD + inset_left
     for row in rows:
-        cx = PAD
+        cx = PAD + inset_left
         bottoms = []
         for s in row:
             sid, w, h = _layout_subnet(d, vid, s, cx, cy, 2, reg)
@@ -253,47 +324,32 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
 
     # Services panel to the right of the first row
     services = list(vcn.get("services") or [])
-    panel_bottom = 0
     if services:
         rows_n, cols = _grid(len(services), 2)
         prov_w = cols * COL_W + SUBNET_EXTRA_W
         prov_h = ROW1_Y + (rows_n - 1) * ROW_H + ICON_FOOTPRINT_H + SUBNET_BOTTOM_PAD
-        px = (row1_right + PANEL_GAP) if rows else PAD
+        px = (row1_right + PANEL_GAP) if rows else PAD + inset_left
         pid = d.add_group(vcn.get("services_label", "OCI Services"), px, ROW1_Y, prov_w, prov_h,
                           parent=vid, group_type="services",
                           key=f"services:{vcn.get('name', '')}" if vcn.get("name") else None)
         reg.containers["services"] = pid
         reg.containers[f"services:{vcn.get('name', '')}"] = pid
         _icon_items(d, pid, services, cols, reg=reg)
-        pw, ph = d.fit_to_children(pid, pad=PAD, min_w=prov_w, min_h=prov_h)
-        panel_bottom = ROW1_Y + ph
+        d.fit_to_children(pid, pad=PAD, min_w=prov_w, min_h=prov_h)
 
     # Data tier subnets, stretched to the width of the rows above
-    row_w = max(row1_right - PAD, 0)
+    row_w = max(row1_right - PAD - inset_left, 0)
     for s in data_subnets:
         n = len(s.get("items") or [])
-        sid, w, h = _layout_subnet(d, vid, s, PAD, cy, max(2, min(5, n or 2)), reg,
+        sid, w, h = _layout_subnet(d, vid, s, PAD + inset_left, cy, max(2, min(5, n or 2)), reg,
                                    min_w=row_w if row_w else None)
         cy += h + V_GAP
 
-    # Gateways in the bottom row (bare icons)
-    gateways = list(vcn.get("gateways") or [])
-    content_bottom = max(cy - V_GAP if (rows or data_subnets) else ROW1_Y, panel_bottom)
-    if gateways:
-        gy = content_bottom + GW_GAP
-        for i, g in enumerate(gateways):
-            spec = {"label": g.get("label", ""), "icon": g.get("icon", "service_gateway")}
-            if g.get("address"):
-                spec["key"] = str(g["address"])
-            for k in ("metadata", "tooltip"):
-                if g.get(k):
-                    spec[k] = g[k]
-            ids, _ = d.place_icons(vid, [spec], cols=1, x0=PAD + i * GW_PITCH, y0=gy)
-            reg.add_item(g, ids[0])
-
-    w, h = d.fit_to_children(vid, pad=PAD, min_w=300, min_h=200)
-    d.resize(vid, h=h + (VCN_BOTTOM_PAD - PAD))
-    return vid, w, h + (VCN_BOTTOM_PAD - PAD)
+    w, h = d.fit_to_children(vid, pad=PAD, min_w=300, min_h=min_h)
+    w += right_pad - PAD
+    h += bottom_pad - PAD
+    d.resize(vid, w=w, h=h)
+    return vid, w, h
 
 
 def _layout_hub(d: DrawioBuilder, region_id, hub: dict, vcn_y, vcn_h, reg, explicit_pairs=frozenset()):
@@ -356,12 +412,28 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         vcns[0]["services"] = list(vcns[0].get("services") or []) + top_services
         top_services = []
 
+    order = _vcn_order(vcns)
     vcn_boxes = []
+    edge_gateways = []          # (vcn index, side, gateway dict, icon id)
     x = vcn_x
-    for vcn in vcns:
-        vid, w, h = _layout_vcn(d, rid, vcn, x, VCN_Y, reg, max_row_w=max_row_w)
+    for i, vcn in enumerate(vcns):
+        sides = _gateway_sides(vcn, i, order)
+        need_h = max(
+            200,
+            (SIDE_GW_Y0 + (len(sides["right"]) - 1) * SIDE_GW_PITCH + ICON_FOOTPRINT_H + PAD) if sides["right"] else 0,
+            (LEFT_GW_Y0 + (len(sides["left"]) - 1) * SIDE_GW_PITCH + ICON_FOOTPRINT_H + PAD) if sides["left"] else 0,
+        )
+        vid, w, h = _layout_vcn(d, rid, vcn, x, VCN_Y, reg, max_row_w=max_row_w,
+                                inset_left=SIDE_INSET if sides["left"] else 0,
+                                right_pad=VCN_SIDE_PAD if sides["right"] else PAD,
+                                bottom_pad=VCN_BOTTOM_PAD_GW if sides["bottom"] else VCN_BOTTOM_PAD,
+                                min_h=need_h)
         vcn_boxes.append((vid, x, VCN_Y, w, h))
-        x += w + VCN_COLUMN_GAP
+        for side in ("bottom", "right", "left"):
+            for slot, g in enumerate(sides[side]):
+                gid = _place_edge_gateway(d, rid, (x, VCN_Y, w, h), side, slot, g, reg)
+                edge_gateways.append((i, side, g, gid))
+        x += w + (VCN_COLUMN_GAP_GW if sides["right"] else VCN_COLUMN_GAP)
 
     if top_services:
         rows_n, cols = _grid(len(top_services), 2)
