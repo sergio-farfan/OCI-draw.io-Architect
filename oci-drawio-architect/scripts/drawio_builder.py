@@ -15,7 +15,7 @@ What this module gives you
   internet); ``hub`` is a deprecated alias of ``onprem``.
 * Layout helpers: ``place_icons()``, ``fit_to_children()``, ``fit_page()``,
   ``add_title()``, ``add_legend()``, ``add_table()``, ``add_page()``,
-  ``add_layer()``.
+  ``append_pages()``, ``add_layer()``.
 * Edges that route themselves: ``add_edge()`` picks the common-ancestor
   parent, docking sides and gutter waypoints from the actual geometry so
   connectors do not cross unrelated icons or labels.
@@ -1445,6 +1445,22 @@ class DrawioBuilder:
             else:
                 raise KeyError(f"No page named {index_or_name!r}")
         return self._page_idx
+
+    def append_pages(self, other: "DrawioBuilder") -> None:
+        """Append every page of ``other`` to this document (cell ids are unique per page).
+
+        ``other``'s pending auto routes are resolved first; the pages keep their
+        geometry and become part of validate() / write(). The last appended
+        page becomes current.
+        """
+        if other is self:
+            raise ValueError("append_pages: cannot append a builder to itself")
+        other.route_edges()
+        for p in other._pages:
+            p["diagram"].set("id", f"page{len(self._pages) + 1}")
+            self.mxfile.append(p["diagram"])
+            self._pages.append(p)
+        self._page_idx = len(self._pages) - 1
 
     def add_layer(self, name: str, visible: bool = True, key=None) -> str:
         """Add a named layer to the current page; returns its id (use as parent)."""

@@ -1607,6 +1607,23 @@ class TestHelpers(TempDirMixin, unittest.TestCase):
         self.assertEqual((g["x"], g["y"], g["width"], g["height"]), (10.0, 0.0, 300.0, 150.0))
         self.assertEqual(self.d.bbox(gid), (10.0, 0.0, 300.0, 150.0))
 
+    def test_append_pages(self):
+        a = DrawioBuilder(page_name="One")
+        a.add_group("A", 0, 0, 200, 100, key="region")
+        b = DrawioBuilder(page_name="Two")
+        b.add_group("B", 0, 0, 200, 100, key="region")      # same key on another page is fine
+        b.add_page("Three")
+        b.add_icon("VM", "vm", 0, 0, key="vm")
+        a.append_pages(b)
+        self.assertEqual([p["name"] for p in a._pages], ["One", "Two", "Three"])
+        self.assertEqual([d.get("id") for d in a.mxfile.findall("diagram")], ["page1", "page2", "page3"])
+        self.assertEqual(a._page_idx, 2)
+        path, _ = self.roundtrip(a)
+        errors, _, pages, containers = db.validate_file(path)
+        self.assertEqual((errors, pages, containers), ([], 3, 2))
+        with self.assertRaises(ValueError):
+            a.append_pages(a)
+
 
 # ---------------------------------------------------------------------------
 # 10. Module-level compatibility helpers
