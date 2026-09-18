@@ -411,6 +411,21 @@ class DrgColumnTests(unittest.TestCase):
         ax, _, aw, _ = d.abs_bbox("att-spoke")
         self.assertEqual(ax + aw - lx, ol._drg_column_width(HYBRID["drgs"], "auto"))
 
+    def test_resolve_attachment_target_by_name_by_address_and_the_error_paths(self):
+        """A24: VCN by name, VCN by address, unknown VCN, and an attachment with no target."""
+        reg = ol._Registry()
+        reg.containers["vcn:prod"] = "vcn-prod"
+        reg.by_address["oci_core_vcn.prod"] = "vcn-prod"
+        reg.by_address["cpe"] = "cpe-icon"
+        self.assertEqual(ol._resolve_attachment_target(reg, {"source": "b", "vcn": "prod"}), "vcn-prod")
+        self.assertEqual(ol._resolve_attachment_target(reg, {"source": "b", "vcn": "oci_core_vcn.prod"}),
+                         "vcn-prod")
+        self.assertEqual(ol._resolve_attachment_target(reg, {"source": "b", "target": "cpe"}), "cpe-icon")
+        self.assertIsNone(ol._resolve_attachment_target(reg, {"source": "b"}))
+        with self.assertRaises(ValueError) as ctx:
+            ol._resolve_attachment_target(reg, {"source": "att-x", "vcn": "nope"})
+        self.assertIn("VCN 'nope' is not in the model", str(ctx.exception))
+
 
 class UnnamedDrgTests(unittest.TestCase):
     """A22: an unnamed DRG must never be called 'DRG' - two of them collided on the key drg:DRG."""
