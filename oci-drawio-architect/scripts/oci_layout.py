@@ -95,7 +95,7 @@ from drawio_builder import (  # noqa: E402
 )
 from oci_topology import (  # noqa: E402
     attachment_label, attachment_link_label, attachment_type, choose_drg_style, classify_topology,
-    first_line, is_regional, migrate_legacy_model,
+    is_regional, migrate_legacy_model,
 )
 
 # ---------------------------------------------------------------------------
@@ -619,6 +619,25 @@ def _drg_column_width(drgs, requested: str) -> int:
     return max(_drg_cluster_geometry(drg, _drg_style_for(drg, requested))["inner_w"] for drg in drgs)
 
 
+def _drg_display_name(drg: dict, index: int) -> str:
+    """Name of a DRG for its box title and its ``drg:<name>`` alias.
+
+    The first line of the canonical ``"DRG\\n<name>"`` label is the bare word
+    "DRG", which is neither a name nor unique (two unnamed DRGs collided on the
+    cell key ``drg:DRG``). Fall back to the second label line, the address and
+    finally the position.
+    """
+    name = str(drg.get("name") or "").strip()
+    if name:
+        return name
+    lines = [ln.strip() for ln in str(drg.get("label") or "").split("\n") if ln.strip()]
+    if lines and lines[0].upper() != "DRG":
+        return lines[0]
+    if len(lines) > 1:
+        return lines[1]
+    return str(drg.get("address") or "").strip() or f"drg-{index + 1}"
+
+
 def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_h, requested, reg,
                        style_out) -> list:
     """DRG icon(s) with their attachment boxes at region level, centred on the VCN stack.
@@ -630,8 +649,8 @@ def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_
     total_h = sum(g["cluster_h"] for g in geoms) + DRG_CLUSTER_GAP * (len(geoms) - 1)
     y = max(VCN_Y, int(round((stack_y + (stack_h - total_h) / 2) / 10.0) * 10))
     pending = []
-    for (drg, style), g in zip(clusters, geoms):
-        name = drg.get("name") or first_line(drg.get("label")) or "DRG"
+    for idx, ((drg, style), g) in enumerate(zip(clusters, geoms)):
+        name = _drg_display_name(drg, idx)
         addr = str(drg.get("address") or f"drg:{name}")
         label = drg.get("label") or f"DRG\n{name}"
         if style == "box":

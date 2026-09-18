@@ -395,6 +395,39 @@ class DrgColumnTests(unittest.TestCase):
         self.assertEqual(style_of(d, "e-dashed")["endArrow"], "none")     # explicit dashed keeps the profile look
 
 
+class UnnamedDrgTests(unittest.TestCase):
+    """A22: an unnamed DRG must never be called 'DRG' - two of them collided on the key drg:DRG."""
+
+    def _model(self, *drgs):
+        return {"subject": "unnamed", "region": "us-ashburn-1",
+                "vcns": [simple_vcn("a"), simple_vcn("b")], "drgs": list(drgs)}
+
+    def test_two_unnamed_drgs_take_their_names_from_the_second_label_line(self):
+        d = quiet(ol.build_diagram, self._model(
+            {"label": "DRG\nhub", "attachments": [{"type": "vcn", "vcn": "a", "address": "att-a"}]},
+            {"label": "DRG\nspoke", "attachments": [{"type": "vcn", "vcn": "b", "address": "att-b"}]}))
+        self.assertEqual(sorted(d.layout_info["drg_style"]), ["drg:hub", "drg:spoke"])
+        self.assertIn("drg-hub", d._cells)                     # _slug() turns ':' into '-'
+        self.assertIn("drg-spoke", d._cells)
+        self.assertEqual(errors_of(d), [])
+
+    def test_a_label_with_no_second_line_falls_back_to_the_address_then_the_index(self):
+        d = quiet(ol.build_diagram, self._model(
+            {"label": "DRG", "address": "drg-a", "attachments": [{"type": "vcn", "vcn": "a", "address": "att-a"}]},
+            {"label": "DRG", "attachments": [{"type": "vcn", "vcn": "b", "address": "att-b"}]}))
+        self.assertIn("drg-a", d._cells)                       # its own address is the cell key
+        self.assertIn("drg-drg-2", d._cells)                   # second DRG, no name and no address
+        self.assertEqual(errors_of(d), [])
+
+    def test_a_named_drg_and_a_descriptive_label_are_unchanged(self):
+        d = quiet(ol.build_diagram, self._model(
+            {"name": "prod-hub", "address": "drg-prod", "label": "DRG\nprod",
+             "attachments": [{"type": "vcn", "vcn": "a", "address": "att-a"}]},
+            {"label": "Dynamic Routing\nGateway (DRG)",
+             "attachments": [{"type": "vcn", "vcn": "b", "address": "att-b"}]}))
+        self.assertEqual(sorted(d.layout_info["drg_style"]), ["drg-prod", "drg:Dynamic Routing"])
+
+
 class AttachmentBoxTextTests(unittest.TestCase):
     """A parser-style display name must wrap inside its box instead of across the diagram."""
 
