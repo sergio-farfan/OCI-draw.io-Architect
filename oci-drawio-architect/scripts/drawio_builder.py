@@ -1170,8 +1170,11 @@ def validate_registry(registry: dict, page: str = "", strict: bool = False,
             continue
         owner = registry.get(e.get("owner")) if k == "text" else None
         if owner is not None:
+            # Only a caption whose icon actually straddles the border is
+            # excused; a caption that spills out of a parent its icon fits in
+            # is the too-short-container defect fit_to_children() prevents.
             ob = _Box(owner["x"], owner["y"], owner["w"], owner["h"])
-            if pbox.contains(ob, tol=1.0) or _centre_within(pbox, ob, STRADDLE_TOL):
+            if not pbox.contains(ob, tol=1.0) and _centre_within(pbox, ob, STRADDLE_TOL):
                 continue
         errors.append(
             f"{prefix}ERROR: '{_label_of(e)}' [{local!r}] extends outside its parent "
