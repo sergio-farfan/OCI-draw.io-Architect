@@ -259,7 +259,7 @@ def _place_edge_gateway(d: DrawioBuilder, region_id, box, side: str, slot: int, 
     spec = {"label": gw.get("label", ""), "icon": gw.get("icon", "service_gateway")}
     if gw.get("address"):
         spec["key"] = str(gw["address"])
-    for k in ("metadata", "tooltip"):
+    for k in ("metadata", "tooltip", "link"):
         if gw.get(k):
             spec[k] = gw[k]
     ids, _ = d.place_icons(region_id, [spec], cols=1, x0=int(x), y0=int(y), label_fill=COLORS["region_fill"])
