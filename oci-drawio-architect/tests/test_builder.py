@@ -1713,13 +1713,25 @@ class TestHelpers(TempDirMixin, unittest.TestCase):
 
     def test_add_legend_accepts_kind_names_and_dotted_thin(self):
         gid = self.d.add_legend(20, 20, entries=[("edge", "attachment", "A"), ("edge", "dotted", "B"),
-                                                 ("edge", "thin", "C"), ("edge", "control", "D")])
+                                                 ("edge", "thin", "C"), ("edge", "control", "D"),
+                                                 ("edge", "solid", "E"), ("edge", "accent", "F")])
         edges = [tokens(c.get("style")) for _, c, _ in iter_cells(self.d.root)
                  if c.get("parent") == gid and c.get("edge") == "1"]
-        self.assertEqual([e["endArrow"] for e in edges], ["none", "none", "none", "open"])
+        self.assertEqual([e["endArrow"] for e in edges], ["none", "none", "none", "open", "open", "open"])
         self.assertEqual(edges[1]["dashPattern"], "1 3")
+        self.assertEqual(edges[4]["dashed"], "0")                       # A06: 'solid' -> data
+        self.assertEqual(edges[5]["strokeColor"], db.COLORS["edge_accent"])   # A06: 'accent' -> data, accent colour
         with self.assertRaises(ValueError):
             self.d.add_legend(20, 300, entries=[("edge", "zigzag", "x")])
+
+    def test_legacy_control_aliases_share_the_profile_arrow(self):
+        """A05: 'dashed' and 'purple' both mean control, so both follow profile['dashed_arrow']."""
+        gid = self.d.add_legend(20, 20, entries=[("edge", "dashed", "A"), ("edge", "purple", "B"),
+                                                 ("edge", "control", "C")])
+        edges = [tokens(c.get("style")) for _, c, _ in iter_cells(self.d.root)
+                 if c.get("parent") == gid and c.get("edge") == "1"]
+        self.assertEqual([e["endArrow"] for e in edges], ["none", "none", "open"])
+        self.assertEqual(edges[1]["strokeColor"], db.COLORS["edge_purple"])
 
     def test_default_legend_fits_its_box_and_the_page_after_fit_page(self):
         """The default legend grew from 6 to 8 rows (4 connector kinds + 4

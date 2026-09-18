@@ -662,6 +662,10 @@ EDGE_KIND_STYLES = {
     "attachment":  dict(dashed=False, arrow="none", width=1,    dash_pattern=None),
 }
 
+# Legend-only legacy spellings of the connector kinds (pre-1.3.0 callers).
+_LEGACY_LEGEND_ALIASES = {"solid": "data", "dashed": "control", "accent": "data",
+                          "purple": "control", "dotted": "association", "thin": "attachment"}
+
 _CONTAINER_TAIL = "container=1;collapsible=0;expand=0;recursiveResize=0;"
 
 BOX_STYLE = (
@@ -2122,14 +2126,15 @@ class DrawioBuilder:
         for i, (kind, spec, text) in enumerate(entries):
             ry = 30 + i * row_h
             if kind == "edge":
-                legacy = {"solid": "data", "dashed": "control", "accent": "data", "purple": "control",
-                          "dotted": "association", "thin": "attachment"}
-                kind_name = legacy.get(spec, spec)
+                kind_name = _LEGACY_LEGEND_ALIASES.get(spec, spec)
                 if kind_name not in EDGE_KIND_STYLES:
                     raise ValueError(f"add_legend: unknown edge style {spec!r}")
                 ks = EDGE_KIND_STYLES[kind_name]
                 color = {"accent": COLORS["edge_accent"], "purple": COLORS["edge_purple"]}.get(spec, COLORS["edge_color"])
-                arrow = "none" if spec == "dashed" and self.profile["dashed_arrow"] == "none" else ks["arrow"]
+                # A legacy alias stands for a pre-kind add_edge(dashed=True) call, which takes
+                # the profile's arrow; the canonical kind name keeps EDGE_KIND_STYLES' arrow.
+                legacy_control = spec in _LEGACY_LEGEND_ALIASES and kind_name == "control"
+                arrow = "none" if legacy_control and self.profile["dashed_arrow"] == "none" else ks["arrow"]
                 style = self._edge_base_style(color, ks["dashed"], "", orthogonal=False, arrow=arrow,
                                               width=ks["width"], dash_pattern=ks["dash_pattern"])
                 eid = self._new_id()
