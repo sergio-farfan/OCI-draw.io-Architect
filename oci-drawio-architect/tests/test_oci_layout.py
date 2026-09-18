@@ -510,5 +510,48 @@ class ExamplesTests(unittest.TestCase):
                              "examples/generate_reference_layout.py OCI_Architecture.drawio")
 
 
+class EndToEndTests(unittest.TestCase):
+    FIXTURES = TESTS_DIR / "fixtures"
+
+    def _gate(self, model, name):
+        import check_overlaps
+        with tempfile.TemporaryDirectory() as tmp:
+            out = quiet(ol.write_diagram, model, Path(tmp) / name)
+            self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0, name)
+            return out.read_text(encoding="utf-8")
+
+    def test_three_tier_terraform_model(self):
+        import oci_topology as ot
+        import parse_terraform as pt
+        model = pt.parse_terraform_dir(self.FIXTURES / "terraform" / "three_tier")
+        self.assertEqual(ot.classify_topology(model)["kind"], "hybrid")
+        text = self._gate(model, "three_tier.drawio")
+        self.assertIn('id="oci_core_drg.drg"', text)                 # DRG at region level (dots survive _slug)
+        self.assertIn('id="oci_core_ipsec.vpn-oci_core_drg.drg"', text)   # IPSec attachment box (@ -> -)
+        d = quiet(ol.build_diagram, model)
+        self.assertEqual(d._cells["oci_core_drg.drg"]["parent"], "region")
+        self.assertEqual(d._cells["oci_core_cpe.onprem"]["parent"], "hub")
+        self.assertEqual(d.layout_info["warnings"], [])
+
+    def test_hub_spoke_terraform_model(self):
+        import oci_topology as ot
+        import parse_terraform as pt
+        model = pt.parse_terraform_dir(self.FIXTURES / "terraform" / "hub_spoke")
+        self.assertEqual(ot.classify_topology(model)["kind"], "hybrid")
+        text = self._gate(model, "hub_spoke.drawio")
+        self.assertIn("Local Peering", text)
+        self.assertIn("FastConnect", text)
+        self.assertIn("Remote Peering", text)
+        self.assertIn("Oracle Services Network", text)
+        model["drg_style"] = "box"
+        self._gate(model, "hub_spoke_box.drawio")
+
+    def test_tenancy_bundle_model(self):
+        import query_tenancy as qt
+        bundle = qt.load_bundle(self.FIXTURES / "tenancy" / "topology_bundle.json")
+        model = qt.build_model(bundle, "ocid1.compartment.oc1..aaaaaaaashopprod000001")
+        self._gate(model, "tenancy.drawio")
+
+
 if __name__ == "__main__":
     unittest.main()

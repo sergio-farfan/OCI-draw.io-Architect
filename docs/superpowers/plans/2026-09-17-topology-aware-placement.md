@@ -3190,7 +3190,7 @@ git commit -m "docs: v1.3.0 - topology-aware placement documentation and version
 - Consumes: `parse_terraform.parse_terraform_dir`, `query_tenancy.load_bundle` / `build_model`, `oci_layout.write_diagram`, `check_overlaps.main`, `oci_topology.classify_topology`.
 - Produces: the release gate for 1.3.0.
 
-- [ ] **Step 1: Write the end-to-end tests**
+- [x] **Step 1: Write the end-to-end tests**
 
 Append to `oci-drawio-architect/tests/test_oci_layout.py`:
 
@@ -3238,12 +3238,12 @@ class EndToEndTests(unittest.TestCase):
         self._gate(model, "tenancy.drawio")
 ```
 
-- [ ] **Step 2: Run the end-to-end tests**
+- [x] **Step 2: Run the end-to-end tests**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout.EndToEndTests -v 2>&1 | tail -8`
 Expected: 3 PASS. If the hub_spoke gate reports `WARNING: edge ... is estimated to cross`, that is acceptable (warnings do not fail the gate); an `ERROR`/`OVERLAP` line is a layout bug in Tasks 5-7 - typical causes: the OSN panel `osn_x` colliding with the SGW caption (check `VCN_COLUMN_GAP_GW` is applied for a VCN with right gateways) or the left LPG of `vcn-spoke` colliding with the right LPG/SGW of `vcn-hub` (check `LEFT_GW_Y0 == SIDE_GW_Y0` and `VCN_COLUMN_GAP_GW >= LABEL_W + 1`).
 
-- [ ] **Step 3: Run every gate**
+- [x] **Step 3: Run every gate**
 
 ```bash
 python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3
@@ -3257,14 +3257,14 @@ git status --short
 
 Expected: `OK` (244 original tests plus the new ones, all passing); every `check_overlaps.py` line prints `OK: no container overlaps or layout errors`; `Smoke test passed.`; `pack.sh` prints `Created: /tmp/v13-pack/oci-drawio-architect-v1.3.0.tar.gz` and the three grep hits; `git status --short` is empty after the commit below.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add oci-drawio-architect/tests/test_oci_layout.py
 git commit -m "test: end-to-end gate for Terraform, tenancy, reference and demo models"
 ```
 
-- [ ] **Step 5: Hand-off**
+- [x] **Step 5: Hand-off**
 
 Do not merge or tag. Report the branch, the test count, and confirm the four regenerated PNGs (`screenshots/diagram-overview.png`, `screenshots/diagram-detail.png`, `Screens/1.png`, `Screens/2.png`) are in the Task 11 commit (`git show --stat HEAD~2 -- screenshots Screens`) so the release step (`pack.sh`, GitHub release asset, `install.sh`, dev.to update) can follow the repository `CLAUDE.md`.
 
