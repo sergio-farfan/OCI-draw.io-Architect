@@ -3045,14 +3045,14 @@ git commit -m "feat(examples): schema-2 reference model, three-page demo with bo
 - Consumes: every public name introduced in Tasks 1-11 (names below are copied from those tasks).
 - Produces: version string `1.3.0` in every place that carried `1.2.0` except `CHANGELOG.md` history and `dev.to/` (article assets are updated after the release, outside this plan).
 
-- [ ] **Step 1: Make the version test fail**
+- [x] **Step 1: Make the version test fail**
 
 In `oci-drawio-architect/tests/test_builder.py` line 1376 change `self.assertEqual(db.__version__, "1.2.0")` to `self.assertEqual(db.__version__, "1.3.0")` and line 1 to `"""Unit tests for scripts/drawio_builder.py (v1.3.0).`.
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestModuleCompat.test_version_and_exports 2>&1 | tail -3`
 Expected: FAIL `'1.2.0' != '1.3.0'`.
 
-- [ ] **Step 2: Bump the version strings**
+- [x] **Step 2: Bump the version strings**
 
 Apply, from the repository root:
 
@@ -3071,7 +3071,7 @@ grep -rn "1\.2\.0" --include="*.md" --include="*.json" --include="*.py" --includ
 
 Expected: the grep prints exactly these residual hits and nothing else - `tests/fixtures/terraform/plan.json:58` (the CIDR `10.1.2.0/24`, not a version), `README.md:75` and `oci-drawio-architect/README.md:5` (`## What's new in 1.2.0`, renamed to `## What was new in 1.2.0` in Step 5 and kept), `references/oracle-styles.md:160` (`Changed in v1.2.0`) and `references/gotchas.md:66`, `:190`, `:229` (history notes about what changed in 1.2.0 - leave them). Re-run the grep after Step 5; the same seven lines must remain and no other.
 
-- [ ] **Step 3: CHANGELOG**
+- [x] **Step 3: CHANGELOG**
 
 Insert after the intro paragraph of `oci-drawio-architect/CHANGELOG.md` (before `## [1.2.0] - 2026-09-12`):
 
@@ -3099,7 +3099,7 @@ Topology-aware placement. The layout recipe now follows how Oracle's Architectur
 - Diagram purpose selection, resource filtering (tag / compartment / region / VCN / subnet / type / environment), detail levels, label modes, draw.io view layers, a separate global-services bucket, all-resources versus participating mode, multi-region canvases, an Internet location box outside the region, draw.io MCP integration.
 ```
 
-- [ ] **Step 4: SKILL.md**
+- [x] **Step 4: SKILL.md**
 
 Edit `oci-drawio-architect/skills/oci-drawio-architect/SKILL.md`:
 
@@ -3144,7 +3144,7 @@ d.write("hub_spoke.drawio")
 10. Section 7 item 4: replace `hub centred on the VCN; gateways in the bottom row;` with `on-premises panel and DRG column centred on the VCN stack; DRG outside every VCN with its attachment boxes beside it; gateways centred on the VCN border; regional services in the Oracle Services Network panel right of the VCNs;`. Section 8 table: add `ERROR: DRG '...' is inside VCN '...'` -> `move the DRG to `drgs[]` (recipe) or parent it to the region outside every VCN box (custom)` and `ERROR: '...' lies inside '...' but is not one of its children` -> `the icon's box overlaps a VCN / subnet it does not belong to; move it or make it a child of that container`.
 11. Section 9: add `Topology helpers: ${CLAUDE_PLUGIN_ROOT}/scripts/oci_topology.py`.
 
-- [ ] **Step 5: Command, references, READMEs, CLAUDE.md**
+- [x] **Step 5: Command, references, READMEs, CLAUDE.md**
 
 `oci-drawio-architect/commands/drawio-architect.md`:
 - Step 2.4.5: `Regional services (Logging, Monitoring / Alarms, Notifications, Events, Connector Hub, IAM / Identity, Vault / KMS, Certificates, Object Storage, OCIR, AI, Data Safe, Streaming, Queue, APM, DevOps, DNS zones) go to `vcn.services` or `model.services`; the recipe draws them in the region-level Oracle Services Network panel. VCN-resident services without a subnet (mount targets, file systems, private DNS resolvers) also go to `vcn.services` with `"regional": false` when the table would misclassify them.`
@@ -3165,13 +3165,13 @@ d.write("hub_spoke.drawio")
 
 `CLAUDE.md` (repo root): version strings; "Repository Contents" tree adds `oci_topology.py` and the two test files; the `oci_layout.py` paragraph rewritten to the Task 8 docstring summary (columns, DRG column, border gateways, OSN panel, edge kinds, migration); the builder bullets gain `EDGE_KIND_STYLES` / `add_edge(kind=)`, `drg` group type, `add_box`, `append_pages`, `label_fill`, the `ociGroup` / `ociRole` tokens and the validator rules; the API table gains `add_box`, `append_pages`; the command section step 3 mentions `drgs[]`; the layout constants line gains the Task 5-7 constants.
 
-- [ ] **Step 6: Verify**
+- [x] **Step 6: Verify**
 
 Run: `: "${FORBIDDEN:?export FORBIDDEN=<name1|name2|...> first}" && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3 && python3 oci-drawio-architect/scripts/build_icon_catalog.py --check && python3 oci-drawio-architect/scripts/check_overlaps.py --version && grep -rniE "$FORBIDDEN" docs/superpowers oci-drawio-architect/examples oci-drawio-architect/tests/fixtures/terraform/hub_spoke oci-drawio-architect/CHANGELOG.md README.md oci-drawio-architect/README.md oci-drawio-architect/skills oci-drawio-architect/commands; echo "public-repo grep exit $? (1 = clean)"`
 where `FORBIDDEN` is exported beforehand as a pipe-separated, case-insensitive list of the company, project, tenancy, compartment and colleague names from the private review inputs (the list itself must never be written into the repository).
 Expected: suite `OK`; catalog check `OK`; `drawio_builder 1.3.0`; the grep exits 1 (no forbidden names).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A oci-drawio-architect/.claude-plugin oci-drawio-architect/scripts/drawio_builder.py oci-drawio-architect/tests/test_builder.py oci-drawio-architect/skills oci-drawio-architect/commands oci-drawio-architect/CHANGELOG.md oci-drawio-architect/README.md README.md CLAUDE.md

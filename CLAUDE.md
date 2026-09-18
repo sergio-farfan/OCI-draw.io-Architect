@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**oci-drawio-architect** is a Claude Code plugin (v1.2.0) that generates production-quality `.drawio` architecture diagrams for Oracle Cloud Infrastructure (OCI) from Terraform configs, a live tenancy, or free-form descriptions. Input is normalized into a small diagram model; a deterministic layout recipe (`oci_layout.py`) and a stdlib-only builder (`drawio_builder.py`) turn it into a validated, Oracle-styled diagram. The plugin is distributed as a reproducible archive (`oci-drawio-architect-v1.2.0.tar.gz`) built by `pack.sh`.
+**oci-drawio-architect** is a Claude Code plugin (v1.3.0) that generates production-quality `.drawio` architecture diagrams for Oracle Cloud Infrastructure (OCI) from Terraform configs, a live tenancy, or free-form descriptions. Input is normalized into a small diagram model; a deterministic layout recipe (`oci_layout.py`) and a stdlib-only builder (`drawio_builder.py`) turn it into a validated, Oracle-styled diagram. The plugin is distributed as a reproducible archive (`oci-drawio-architect-v1.3.0.tar.gz`) built by `pack.sh`.
 
 **Author:** Sergio Farfan
 
@@ -39,19 +39,20 @@ oci-drawio-architect/
 │       ├── gotchas.md                    # Common pitfalls
 │       └── templates/                    # physical_example_*.svg composites (docs only)
 ├── scripts/
-│   ├── drawio_builder.py                 # Core builder (v1.2.0)
+│   ├── drawio_builder.py                 # Core builder (v1.3.0)
 │   ├── oci_layout.py                     # Model -> diagram recipe (CLI + build_diagram/write_diagram)
 │   ├── check_overlaps.py                 # Validator CLI (mandatory workflow gate)
 │   ├── render_drawio.py                  # draw.io desktop export (PNG/SVG/PDF)
 │   ├── detect_settings.py                # Settings probe (Terraform, ~/.oci/config, OCI CLI)
 │   ├── parse_terraform.py                # HCL dir / plan JSON / state JSON -> model
 │   ├── query_tenancy.py                  # Experimental: live tenancy -> model (OCI CLI)
+│   ├── oci_topology.py                   # Topology classification, legacy-model migration, DRG-style choice
 │   ├── build_icon_catalog.py             # Regenerate / --check the icon catalog
 │   └── smoke_test.sh                     # Demo -> gate -> PNG
 ├── examples/
-│   ├── generate_demo_diagram.py          # Two-page demo / post-install smoke test
+│   ├── generate_demo_diagram.py          # Three-page demo / post-install smoke test
 │   └── generate_reference_layout.py      # Rebuilds the reference sample from a MODEL dict
-├── tests/                                # unittest suite (builder, settings, icons) + fixtures/detect/*
+├── tests/                                # unittest suite (builder, layout, topology, settings, icons) + fixtures/detect/*, fixtures/terraform/hub_spoke/
 ├── icons/                                # 159 OCI SVG icons, 12 categories, + NOTICE (Oracle terms)
 ├── LICENSE                               # MIT (code only; icons are Oracle's, see icons/NOTICE)
 ├── install.sh                            # Install / --uninstall
@@ -81,7 +82,7 @@ python3 oci-drawio-architect/scripts/render_drawio.py file.drawio [-f png|svg|pd
 python3 oci-drawio-architect/scripts/parse_terraform.py [tf_dir] [--plan-json F | --state-json F] [--vcn NAME] [--out FILE] [--no-inferred-edges]
 
 # Layout CLI: model JSON -> .drawio (+ validate, optional render)
-python3 oci-drawio-architect/scripts/oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo f] [--strict] [--render png]
+python3 oci-drawio-architect/scripts/oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo f] [--strict] [--render png] [--drg-style auto|icon|box]
 
 # Settings probe (exit 0 ok, 1 nothing detected, 2 bad dir); prints YAML frontmatter to stdout
 python3 oci-drawio-architect/scripts/detect_settings.py [--no-cli] [terraform_dir]
@@ -112,10 +113,10 @@ Key design decisions:
 - **Icon resolution order**: `$OCI_SVG_DIR` → `<builder dir>/../icons` (plugin layout) → `<builder dir>/icons` → `$CLAUDE_PLUGIN_ROOT/icons` → `~/.claude/plugins/marketplaces/*/plugins/oci-drawio-architect/icons` → `~/.claude/plugins/cache/*/oci-drawio-architect/*/icons` and `.../cache/*/oci-drawio-architect/icons` → `~/.claude/plugins/oci-drawio-architect/icons`. `set_icon_dir(path)` overrides at runtime. Every SVG is registered by file stem at import (159) plus 206 short aliases in `ICON_ALIASES` (354 keys in `ICON_MAP`; 11 aliases coincide with stems). Unknown keys raise with close-match suggestions.
 - **URL-encoding**: SVG data URIs use `urllib.parse.quote()`, NOT base64. A raw `;base64,` marker breaks draw.io's semicolon-delimited style parsing.
 - **Glyph cropping**: `_load_svg()` strips the stencil export's caption-placeholder rectangle, computes the real glyph bounds, crops the viewBox to them and fits the glyph into a uniform `GLYPH_W x GLYPH_H = 70x70` area at the top of the `ICON_W x ICON_H = 75x95` slot, so every icon renders at the same visual size and is centred.
-- **Style profiles**: `STYLE_PROFILES` = `default` (reference look with official 12px labels, `dashPattern=6 3`), `official` (strict OCI toolkit v24.2: 1px edges, open dashed arrows, AD/FD arcSize 8/7) and `v1.0` (byte-for-byte 1.0.0 sample; `sample` is an alias). Region / on-prem / compartment labels top-left; services panel charcoal `#312D2A` 1px dashed; all text uses `FONT_STACK = "Oracle Sans,Arial,Helvetica,sans-serif"`. `GROUP_TYPES`: region, tenancy, availability_domain, fault_domain, compartment, vcn, subnet, services, oracle_services_network, onprem (`hub` = deprecated alias), other, metro_or_realm, third_party_cloud, internet.
-- **Container hierarchy**: `add_group()` returns a cell ID used as `parent` for children. Sizes are provisional — call `fit_to_children()` bottom-up after adding children, then `fit_page()`.
-- **Lattice routing**: `add_edge()` defaults to `route="auto"`: the parent is the common ancestor of source and target, and at `validate()`/`write()` time the router picks docking sides and waypoints on a lattice of container margins and gutters so connectors avoid unrelated icons, captions and container titles; labels are placed to avoid collisions. `route="direct"` = draw.io's port-less orthogonal router (1.1.0 default); `route="pinned"` = fixed `exit_x/exit_y/entry_x/entry_y` + `waypoints` (1.0.0 behaviour), selected automatically when pins or waypoints are passed.
-- **Validation**: `validate()` returns `ERROR:`/`OVERLAP:` (unknown parent/source/target ids — which otherwise make draw.io silently drop the diagram — any-two-container overlaps, containment, icon/caption/text collisions) and `WARNING:` (captions over `MAX_LABEL_LINES=3`, estimated edge crossings, empty pages, content exceeding the page). `check_overlaps()` returns only the blocking ones; `strict=True` promotes warnings. `validate_file()` (used by the CLI) inflates compressed pages and understands `<object>`/`<UserObject>` wrappers. `write()` writes `compressed="false"` XML and accepts `str` or `Path`.
+- **Style profiles**: `STYLE_PROFILES` = `default` (reference look with official 12px labels, `dashPattern=6 3`), `official` (strict OCI toolkit v24.2: 1px edges, open dashed arrows, AD/FD arcSize 8/7) and `v1.0` (byte-for-byte 1.0.0 sample; `sample` is an alias). Region / on-prem / compartment labels top-left; services panel charcoal `#312D2A` 1px dashed; all text uses `FONT_STACK = "Oracle Sans,Arial,Helvetica,sans-serif"`. `GROUP_TYPES`: region, tenancy, availability_domain, fault_domain, compartment, vcn, subnet, services, oracle_services_network, onprem (`hub` = deprecated alias), other, metro_or_realm, third_party_cloud, internet, drg. Every container style now carries an `ociGroup=<type>;` token right before `container=1;`, so `validate_file()` (and hand-written files) can recognise a cell's `group_type` without a style heuristic.
+- **Container hierarchy**: `add_group()` returns a cell ID used as `parent` for children. Sizes are provisional — call `fit_to_children()` bottom-up after adding children, then `fit_page()`. `add_box()` adds a small labelled rounded rectangle (DRG attachment marker) that is a routing obstacle and a valid edge endpoint; `add_icon(label_fill=)` gives the caption an opaque background for icons whose glyph straddles a dashed border (gateways on the VCN edge); the DRG glyph itself carries an `ociRole=drg;` style token so the validator can recognise it without relying on its caption.
+- **Lattice routing**: `add_edge()` defaults to `route="auto"`: the parent is the common ancestor of source and target, and at `validate()`/`write()` time the router picks docking sides and waypoints on a lattice of container margins and gutters so connectors avoid unrelated icons, captions and container titles; labels are placed to avoid collisions. `route="direct"` = draw.io's port-less orthogonal router (1.1.0 default); `route="pinned"` = fixed `exit_x/exit_y/entry_x/entry_y` + `waypoints` (1.0.0 behaviour), selected automatically when pins or waypoints are passed. `add_edge(kind="data"|"control"|"association"|"attachment")` applies `EDGE_KIND_STYLES` (dashed / arrowhead / width / dash pattern per kind; explicit `arrow=` still wins); `add_legend()` gained rows for all four kinds plus region/VCN/subnet/OSN. `append_pages(other)` appends another builder's pages as read-only (deep-copied, `other` stays usable).
+- **Validation**: `validate()` returns `ERROR:`/`OVERLAP:` (unknown parent/source/target ids — which otherwise make draw.io silently drop the diagram — any-two-container overlaps, containment, icon/caption/text collisions) and `WARNING:` (captions over `MAX_LABEL_LINES=3`, estimated edge crossings, empty pages, content exceeding the page). Two more rules: `ERROR: DRG '<label>' is inside VCN '<vcn>'` when a DRG icon's box is parented inside a `vcn` container, and a foreign-containment `ERROR: '<label>' ... lies inside '<VCN or subnet>' ... but is not one of its children` for any leaf overlapping a network container it does not belong to; `STRADDLE_TOL` (4px) and `FOREIGN_TOL` (`ICON_W/4` = 18.75px) keep border-straddling gateways from tripping either check. `check_overlaps()` returns only the blocking ones; `strict=True` promotes warnings. `validate_file()` (used by the CLI) inflates compressed pages and understands `<object>`/`<UserObject>` wrappers. `write()` writes `compressed="false"` XML and accepts `str` or `Path`.
 - **Deterministic ids and metadata**: `key=` on any add_* call fixes the cell id (stable diffs, update-in-place); `metadata=`/`tooltip=` wrap the cell in `<object>`, `link=` in `<UserObject>`.
 
 API summary:
@@ -125,21 +126,23 @@ API summary:
 | `DrawioBuilder(page_name, width, height, style_profile, font_family)` | New document; first page |
 | `add_page(name, w, h)` / `use_page(idx_or_name)` / `add_layer(name)` | Multi-page / layered output |
 | `add_group(label, x, y, w, h, parent, group_type, metadata, tooltip, key, link)` | Container rectangle; returns id |
-| `add_icon(label, icon_key, x, y, parent, w, h, metadata, tooltip, key)` | OCI icon + caption in a 75x95 slot |
+| `add_icon(label, icon_key, x, y, parent, w, h, metadata, tooltip, key, label_fill)` | OCI icon + caption in a 75x95 slot; `label_fill` for a caption crossing a dashed border |
+| `add_box(label, x, y, w, h, parent, key, style_extra, metadata, tooltip)` | Small labelled rounded rectangle (DRG attachment marker); routing obstacle, valid edge endpoint |
 | `place_icons(parent, items, cols, x0, y0, col_w)` | Grid of icons; returns ids and the bounding box |
 | `add_image(path, x, y, w, h)` | Logo (SVG directly; PNG/JPEG via Pillow) |
 | `add_text` / `add_title` / `add_legend` / `add_table` | Text, standard title block, legend, rule table |
-| `add_edge(source, target, label, parent=None, dashed, color, route, ...)` | Connector; auto-routed by default |
+| `add_edge(source, target, label, parent=None, dashed, color, route, ..., kind)` | Connector; auto-routed by default; `kind` applies `EDGE_KIND_STYLES` |
+| `append_pages(other)` | Append another builder's pages as read-only (deep-copied) |
 | `fit_to_children(cid)` / `resize(cid, ...)` / `fit_page()` | Size containers and the page from content |
 | `validate(strict)` / `check_overlaps(strict)` | Problem lists; call before `write()` |
 | `write(path)` / `render(path, fmt)` | Output `.drawio`; export via draw.io desktop |
 | `add_icons_to_map(dict)` / `set_icon_dir(path)` | Extend `ICON_MAP`; override the icon directory |
 
-Layout constants: `ICON_W=75`, `ICON_H=95`, `GLYPH_W=GLYPH_H=70`, `LABEL_H=45`, `LABEL_GAP=2` → **142px** per icon footprint; `PAD=20`, `GAP=20`, `ROW1_Y=50`, `COL_W=130`, `ROW_H=160`.
+Layout constants: `ICON_W=75`, `ICON_H=95`, `GLYPH_W=GLYPH_H=70`, `LABEL_H=45`, `LABEL_GAP=2` → **142px** per icon footprint; `PAD=20`, `GAP=20`, `ROW1_Y=50`, `COL_W=130`, `ROW_H=160`; `DRG_GAP=45`, `ATT_W x ATT_H=100x44`, `ATT_GAP/ATT_PITCH=15/56`, `DRG_CLUSTER_GAP=40`, `OSN_GAP=45`, `GW_STRADDLE/GW_SIDE_DX=40/38`, `SIDE_GW_Y0/LEFT_GW_Y0/SIDE_GW_PITCH=50/50/160`, `VCN_BOTTOM_PAD_GW/VCN_SIDE_PAD/SIDE_INSET=60/60/40`, `VCN_COLUMN_GAP_GW=110`.
 
 ### `oci_layout.py` — Layout Recipe
 
-`build_diagram(model)` / `write_diagram(model, path)` lay out a JSON-serialisable model (`subject`, `region`, `region_label`, `compartment`, `hub`, `vcns[]` with `subnets[]`/`services[]`/`gateways[]`, regional `services[]`, `edges[]`, `notes`) as: title block, region (label top-left), hub panel on the left vertically centred on the VCN, VCN column(s) with subnet rows in traffic order (lb → app → compute → mgmt, 2 icon columns), OCI Services panel right of row 1, data-tier subnets stretched to the row width, gateway icons in the bottom row, auto-routed edges, optional legend. Edge `kind`: data (solid Bark, open arrow), control (dashed Bark), analytics (solid Sienna), datalake (dashed purple). `examples/generate_reference_layout.py` is the canonical model that reproduces `OCI_Architecture.drawio`.
+`build_diagram(model)` / `write_diagram(model, path)` lay out a schema-2, JSON-serialisable model (`subject`, `region`, `region_label`, `compartment`, `drg_style`, `hub` on-premises-only, `drgs[]` with typed `attachments[]`, `vcns[]` with `subnets[]`/`services[]`/`gateways[]`, regional `services[]`, `edges[]`, `notes`) as: title block, region (label top-left), VCN column(s) with subnet rows in traffic order (lb → app → compute → mgmt, 2 icon columns), OCI Services panel right of row 1 for VCN-resident items only, data-tier subnets stretched to the row width, border gateways (IGW/NAT bottom, SGW right, LPG facing its peer VCN), an on-premises panel and a DRG column both vertically centred on the VCN stack (DRG icon or `drg_style="box"` group, one attachment box per attachment), a region-level Oracle Services Network panel for regional services fed by the Service Gateway, auto-routed edges, optional legend. Edge `kind`: data (solid Bark, open arrow), control (dashed Bark, open arrow), association (dotted, no arrowhead), attachment (thin solid, no arrowhead), analytics (solid Sienna), datalake (dashed purple). Schema-1 models (DRG in `hub.items` or a `drg` gateway) are migrated automatically with a `WARNING: legacy model: ...` line. `examples/generate_reference_layout.py` is the canonical model that reproduces `OCI_Architecture.drawio`.
 
 ### `detect_settings.py` — OCI Environment Probe
 
@@ -149,7 +152,7 @@ Probe order: (1) Terraform dir discovery — shallowest dir with a `provider "oc
 
 1. **Settings** — load `.claude/oci-drawio-architect.local.md` or run `detect_settings.py` and confirm with the user
 2. **Input** — Terraform path, VCN name, or description
-3. **Model** — build the normalized model (`parse_terraform.py` for HCL / plan / state, `query_tenancy.py` for a live tenancy, or by hand for descriptions)
+3. **Model** — build the normalized schema-2 model (`drgs[]` with typed attachments, regional `services[]`, `gateways[].peer`), via `parse_terraform.py` for HCL / plan / state, `query_tenancy.py` for a live tenancy, or by hand for descriptions
 4. **Generate** — write `generate_<name>_drawio.py` importing from `${CLAUDE_PLUGIN_ROOT}/scripts` (no copy)
 5. **Run** — execute the script
 6. **Validate + render** — `check_overlaps.py` must exit 0 (mandatory gate); `render_drawio.py` PNG when draw.io desktop is available
