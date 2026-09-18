@@ -426,7 +426,7 @@ resource "oci_core_virtual_circuit" "private" {
         with contextlib.redirect_stderr(io.StringIO()):
             d = ol.build_diagram(self.model)
         self.assertEqual([m for m in d.validate(strict=True)
-                          if not m.split("] ")[-1].startswith("WARNING")], [])
+                          if not db.is_warning(m)], [])
 
 
 class LpgPeerMirrorTests(unittest.TestCase):
@@ -634,7 +634,7 @@ resource "oci_core_instance" "app" {
         with contextlib.redirect_stderr(io.StringIO()):
             d = ol.build_diagram(self.model)
         self.assertEqual([m for m in d.validate(strict=True)
-                          if not m.split("] ")[-1].startswith("WARNING")], [])
+                          if not db.is_warning(m)], [])
         tips = {el.get("id"): el.get("tooltip") for el in d.root if el.tag == "object" and el.get("tooltip")}
         sid = "subnet-sn-app"
         self.assertEqual(tips[f"{sid}-rt"], "Route table: rt-default-a")

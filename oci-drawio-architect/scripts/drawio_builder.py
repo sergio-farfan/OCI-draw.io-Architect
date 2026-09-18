@@ -1041,6 +1041,13 @@ STRADDLE_TOL = 4.0
 FOREIGN_TOL = ICON_W / 4
 _DRG_CAPTION_RE = re.compile(r"\bDRG\b|Dynamic Routing", re.I)
 
+_PAGE_PREFIX_RE = re.compile(r"^\[page: [^\]]*\] ")
+
+
+def is_warning(message) -> bool:
+    """True when a validate() message is a non-blocking WARNING (page prefix aware)."""
+    return _PAGE_PREFIX_RE.sub("", str(message)).startswith("WARNING")
+
 
 def _centre_within(outer: "_Box", inner: "_Box", tol: float) -> bool:
     return (outer.x - tol <= inner.cx <= outer.right + tol
@@ -2748,7 +2755,7 @@ class DrawioBuilder:
 
     def check_overlaps(self, strict: bool = False) -> list:
         """Return blocking problems only (overlaps, containment, references)."""
-        return [m for m in self.validate(strict=strict) if not m.lstrip("[page: ").split("] ")[-1].startswith("WARNING")]
+        return [m for m in self.validate(strict=strict) if not is_warning(m)]
 
     def write(self, path) -> Path:
         """Route pending edges and write the .drawio XML to disk."""
@@ -2786,7 +2793,7 @@ __all__ = [
     "COL_W", "ROW_H", "GAP", "BOX_STYLE", "DRG_ICON_STEM",
     "STRADDLE_TOL", "FOREIGN_TOL",
     "add_icons_to_map", "set_icon_dir", "resolve_icon_path", "escape_label", "label_lines",
-    "wrap_hints", "edge_label_extent",
+    "wrap_hints", "edge_label_extent", "is_warning",
     "build_cell_registry", "find_container_overlaps", "validate_registry", "validate_file",
     "find_drawio_binary", "render", "OCI_SVG_DIR",
 ]
