@@ -988,6 +988,80 @@ class TestRouterQuality(TempDirMixin, unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# 7a. topology-aware cells: drg group type, ociGroup/ociRole tokens, add_box()
+# ---------------------------------------------------------------------------
+class TestTopologyCells(TempDirMixin, unittest.TestCase):
+    def test_drg_group_type_style(self):
+        self.assertIn("drg", db.GROUP_TYPES)
+        d = DrawioBuilder()
+        gid = d.add_group("DRG: hub-drg", 0, 0, 300, 200, group_type="drg")
+        tok = tokens(cell(d.root, gid).get("style"))
+        self.assertEqual((tok["rounded"], tok["arcSize"], tok["dashed"], tok["strokeWidth"]), ("1", "10", "1", "1"))
+        self.assertEqual((tok["strokeColor"], tok["fillColor"], tok["align"]), (db.COLORS["text_primary"], "none", "left"))
+        self.assertEqual(tok["fontStyle"], "1")
+        self.assertEqual(tok["ociGroup"], "drg")
+
+    def test_every_group_style_carries_its_ocigroup_token(self):
+        d = DrawioBuilder()
+        for gt in db.GROUP_TYPES:
+            gid = d.add_group(gt, 0, 0, 100, 100, group_type=gt)
+            tok = tokens(cell(d.root, gid).get("style"))
+            self.assertEqual(tok["ociGroup"], "onprem" if gt == "hub" else gt, gt)
+            self.assertEqual(tok["container"], "1")
+        self.assertEqual(tokens(db._GROUP_STYLES["vcn"])["ociGroup"], "vcn")
+
+    def test_add_box_is_a_leaf_with_rounded_ivy_border(self):
+        d = DrawioBuilder()
+        r = d.add_group("R", 0, 0, 400, 300)
+        bid = d.add_box("VCN attachment\nspoke", 20, 50, 100, 44, parent=r, key="att-spoke")
+        self.assertEqual(bid, "att-spoke")
+        c = cell(d.root, bid)
+        self.assertEqual(c.get("value"), "VCN attachment<br>spoke")
+        tok = tokens(c.get("style"))
+        self.assertEqual((tok["rounded"], tok["strokeColor"], tok["fillColor"]), ("1", db.COLORS["ivy"], "#FFFFFF"))
+        self.assertEqual(tok["fontFamily"], db.FONT_STACK)
+        self.assertNotIn("container", tok)
+        self.assertEqual(d._cells[bid]["kind"], "other")
+        self.assertEqual(db._kind(db.build_cell_registry(d.root)[bid]), "other")
+        self.assertEqual(geom(c), {"x": 20.0, "y": 50.0, "width": 100.0, "height": 44.0})
+        # boxes take part in leaf collision checks and can be edge endpoints
+        icon = d.add_icon("VM", "vm", 60, 40, parent=r)
+        self.assertTrue(any("overlaps" in m for m in d.validate()))
+        d2 = DrawioBuilder()
+        r2 = d2.add_group("R", 0, 0, 400, 300)
+        b2 = d2.add_box("box", 20, 50, 100, 44, parent=r2)
+        v2 = d2.add_group("VCN", 200, 40, 150, 200, parent=r2, group_type="vcn")
+        d2.add_edge(b2, v2, "", kind="attachment")
+        self.assertEqual(d2.validate(), [])
+
+    def test_add_box_metadata_and_style_extra(self):
+        d = DrawioBuilder()
+        bid = d.add_box("x", 0, 0, 80, 30, metadata={"ocid": "ocid1.drgattachment.oc1..x"},
+                        style_extra="fontStyle=2;")
+        self.assertEqual(wrapper(d.root, bid).tag, "object")
+        self.assertEqual(tokens(cell(d.root, bid).get("style"))["fontStyle"], "2")
+
+    def test_caption_fill_option(self):
+        d = DrawioBuilder()
+        plain = d.add_icon("Gateway", "internet_gateway", 0, 0)
+        filled = d.add_icon("Gateway", "internet_gateway", 200, 0, label_fill=db.COLORS["region_fill"])
+        plain_style = tokens(cell(d.root, d._cells[plain]["label_id"]).get("style"))
+        filled_style = tokens(cell(d.root, d._cells[filled]["label_id"]).get("style"))
+        self.assertEqual(plain_style["fillColor"], "none")
+        self.assertEqual(filled_style["fillColor"], db.COLORS["region_fill"])
+        ids, _ = d.place_icons("1", [("A", "vm")], cols=1, x0=400, label_fill="#FFFFFF")
+        self.assertEqual(tokens(cell(d.root, d._cells[ids[0]]["label_id"]).get("style"))["fillColor"], "#FFFFFF")
+
+    def test_drg_icons_are_tagged(self):
+        d = DrawioBuilder()
+        for key in ("drg", "dynamic_routing_gateway", "networking_dynamic_routing_gateway_drg"):
+            cid = d.add_icon("DRG", key, 0, 0)
+            self.assertEqual(tokens(cell(d.root, cid).get("style"))["ociRole"], "drg", key)
+        vm = d.add_icon("VM", "vm", 300, 0)
+        self.assertNotIn("ociRole", tokens(cell(d.root, vm).get("style")))
+
+
+# ---------------------------------------------------------------------------
 # 8. validate() / check_overlaps() / validate_file()
 # ---------------------------------------------------------------------------
 class TestValidation(TempDirMixin, unittest.TestCase):

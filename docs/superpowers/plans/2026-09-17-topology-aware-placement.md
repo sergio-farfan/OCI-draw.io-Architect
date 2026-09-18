@@ -240,7 +240,7 @@ git commit -m "feat(builder): connector kinds data/control/association/attachmen
 - Consumes: Task 1 (`_edge_base_style` unchanged here).
 - Produces: `GROUP_TYPES` includes `"drg"`; every container style string ends with `ociGroup=<group_type>;` before `container=1;...`; `DrawioBuilder.add_box(label, x, y, w, h, parent="1", key=None, style_extra="", metadata=None, tooltip=None) -> str` (registered kind `"other"`, style `BOX_STYLE`); `add_icon(..., label_fill=None)`; DRG icons carry `ociRole=drg;`; module constants `BOX_STYLE: str`, `DRG_ICON_STEM = "networking_dynamic_routing_gateway_drg"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Insert before `class TestValidation` in `oci-drawio-architect/tests/test_builder.py`:
 
@@ -316,12 +316,12 @@ class TestTopologyCells(TempDirMixin, unittest.TestCase):
         self.assertNotIn("ociRole", tokens(cell(d.root, vm).get("style")))
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestTopologyCells -v 2>&1 | tail -12`
 Expected: FAIL/ERROR with `AssertionError: 'drg' not found in ('region', ...)`, `AttributeError: 'DrawioBuilder' object has no attribute 'add_box'`, `KeyError: 'ociGroup'`, `KeyError: 'ociRole'`, `TypeError: DrawioBuilder.add_icon() got an unexpected keyword argument 'label_fill'`.
 
-- [ ] **Step 3: Implement the group type and tokens**
+- [x] **Step 3: Implement the group type and tokens**
 
 In `oci-drawio-architect/scripts/drawio_builder.py` replace `GROUP_TYPES` (lines 650-654):
 
@@ -355,7 +355,7 @@ and replace the two closing lines of the function with:
 
 Update the `add_group` docstring list to include `drg`.
 
-- [ ] **Step 4: Implement `label_fill`, the DRG tag and `add_box`**
+- [x] **Step 4: Implement `label_fill`, the DRG tag and `add_box`**
 
 In `add_icon`: add `label_fill=None` after `link=None` in the signature; after `data_uri, nw, nh = _load_svg(icon_key)` add:
 
@@ -404,12 +404,12 @@ BOX_STYLE = (
 
 Add `"BOX_STYLE"`, `"DRG_ICON_STEM"` to `__all__`.
 
-- [ ] **Step 5: Run the new tests and the suite**
+- [x] **Step 5: Run the new tests and the suite**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestTopologyCells -v 2>&1 | tail -10 && cd .. && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3`
 Expected: the six new tests PASS; suite `OK`. (`test_default_region_style` uses `assertIn` and `tokens()` so the added token does not break it; `test_group_styles_module_view_matches_default_builder` compares two outputs of the same function.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/drawio_builder.py oci-drawio-architect/tests/test_builder.py
