@@ -85,11 +85,13 @@ in ``drgs`` with one typed attachment per ``oci_core_drg_attachment`` (VCN),
 single-VCN model gets an implicit ``<drg>@<vcn>`` attachment.
 
 Route tables, security lists and NSGs are never subnet items. A subnet's ``route_table_id`` and
-``security_list_ids`` become ``route_table`` / ``security_lists`` badge references; an item's
-``nsg_ids`` / ``network_security_group_ids`` (instances via ``create_vnic_details``, load balancers,
-network load balancers, DB systems) and the ``nsg_ids`` of ``oci_core_vnic_attachment`` resources
-attached to an instance become the item's ``nsgs``. The layout draws them as badges on the subnet's
-top-right corner and on the resource icon. ``controls`` still lists the resources themselves.
+``security_list_ids`` become ``route_table`` / ``security_lists`` badge references - the managed
+``oci_core_route_table`` / ``oci_core_security_list`` and the VCN's ``oci_core_default_route_table``
+/ ``oci_core_default_security_list`` alike. An item's ``nsg_ids`` / ``network_security_group_ids``
+(instances via ``create_vnic_details``, load balancers, network load balancers, DB systems) and the
+``nsg_ids`` of ``oci_core_vnic_attachment`` resources attached to an instance become the item's
+``nsgs``. The layout draws them as badges on the subnet's top-right corner and on the resource
+icon. ``controls`` still lists the resources themselves.
 
 ``hub`` holds the on-premises side only (CPE, virtual circuit, RPC peer).  LPG
 pairs produce one ``Local Peering`` edge of kind ``attachment`` and both
@@ -190,6 +192,8 @@ RESOURCE_ICONS: Dict[str, Tuple[str, str]] = {
     "oci_core_network_security_group": ("nsg", "NSG"),
     "oci_core_security_list": ("security_list", "Security list"),
     "oci_core_route_table": ("route_table", "Route table"),
+    "oci_core_default_security_list": ("security_list", "Default security list"),
+    "oci_core_default_route_table": ("route_table", "Default route table"),
     # identity & security
     "oci_kms_vault": ("vault", "Vault"),
     "oci_kms_key": ("key_management", "Key"),
@@ -240,12 +244,19 @@ HUB_TYPES: Dict[str, Optional[str]] = {
     "oci_core_virtual_circuit": "FastConnect",
     "oci_core_remote_peering_connection": None,
 }
-CONTROL_TYPES = frozenset({"oci_core_network_security_group", "oci_core_security_list", "oci_core_route_table"})
 # Security constructs drawn as badges by the layout (subnet corner: route table + security
 # lists; resource icon: NSGs) instead of workload icons. ``controls`` keeps the inventory.
+# A subnet may use the VCN's default route table / security list instead of a managed one
+# (``oci_core_default_route_table`` / ``oci_core_default_security_list``, the pattern of the
+# Oracle network modules and of the CIS landing zone), so both types resolve to a badge.
 ROUTE_TABLE_TYPE = "oci_core_route_table"
 SECURITY_LIST_TYPE = "oci_core_security_list"
 NSG_TYPE = "oci_core_network_security_group"
+DEFAULT_ROUTE_TABLE_TYPE = "oci_core_default_route_table"
+DEFAULT_SECURITY_LIST_TYPE = "oci_core_default_security_list"
+ROUTE_TABLE_TYPES = frozenset({ROUTE_TABLE_TYPE, DEFAULT_ROUTE_TABLE_TYPE})
+SECURITY_LIST_TYPES = frozenset({SECURITY_LIST_TYPE, DEFAULT_SECURITY_LIST_TYPE})
+CONTROL_TYPES = ROUTE_TABLE_TYPES | SECURITY_LIST_TYPES | frozenset({NSG_TYPE})
 NSG_ATTRS = ("nsg_ids", "network_security_group_ids")
 VNIC_ATTACHMENT_TYPES = frozenset({"oci_core_vnic_attachment", "oci_core_vnic"})
 LB_TYPES = frozenset({"oci_load_balancer_load_balancer", "oci_load_balancer",
@@ -1285,11 +1296,11 @@ class ModelBuilder:
                                 public=infer_public(name, prohibit), tier=infer_tier(name))
             if not isinstance(r.attrs.get("display_name"), str):
                 subnet["_unresolved"] = True
-            rt = self.first_ref(r, ("route_table_id",), ROUTE_TABLE_TYPE)
+            rt = self.first_ref(r, ("route_table_id",), rtypes=ROUTE_TABLE_TYPES)
             if rt is not None:
                 subnet["route_table"] = self._badge_ref(rt, "Route table")
             subnet["security_lists"] = [self._badge_ref(sl, "Security list") for sl in
-                                        self.all_refs(r, ("security_list_ids",), frozenset({SECURITY_LIST_TYPE}))]
+                                        self.all_refs(r, ("security_list_ids",), SECURITY_LIST_TYPES)]
             vcn["subnets"].append(subnet)
             self.subnet_by_addr[r.address] = subnet
             self.subnet_vcn[r.address] = vcn["address"]
@@ -1465,7 +1476,8 @@ class ModelBuilder:
                 self.subnet_by_addr[subnet.address]["items"].append(item)
                 self._register(item, r, self.subnet_vcn[subnet.address], subnet.address)
                 continue
-            vcn = self._vcn_for(r, ("vcn_id", "vcn_ids")) or self._vcn_by_compartment(r) or self._single_vcn()
+            vcn = (self._vcn_for(r, ("vcn_id", "vcn_ids", "manage_default_resource_id"))
+                   or self._vcn_by_compartment(r) or self._single_vcn())
             if r.rtype in CONTROL_TYPES:
                 if vcn is not None:
                     vcn["controls"].append(item)
