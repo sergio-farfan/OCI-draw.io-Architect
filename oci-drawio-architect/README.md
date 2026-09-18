@@ -192,7 +192,7 @@ python3 scripts/build_icon_catalog.py --check   # after touching icons/
 ./pack.sh [/output/dir]                         # oci-drawio-architect-v1.3.0.tar.gz + SHA256
 ```
 
-Generated files weigh roughly 7-9 KB per embedded icon (demo: 8 icons, ~77 KB; reference sample: 31 icons, ~280 KB).
+Generated files weigh roughly 7-13 KB per embedded icon (the three-page demo with 26 icons is about 300 KB; the reference sample with 31 icons about 280 KB).
 
 ## Icon licensing
 
