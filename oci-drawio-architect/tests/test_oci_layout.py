@@ -613,5 +613,122 @@ class EndToEndTests(unittest.TestCase):
         self._gate(model, "tenancy.drawio")
 
 
+BADGED = {
+    "subject": "badges", "region": "us-ashburn-1",
+    "vcns": [{"name": "a", "cidr": "10.0.0.0/16", "subnets": [
+        {"name": "sn-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": True,
+         "route_table": "rt-public", "security_lists": ["sl-lb", {"name": "sl-shared", "address": "sl-shared"}],
+         "items": [{"icon": "load_balancer", "label": "Public LB", "address": "lb", "nsgs": ["nsg-lb"]}]},
+        {"name": "sn-app", "cidr": "10.0.1.0/24", "tier": "app",
+         "route_table": {"name": "rt-private", "address": "rt-private"},
+         "items": [{"icon": "vm", "label": "App VM\n10.0.1.5", "address": "app",
+                    "nsgs": [{"name": "nsg-app", "address": "nsg-app"}, "nsg-mgmt"]},
+                   {"icon": "vault", "label": "Vault", "address": "vault"}]},
+        {"name": "sn-db", "cidr": "10.0.2.0/24", "tier": "data", "security_lists": ["sl-db"],
+         "items": [{"icon": "autonomous_db", "label": "ADB", "address": "adb", "nsgs": ["nsg-db"]}]}],
+        "gateways": [gw("sgw", "service_gateway", "Service\nGateway", "sgw")]}],
+    "edges": [{"source": "lb", "target": "app", "label": "8080", "kind": "data"},
+              {"source": "app", "target": "adb", "label": "1522", "kind": "data"},
+              {"source": "rt-private", "target": "sgw", "label": "OSN", "kind": "control"}],
+}
+
+
+def badge_style(d, cid):
+    """Style tokens of any cell, including <object>-wrapped ones (badges carry tooltips)."""
+    return db._style_tokens(db.build_cell_registry(d.root)[cid]["style"])
+
+
+class BadgeLayoutTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.d = quiet(ol.build_diagram, BADGED)
+
+    def test_route_table_badge_is_centred_on_the_subnet_top_right_corner(self):
+        for name in ("sn-lb", "sn-app"):
+            sx, sy, sw, sh = self.d.abs_bbox(f"subnet-{name}")
+            bx, by, bw, bh = self.d.abs_bbox(f"subnet-{name}-rt")
+            self.assertAlmostEqual(bx + bw / 2, sx + sw, delta=1.0, msg=name)
+            self.assertAlmostEqual(by + bh / 2, sy, delta=1.0, msg=name)
+            self.assertEqual((bw, bh), (ol.BADGE_SIZE, ol.BADGE_SIZE), name)
+            self.assertEqual(self.d._cells[f"subnet-{name}-rt"]["parent"], f"subnet-{name}", name)
+
+    def test_security_list_badge_sits_left_of_the_route_table_or_takes_the_corner(self):
+        sx, sy, sw, sh = self.d.abs_bbox("subnet-sn-lb")
+        bx, by, bw, bh = self.d.abs_bbox("subnet-sn-lb-sl")
+        self.assertAlmostEqual(bx + bw / 2, sx + sw - ol.BADGE_SIZE - ol.BADGE_GAP, delta=1.0)
+        self.assertAlmostEqual(by + bh / 2, sy, delta=1.0)
+        dx, dy, dw, dh = self.d.abs_bbox("subnet-sn-db")                 # security lists, no route table
+        cx, cy, cw, ch = self.d.abs_bbox("subnet-sn-db-sl")
+        self.assertAlmostEqual(cx + cw / 2, dx + dw, delta=1.0)
+        self.assertAlmostEqual(cy + ch / 2, dy, delta=1.0)
+        self.assertNotIn("subnet-sn-db-rt", self.d._cells)
+        self.assertNotIn("subnet-sn-app-sl", self.d._cells)
+
+    def test_nsg_badge_sits_in_the_top_right_of_the_host_slot(self):
+        for host in ("lb", "app", "adb"):
+            hx, hy, hw, hh = self.d.abs_bbox(host)
+            nx, ny, nw, nh = self.d.abs_bbox(f"{host}-nsg")
+            self.assertEqual((nx + nw, ny, nw, nh), (hx + hw, hy, ol.BADGE_SIZE, ol.BADGE_SIZE), host)
+            self.assertEqual(self.d._cells[f"{host}-nsg"]["parent"], self.d._cells[host]["parent"], host)
+        self.assertNotIn("vault-nsg", self.d._cells)
+
+    def test_badges_have_no_caption_and_carry_names_in_tooltips(self):
+        tips = {el.get("id"): el.get("tooltip") for el in self.d.root if el.tag == "object" and el.get("tooltip")}
+        self.assertEqual(tips["subnet-sn-lb-rt"], "Route table: rt-public")
+        self.assertEqual(tips["subnet-sn-lb-sl"], "Security lists: sl-lb, sl-shared")
+        self.assertEqual(tips["subnet-sn-db-sl"], "Security list: sl-db")
+        self.assertEqual(tips["app-nsg"], "NSGs: nsg-app, nsg-mgmt")
+        self.assertEqual(tips["lb-nsg"], "NSG: nsg-lb")
+        meta = {el.get("id"): el for el in self.d.root if el.tag == "object"}
+        self.assertEqual(meta["subnet-sn-lb-sl"].get("security_lists"), "sl-lb, sl-shared")
+        self.assertEqual(meta["app-nsg"].get("nsgs"), "nsg-app, nsg-mgmt")
+        for cid in ("subnet-sn-lb-rt", "subnet-sn-lb-sl", "app-nsg"):
+            self.assertIsNone(self.d._cells[cid]["label_id"])
+            self.assertEqual(badge_style(self.d, cid)["ociRole"], "badge")
+        self.assertEqual(badge_style(self.d, "app-nsg")["ociHost"], "app")
+        self.assertEqual(badge_style(self.d, "subnet-sn-lb-rt")["ociHost"], "subnet-sn-lb")
+
+    def test_badge_addresses_resolve_as_edge_endpoints(self):
+        edge = next(e for e in self.d._cells.values() if e["kind"] == "edge" and e.get("target") == "sgw")
+        self.assertEqual(edge["source"], "subnet-sn-app-rt")
+
+    def test_validates_and_passes_the_gate(self):
+        import check_overlaps
+        self.assertEqual(errors_of(self.d), [])
+        with tempfile.TemporaryDirectory() as tmp:
+            out = quiet(ol.write_diagram, BADGED, Path(tmp) / "badges.drawio")
+            self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
+            text = out.read_text(encoding="utf-8")
+            self.assertEqual(text.count("ociRole=badge"), 7)            # rt+sl, rt, sl + 3 NSG badges
+
+    def test_models_without_the_fields_draw_no_badges(self):
+        d = quiet(ol.build_diagram, MODEL_GW)
+        self.assertEqual([c for c, e in d._cells.items() if e.get("badge")], [])
+        self.assertEqual(ol._badge_refs(None), [])
+        self.assertEqual(ol._badge_refs("rt"), [{"name": "rt", "address": None}])
+        self.assertEqual(ol._badge_refs([{"name": "a", "address": "x"}, "b", {"label": "c"}, ""]),
+                         [{"name": "a", "address": "x"}, {"name": "b", "address": None}, {"name": "c", "address": None}])
+        self.assertEqual(ol._badge_tooltip("NSG", ol._badge_refs(["a", "b"])), "NSGs: a, b")
+
+
+class DemoBadgeTests(unittest.TestCase):
+    def test_demo_model_carries_badges_on_both_layout_pages(self):
+        import check_overlaps
+        sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
+        import generate_demo_diagram as demo
+        subnets = {s["name"]: s for v in demo.DEMO_MODEL["vcns"] for s in v["subnets"]}
+        self.assertEqual(subnets["sn-public"]["route_table"], "rt-public")
+        self.assertEqual(subnets["sn-app"]["security_lists"], ["sl-app"])
+        items = {i["address"]: i for s in subnets.values() for i in s["items"]}
+        self.assertEqual((items["lb"]["nsgs"], items["app"]["nsgs"], items["adb"]["nsgs"]),
+                         (["nsg-lb"], ["nsg-app"], ["nsg-db"]))
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "demo.drawio"
+            quiet(demo.build, out)
+            text = out.read_text(encoding="utf-8")
+            self.assertEqual(text.count("ociRole=badge"), 14)          # 7 badges on each of the two layout pages
+            self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1389,6 +1389,122 @@ class TestForeignContainment(TempDirMixin, unittest.TestCase):
         self.assertEqual(errors, ["ERROR: DRG 'DRG hub' is inside VCN 'VCN: a'"])
 
 
+class TestBadges(TempDirMixin, unittest.TestCase):
+    """Route table / security list badges on a subnet corner, NSG badges over an icon (v1.3.0 addendum)."""
+
+    def _subnet(self, d):
+        r = d.add_group("us-ashburn-1", 20, 75, 900, 600, group_type="region", key="region")
+        v = d.add_group("VCN: a (10.0.0.0/16)", 20, 40, 500, 400, parent=r, group_type="vcn", key="vcn-a")
+        s = d.add_group("sn-app (10.0.1.0/24)", db.PAD, db.ROW1_Y, 300, 200, parent=v, group_type="subnet",
+                        key="subnet:sn-app")
+        ids, _ = d.place_icons(s, [{"label": "App VM\n10.0.1.5", "icon": "vm", "key": "app"},
+                                   {"label": "Vault", "icon": "vault", "key": "vault"}], cols=2)
+        w, h = d.fit_to_children(s)
+        return r, v, s, ids, w, h
+
+    def test_corner_badges_centre_on_the_subnet_corner_and_validate_clean(self):
+        d = DrawioBuilder()
+        r, v, s, ids, w, h = self._subnet(d)
+        rt = d.add_badge("route_table", w, 0, parent=s, host=s, key=f"{s}-rt", tooltip="Route table: rt-app")
+        sl = d.add_badge("security_list", w - db.BADGE_SIZE - db.BADGE_GAP, 0, parent=s, host=s, key=f"{s}-sl")
+        self.assertEqual((rt, sl), ("subnet-sn-app-rt", "subnet-sn-app-sl"))
+        sx, sy, sw, sh = d.abs_bbox(s)
+        bx, by, bw, bh = d.abs_bbox(rt)
+        self.assertEqual((bw, bh), (db.BADGE_SIZE, db.BADGE_SIZE))
+        self.assertAlmostEqual(bx + bw / 2, sx + sw, delta=1.0)          # centred on the top-right corner
+        self.assertAlmostEqual(by + bh / 2, sy, delta=1.0)
+        lx, ly, lw, lh = d.abs_bbox(sl)
+        self.assertAlmostEqual(lx + lw / 2, sx + sw - db.BADGE_SIZE - db.BADGE_GAP, delta=1.0)
+        self.assertAlmostEqual(ly + lh / 2, sy, delta=1.0)
+        for cid in (v, r):
+            d.fit_to_children(cid)
+        d.fit_page()
+        self.assertEqual(only_errors(d.validate()), [])                  # straddling the corner passes rule 3
+        path, _ = self.roundtrip(d)
+        errors, _, _, _ = db.validate_file(path)
+        self.assertEqual(errors, [])
+
+    def test_badge_style_tokens_geometry_and_no_caption(self):
+        d = DrawioBuilder()
+        r, v, s, ids, w, h = self._subnet(d)
+        rt = d.add_badge("route_table", w, 0, parent=s, host=s, key="rt",
+                         metadata={"route_table": "rt-app"}, tooltip="Route table: rt-app")
+        c = cell(d.root, rt)
+        tok = tokens(c.get("style"))
+        self.assertEqual((tok["shape"], tok["ociRole"], tok["ociHost"], tok["imageAspect"]), ("image", "badge", s, "1"))
+        self.assertTrue(tok["image"].startswith(DATA_URI_PREFIX))
+        self.assertEqual(geom(c), {"x": w - 11.0, "y": -11.0, "width": 22.0, "height": 22.0})
+        e = d._cells[rt]
+        self.assertEqual((e["kind"], e["badge"], e["host"], e["label_id"]), ("icon", True, s, None))
+        self.assertEqual((e["slot_x"], e["slot_y"], e["slot_w"], e["slot_h"]), (w - 11.0, -11.0, 22.0, 22.0))
+        obj = wrapper(d.root, rt)
+        self.assertEqual((obj.tag, obj.get("tooltip"), obj.get("route_table")), ("object", "Route table: rt-app", "rt-app"))
+        self.assertEqual(len([t for t in d._cells.values() if t["kind"] == "text"]), 2)   # only the two icon captions
+
+    def test_nsg_badge_sits_inside_the_host_slot_and_may_cover_the_glyph(self):
+        d = DrawioBuilder()
+        r, v, s, ids, w, h = self._subnet(d)
+        app = ids[0]
+        sx, sy, sw, sh = d.bbox(app)
+        nsg = d.add_badge("nsg", sx + db.ICON_W - db.BADGE_SIZE / 2, sy + db.BADGE_SIZE / 2, parent=s, host=app,
+                          key="app-nsg", tooltip="NSG: nsg-app")
+        hx, hy, hw, hh = d.abs_bbox(app)
+        nx, ny, nw, nh = d.abs_bbox(nsg)
+        self.assertEqual((nx + nw, ny, nw, nh), (hx + hw, hy, 22.0, 22.0))           # top-right of the 75x95 slot
+        gx, gy, gw_, gh = d._abs_cell(app)
+        self.assertTrue(nx < gx + gw_ and ny + nh > gy)                              # overlaps the 70x70 glyph cell
+        self.assertEqual(only_errors(d.validate()), [])                              # ... which is allowed for the host
+        path, _ = self.roundtrip(d)
+        self.assertEqual(db.validate_file(path)[0], [])
+
+    def test_badge_over_a_foreign_icon_is_still_a_collision(self):
+        d = DrawioBuilder()
+        g = d.add_group("R", 0, 0, 400, 300, key="r")
+        d.add_icon("A", "vm", 20, 50, parent=g, key="a")
+        d.add_icon("B", "vm", 150, 50, parent=g, key="b")
+        d.add_badge("nsg", 20 + db.ICON_W - 11, 50 + 11, parent=g, host="b", key="stray")   # over A, hosted by B
+        errors = only_errors(d.validate())
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("'A'", errors[0])
+        self.assertIn("overlaps", errors[0])
+
+    def test_two_corner_badges_do_not_collide_and_fit_ignores_them(self):
+        d = DrawioBuilder()
+        r, v, s, ids, w, h = self._subnet(d)
+        d.add_badge("route_table", w, 0, parent=s, host=s, key="rt")
+        d.add_badge("security_list", w - db.BADGE_SIZE - db.BADGE_GAP, 0, parent=s, host=s, key="sl")
+        self.assertEqual(d.fit_to_children(s), (w, h))                    # badges never grow their host
+        sib = d.add_group("sn-db (10.0.2.0/24)", db.PAD + w + db.GAP, db.ROW1_Y, 200, 150, parent=v,
+                          group_type="subnet", key="sn-db")
+        d.place_icons(sib, [("ADB", "adb")], cols=1)
+        d.fit_to_children(sib)
+        self.assertEqual(only_errors(d.validate()), [])                   # the 20 px gutter clears the 11 px overhang
+
+    def test_routing_obstacles_keep_corner_badges_and_drop_icon_badges(self):
+        d = DrawioBuilder()
+        r, v, s, ids, w, h = self._subnet(d)
+        rt = d.add_badge("route_table", w, 0, parent=s, host=s, key="rt")
+        nsg = d.add_badge("nsg", db.PAD + db.ICON_W - 11, db.ROW1_Y + 11, parent=s, host=ids[0], key="nsg")
+        _, obstacles = d._routing_shapes(d._page_idx)
+        self.assertIn(rt, obstacles)
+        self.assertNotIn(nsg, obstacles)
+
+    def test_add_badge_rejects_bad_input_and_constants_are_exported(self):
+        d = DrawioBuilder()
+        with self.assertRaises(ValueError):
+            d.add_badge("route_table", 0, 0, parent="nope")
+        with self.assertRaises(ValueError):
+            d.add_badge("route_table", 0, 0, size=0)
+        with self.assertRaises(ValueError):
+            d.add_badge("no_such_icon_key", 0, 0)
+        self.assertEqual((db.BADGE_SIZE, db.BADGE_GAP), (22, 4))
+        for name in ("BADGE_SIZE", "BADGE_GAP"):
+            self.assertIn(name, db.__all__)
+        self.assertIsNone(db._badge_host({"style": "shape=image;image=x;"}))
+        self.assertEqual(db._badge_host({"style": "shape=image;ociRole=badge;ociHost=app;image=x;"}), "app")
+        self.assertEqual(db._badge_host({"style": "shape=image;ociRole=badge;ociHost=;image=x;"}), "")
+
+
 # ---------------------------------------------------------------------------
 # 9. Helpers
 # ---------------------------------------------------------------------------

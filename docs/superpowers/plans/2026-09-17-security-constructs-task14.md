@@ -34,7 +34,7 @@
 - Consumes: Task 2 `add_icon(...)` slot geometry (`bbox(cid)` = local slot), `ociRole` token convention; Task 3 rule-3 straddle branch `kinds.get(cid) == "icon" and _centre_within(pbox, local, STRADDLE_TOL)` and `STRADDLE_TOL = 4.0`; Task 5 `_layout_subnet(d, vcn_id, subnet, x, y, max_cols, reg, min_w=None) -> (sid, w, h)` (body unchanged by Tasks 5-7 apart from its callers), `_icon_items(d, parent, items, cols, x0=PAD, y0=ROW1_Y, reg=None) -> (ids, bbox)`; Task 5 test helpers `quiet`, `errors_of`, `gw`, `simple_vcn`, `MODEL_GW`; Task 11 `examples.generate_demo_diagram.DEMO_MODEL` and `build(out_path, do_render=False)`; `check_overlaps.main(argv) -> int`.
 - Produces: module constants `BADGE_SIZE = 22`, `BADGE_GAP = 4` (exported); helper `_badge_host(entry: dict) -> str | None`; `DrawioBuilder.add_badge(icon_key, cx, cy, parent="1", host=None, size=BADGE_SIZE, key=None, metadata=None, tooltip=None) -> str` (kind `icon`, registry keys `badge=True`, `host=<id or None>`, `label_id=None`, `slot_* = cell`; style tokens `ociRole=badge;ociHost=<host id>`); `fit_to_children` ignores badge children; `_routing_shapes` skips badges hosted by an icon; `_attach_captions` skips badges; rule 4 skips badge/host pairs; rule 6 skips badge obstacles whose host is an endpoint. Layout: `_badge_refs(value) -> list[dict]`, `_badge_tooltip(kind: str, refs: list) -> str`, `_register_badge(reg, refs: list, bid: str) -> None`, `_add_subnet_badges(d, sid, subnet, width, reg) -> list[str]`, `_add_nsg_badge(d, parent, cid, item, reg=None) -> str | None`; cell ids `<subnet id>-rt`, `<subnet id>-sl`, `<host id>-nsg`; tooltips `Route table: <names>`, `Security list: <name>` / `Security lists: <names>`, `NSG: <name>` / `NSGs: <names>`; metadata keys `route_table`, `security_lists`, `nsgs`.
 
-- [ ] **Step 1: Write the failing builder tests**
+- [x] **Step 1: Write the failing builder tests**
 
 Insert after `class TestForeignContainment` (before the `# 9. Helpers` banner) in `oci-drawio-architect/tests/test_builder.py`:
 
@@ -155,12 +155,12 @@ class TestBadges(TempDirMixin, unittest.TestCase):
         self.assertEqual(db._badge_host({"style": "shape=image;ociRole=badge;ociHost=;image=x;"}), "")
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestBadges 2>&1 | tail -6`
 Expected: 7 tests, all ERROR with `AttributeError: 'DrawioBuilder' object has no attribute 'add_badge'` (the `_subnet` helper itself passes) or `AttributeError: module 'drawio_builder' has no attribute 'BADGE_SIZE'`.
 
-- [ ] **Step 3: Implement the constants, `_badge_host`, `add_badge` and the badge-aware builder paths**
+- [x] **Step 3: Implement the constants, `_badge_host`, `add_badge` and the badge-aware builder paths**
 
 In `oci-drawio-architect/scripts/drawio_builder.py`:
 
@@ -315,12 +315,12 @@ In `oci-drawio-architect/scripts/check_overlaps.py`, insert after the docstring 
     (badges - style ociRole=badge - may straddle their subnet's corner and cover their own host icon)
 ```
 
-- [ ] **Step 4: Run the builder tests and the suite**
+- [x] **Step 4: Run the builder tests and the suite**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestBadges -v 2>&1 | tail -10 && cd .. && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3`
 Expected: 7 PASS; suite `OK`. If `test_corner_badges_centre_on_the_subnet_corner_and_validate_clean` reports `extends outside its parent`, rule 3 lost the Task 3 branch `if k == "icon" and _centre_within(pbox, local, STRADDLE_TOL): continue` - restore it as written in the main plan (Task 3 Step 4); do not add a badge-specific tolerance.
 
-- [ ] **Step 5: Write the failing layout tests**
+- [x] **Step 5: Write the failing layout tests**
 
 Append to `oci-drawio-architect/tests/test_oci_layout.py` (before `if __name__`):
 
@@ -442,12 +442,12 @@ class DemoBadgeTests(unittest.TestCase):
             self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
 ```
 
-- [ ] **Step 6: Run the tests to verify they fail**
+- [x] **Step 6: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout.BadgeLayoutTests tests.test_oci_layout.DemoBadgeTests 2>&1 | tail -8`
 Expected: `BadgeLayoutTests` errors in `setUpClass` with `ValueError: edge endpoint 'rt-private' not found` (no badge cell registers the address yet); `DemoBadgeTests` fails with `KeyError: 'route_table'`.
 
-- [ ] **Step 7: Implement the layout helpers**
+- [x] **Step 7: Implement the layout helpers**
 
 In `oci-drawio-architect/scripts/oci_layout.py`:
 
@@ -587,7 +587,7 @@ item's icon slot. Badges have no caption; names go to the tooltip and metadata. 
 "address" can be an edge endpoint.
 ```
 
-- [ ] **Step 8: Add the fields to the demo model**
+- [x] **Step 8: Add the fields to the demo model**
 
 In `oci-drawio-architect/examples/generate_demo_diagram.py` (`DEMO_MODEL` from Task 11):
 
@@ -598,13 +598,13 @@ In `oci-drawio-architect/examples/generate_demo_diagram.py` (`DEMO_MODEL` from T
 - In the subnet `sn-data`, replace `{"icon": "autonomous_db", "label": "Autonomous\nDatabase", "address": "adb"}]}],` with `{"icon": "autonomous_db", "label": "Autonomous\nDatabase", "address": "adb", "nsgs": ["nsg-db"]}]}],` - note the **four** closers `}]}],`: `sn-data` is the last subnet of `vcn-spoke`, so the item dict, the `items` list, the subnet dict and the `subnets` list all close on that line before the comma that leads into `"services"`. Do not drop the trailing `]` (that would fold `services` / `gateways` into the subnet dict).
 - In the module docstring, after the sentence that ends `kinds (data, control, association, attachment) and the legend.` add: `Route tables and security lists appear as badges on the subnets' top-right corners and NSGs as shield badges on the load balancer, the app VM and the database.` The sentence is hard-wrapped in Task 11's docstring (`... the four connector` / `kinds (data, control, association, attachment) and the legend.`), so search for the second line, not for the whole sentence.
 
-- [ ] **Step 9: Run the tests, the suite and the gates**
+- [x] **Step 9: Run the tests, the suite and the gates**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout.BadgeLayoutTests tests.test_oci_layout.DemoBadgeTests -v 2>&1 | tail -12 && cd .. && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3 && python3 oci-drawio-architect/examples/generate_demo_diagram.py /tmp/v13-badges-demo.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/v13-badges-demo.drawio && python3 oci-drawio-architect/examples/generate_reference_layout.py /tmp/v13-badges-ref.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/v13-badges-ref.drawio && SMOKE_SKIP_PNG=1 oci-drawio-architect/scripts/smoke_test.sh`
 Expected: 8 PASS; suite `OK`; both `check_overlaps.py` lines print `OK: no container overlaps or layout errors`; `Smoke test passed.`. The reference output is byte-for-byte the Task 11 output (its model has no badge fields). If the demo gate reports `overlaps '(unlabelled)'`, a badge covers a leaf other than its host: check that `_add_nsg_badge` passes `host=cid` (the icon id) and that `_add_subnet_badges` receives the subnet's final width (it must run after `fit_to_children` / `resize`).
 If instead the message pairs a **gateway caption** with `'(unlabelled)'`, it is the known clearance limitation in spec section 6: a side gateway's 105 px opaque caption starts 15 px left of its slot, so it overlaps a corner badge's x range by 4 px, and a subnet row whose top edge falls inside a side caption band (VCN-local `y` within 11 px of `SIDE_GW_Y0 + k * SIDE_GW_PITCH + ICON_H + LABEL_GAP`, i.e. `147 + 160k`) collides with it. That needs two or more right-border gateways plus a second subnet row or a stretched data-tier subnet; the demo and the fixtures do not hit it. Do **not** paper over it with a new validator tolerance or by moving the badge - record it and raise it as a separate task (spec section 12).
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/drawio_builder.py oci-drawio-architect/scripts/check_overlaps.py oci-drawio-architect/scripts/oci_layout.py oci-drawio-architect/examples/generate_demo_diagram.py oci-drawio-architect/tests/test_builder.py oci-drawio-architect/tests/test_oci_layout.py

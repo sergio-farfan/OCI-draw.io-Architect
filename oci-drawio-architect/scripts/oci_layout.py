@@ -37,7 +37,9 @@ Model schema v2 (JSON-serialisable dict; every key optional except vcns/subject)
          "name": "Spoke-VCN-D", "cidr": "10.0.0.0/16",
          "subnets": [{"name": "sn-priv-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": false,
                       "items": [{"icon": "load_balancer", "label": "Load Balancer\\n10.0.0.23",
-                                 "address": "lb", "metadata": {"ocid": "..."}, "tooltip": "..."}]}],
+                                 "address": "lb", "metadata": {"ocid": "..."}, "tooltip": "...",
+                                 "nsgs": ["nsg-lb"]}],
+                      "route_table": "rt-lb", "security_lists": ["sl-lb"]}],
          "services": [{"icon": "logging", "label": "Logging", "address": "logs", "regional": true}],
          "services_label": "OCI Services",
          "gateways": [{"icon": "service_gateway", "type": "sgw", "label": "Service\\nGateway", "address": "sgw"},
@@ -58,6 +60,13 @@ Edge "kind": data (solid, open arrow), control / management (dashed, open arrow)
 association (dotted, no arrowhead), attachment (thin solid, no arrowhead), analytics
 (solid Sienna), datalake (dashed purple); or pass "dashed"/"color" directly.
 Schema-1 models (DRG in hub.items or as a "drg" gateway) are migrated with a WARNING.
+
+Security constructs are badges, never workload icons: "route_table" (str or {"name", "address"})
+and "security_lists" ([str or {"name", "address"}]) on a subnet draw half-size icons straddling
+the subnet's top-right corner (route table on the corner, security lists to its left); "nsgs"
+([str or {"name", "address"}]) on any item draws a shield badge over the top-right of that
+item's icon slot. Badges have no caption; names go to the tooltip and metadata. An entry with an
+"address" can be an edge endpoint.
 
 Usage (CLI):
     python3 oci_layout.py model.json -o out.drawio [--profile default|official|v1.0]
@@ -80,8 +89,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from drawio_builder import (  # noqa: E402
-    CHAR_W_RATIO, COL_W, COLORS, GAP, ICON_FOOTPRINT_H, ICON_W, LABEL_FONT_SIZE, LABEL_LINE_H, PAD,
-    ROW1_Y, ROW_H, DrawioBuilder, edge_label_extent, escape_label, label_lines, render, wrap_hints,
+    BADGE_GAP, BADGE_SIZE, CHAR_W_RATIO, COL_W, COLORS, GAP, ICON_FOOTPRINT_H, ICON_W,
+    LABEL_FONT_SIZE, LABEL_LINE_H, PAD, ROW1_Y, ROW_H, DrawioBuilder, edge_label_extent,
+    escape_label, label_lines, render, wrap_hints,
 )
 from oci_topology import (  # noqa: E402
     attachment_label, attachment_link_label, attachment_type, choose_drg_style, classify_topology,
@@ -307,6 +317,75 @@ class _Registry:
                          f"{', '.join(sorted(self.by_address)[:12])}...)")
 
 
+def _badge_refs(value) -> list:
+    """Normalise ``str | dict | list[str | dict]`` into ``[{"name", "address"}]`` (empty for None)."""
+    if value is None or value == "" or value == []:
+        return []
+    items = value if isinstance(value, (list, tuple)) else [value]
+    out = []
+    for it in items:
+        if isinstance(it, dict):
+            name = str(it.get("name") or it.get("label") or it.get("address") or "").strip()
+            addr = it.get("address")
+        else:
+            name, addr = str(it).strip(), None
+        if name:
+            out.append({"name": name, "address": str(addr) if addr else None})
+    return out
+
+
+def _badge_tooltip(kind: str, refs: list) -> str:
+    return f"{kind}{'s' if len(refs) > 1 else ''}: " + ", ".join(r["name"] for r in refs)
+
+
+def _register_badge(reg, refs: list, bid: str) -> None:
+    if reg is None:
+        return
+    for r in refs:
+        if r["address"]:
+            reg.by_address.setdefault(r["address"], bid)   # first badge wins: several subnets share a construct
+
+
+def _add_subnet_badges(d: DrawioBuilder, sid: str, subnet: dict, width, reg) -> list:
+    """Route-table / security-list badges straddling the subnet's top-right corner.
+
+    Route table centred on the corner, security lists one badge to its left
+    (toolkit slide 18: half-size icons used as labels of the subnet box).
+    Returns the badge ids (0-2).
+    """
+    ids = []
+    cx = width
+    rt = _badge_refs(subnet.get("route_table"))
+    if rt:
+        bid = d.add_badge("route_table", cx, 0, parent=sid, host=sid, key=f"{sid}-rt",
+                          tooltip=_badge_tooltip("Route table", rt),
+                          metadata={"route_table": ", ".join(r["name"] for r in rt)})
+        _register_badge(reg, rt, bid)
+        ids.append(bid)
+        cx -= BADGE_SIZE + BADGE_GAP
+    sls = _badge_refs(subnet.get("security_lists"))
+    if sls:
+        bid = d.add_badge("security_list", cx, 0, parent=sid, host=sid, key=f"{sid}-sl",
+                          tooltip=_badge_tooltip("Security list", sls),
+                          metadata={"security_lists": ", ".join(r["name"] for r in sls)})
+        _register_badge(reg, sls, bid)
+        ids.append(bid)
+    return ids
+
+
+def _add_nsg_badge(d: DrawioBuilder, parent, cid: str, item: dict, reg=None):
+    """NSG shield badge over the top-right of the host icon's slot; None when the item has no ``nsgs``."""
+    nsgs = _badge_refs(item.get("nsgs"))
+    if not nsgs:
+        return None
+    sx, sy, _sw, _sh = d.bbox(cid)
+    bid = d.add_badge("nsg", sx + ICON_W - BADGE_SIZE / 2, sy + BADGE_SIZE / 2, parent=parent, host=cid,
+                      key=f"{cid}-nsg", tooltip=_badge_tooltip("NSG", nsgs),
+                      metadata={"nsgs": ", ".join(r["name"] for r in nsgs)})
+    _register_badge(reg, nsgs, bid)
+    return bid
+
+
 def _icon_items(d: DrawioBuilder, parent, items, cols, x0=PAD, y0=ROW1_Y, reg=None):
     specs = []
     for it in items:
@@ -318,6 +397,8 @@ def _icon_items(d: DrawioBuilder, parent, items, cols, x0=PAD, y0=ROW1_Y, reg=No
             spec["key"] = str(it["address"])
         specs.append(spec)
     ids, bbox = d.place_icons(parent, specs, cols=cols, x0=x0, y0=y0)
+    for it, cid in zip(items, ids):
+        _add_nsg_badge(d, parent, cid, it, reg)
     if reg is not None:
         for it, cid in zip(items, ids):
             reg.add_item(it, cid)
@@ -344,6 +425,7 @@ def _layout_subnet(d: DrawioBuilder, vcn_id, subnet, x, y, max_cols, reg, min_w=
         if min_w:
             w = max(w, min_w)
         d.resize(sid, w=w, h=h)
+    _add_subnet_badges(d, sid, subnet, w, reg)       # after the final size: badges sit on the corner
     return sid, w, h
 
 

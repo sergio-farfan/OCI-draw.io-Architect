@@ -23,6 +23,8 @@ What this module gives you
   overlaps (any two containers, not just siblings), containment, foreign
   containment (icons inside a VCN/subnet they do not belong to; DRG inside
   a VCN), icon/label collisions, long labels and estimated edge crossings.
+  Badges (``add_badge()``, style ``ociRole=badge``) may straddle their
+  subnet's corner and cover their own host icon.
 * ``render()`` - PNG/SVG/PDF export through the draw.io desktop CLI when it
   is installed.
 
@@ -1066,6 +1068,21 @@ def _is_drg_icon(entry: dict) -> bool:
     return bool(_DRG_CAPTION_RE.search(entry.get("caption") or ""))
 
 
+# Security-construct badges (v1.3.0 addendum): half-size caption-less icons
+# (toolkit slide 18) centred on a subnet's top-right corner (route table,
+# security lists) or laid over the top-right of a host icon's slot (NSG).
+BADGE_SIZE = 22
+BADGE_GAP = 4
+
+
+def _badge_host(entry: dict):
+    """Host cell id of a badge (style ``ociRole=badge;ociHost=<id>``); None for non-badges."""
+    tok = _style_tokens(entry.get("style", ""))
+    if tok.get("ociRole") != "badge":
+        return None
+    return tok.get("ociHost") or ""
+
+
 def _attach_captions(registry: dict, boxes: dict) -> None:
     """Name icon cells after the caption text cell sitting right below them."""
     texts = [(cid, e) for cid, e in registry.items()
@@ -1073,6 +1090,8 @@ def _attach_captions(registry: dict, boxes: dict) -> None:
     for cid, e in registry.items():
         if e.get("vertex") != "1" or _kind(e) != "icon" or cid not in boxes:
             continue
+        if _badge_host(e) is not None:
+            continue                      # badges have no caption
         ib = boxes[cid]
         best = None
         for tid, te in texts:
@@ -1232,6 +1251,8 @@ def validate_registry(registry: dict, page: str = "", strict: bool = False,
             a, b = leaves[i], leaves[j]
             if _is_ancestor(registry, a, b) or _is_ancestor(registry, b, a):
                 continue
+            if _badge_host(registry[a]) == b or _badge_host(registry[b]) == a:
+                continue                  # a badge may cover its own host icon (NSG shield)
             ba, bb = boxes[a], boxes[b]
             if ba.w <= 0 or bb.w <= 0:
                 continue
@@ -1274,6 +1295,8 @@ def validate_registry(registry: dict, page: str = "", strict: bool = False,
         for oid, ob in obstacles.items():
             if oid in (e.get("source"), e.get("target")):
                 continue
+            if _badge_host(registry[oid]) in (e.get("source"), e.get("target")):
+                continue                  # a badge over an endpoint is part of that endpoint
             if any(_seg_hits_box(a, b, ob) for a, b in zip(poly, poly[1:])):
                 hit.append(_label_of(registry[oid]))
         if hit:
@@ -1857,6 +1880,34 @@ class DrawioBuilder:
         self._register(cid, "other", x, y, w, h, parent, label=text)
         return cid
 
+    # -- badges ----------------------------------------------------------------
+    def add_badge(self, icon_key, cx, cy, parent="1", host=None, size=BADGE_SIZE,
+                  key=None, metadata=None, tooltip=None) -> str:
+        """Add a caption-less half-size icon centred on (cx, cy) in parent coordinates.
+
+        Badges mark route tables / security lists on a subnet's top-right corner
+        and NSGs on the top-right of a resource's icon slot. ``host`` is the cell
+        the badge decorates (the subnet or the icon): the validator lets a badge
+        overlap its own host, ``fit_to_children()`` ignores badges and the router
+        ignores badges laid over an icon. Returns the badge cell id.
+        """
+        parent = self._check_parent(parent, "add_badge")
+        if size <= 0:
+            raise ValueError("add_badge: size must be positive")
+        data_uri, _nw, _nh = _load_svg(icon_key)
+        x, y = cx - size / 2, cy - size / 2
+        host_id = "" if host is None else str(host)
+        style = (
+            "shape=image;verticalLabelPosition=bottom;verticalAlign=top;imageAspect=1;aspect=fixed;"
+            f"ociRole=badge;ociHost={host_id};image={data_uri};"
+        )
+        cid = self._emit_vertex("", style, parent, x, y, size, size, metadata=metadata, tooltip=tooltip,
+                                cid=self._new_id(key) if key is not None else None)
+        self._register(cid, "icon", x, y, size, size, parent, label="", icon_key=icon_key,
+                       slot_x=x, slot_y=y, slot_w=size, slot_h=size, label_id=None,
+                       badge=True, host=host_id or None)
+        return cid
+
     # -- images / text -------------------------------------------------------
     def add_image(self, image_path, x, y, w, h, parent="1", key=None) -> str:
         """Embed a logo (SVG directly; PNG/JPEG via Pillow) as an image cell."""
@@ -2218,6 +2269,12 @@ class DrawioBuilder:
                     centered = "align=center" in self._group_styles.get(e.get("group_type", ""), "")
                     tx = ax + (w - tw) / 2 if centered else ax + 2
                     obstacles[f"{cid}#title"] = _Box(tx, ay + 1, tw, th)
+            elif e["kind"] == "icon" and e.get("badge"):
+                host = self._cells.get(e.get("host") or "")
+                if host is not None and host["kind"] == "icon":
+                    continue              # covered by the host icon's footprint obstacle
+                ax, ay, w, h = self.abs_bbox(cid)
+                obstacles[cid] = _Box(ax, ay, w, h)      # corner badge: keep connectors off the corner
             elif e["kind"] == "icon":
                 # slot + caption as one block so connectors never squeeze
                 # between a glyph and its caption; the caption is also kept
@@ -2563,8 +2620,8 @@ class DrawioBuilder:
             raise ValueError(f"fit_to_children: {cid!r} is not a container")
         right = bottom = 0.0
         for kid, ke in self._cells.items():
-            if ke["parent"] != cid or ke["kind"] in ("edge", "layer"):
-                continue
+            if ke["parent"] != cid or ke["kind"] in ("edge", "layer") or ke.get("badge"):
+                continue                  # badges straddle the border on purpose; they never grow the host
             if ke["kind"] == "icon":
                 x, y, w, h = self.footprint(kid)
             else:
@@ -2685,6 +2742,7 @@ __all__ = [
     "DrawioBuilder", "COLORS", "FONT_STACK", "ICON_MAP", "ICON_ALIASES", "GROUP_TYPES",
     "STYLE_PROFILES", "EDGE_KIND_STYLES", "ICON_W", "ICON_H", "GLYPH_W", "GLYPH_H", "LABEL_GAP", "LABEL_W",
     "LABEL_H", "LABEL_FONT_SIZE", "LABEL_LINE_H", "WRAP_HINT", "CHAR_W_RATIO", "ICON_FOOTPRINT_H",
+    "BADGE_SIZE", "BADGE_GAP",
     "PAD", "ROW1_Y",
     "COL_W", "ROW_H", "GAP", "BOX_STYLE", "DRG_ICON_STEM",
     "STRADDLE_TOL", "FOREIGN_TOL",

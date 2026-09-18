@@ -12,6 +12,7 @@ Checks (ERROR = exit 1):
   - any shape extending outside its parent container
   - icons, captions or boxes lying inside a VCN / subnet they do not belong to; a DRG inside any VCN
   - icons / captions / text cells overlapping each other
+    (badges - style ociRole=badge - may straddle their subnet's corner and cover their own host icon)
 Checks (WARNING = exit 0 unless --strict):
   - captions that need more lines than their box provides
   - connectors estimated to cross icons or captions that are not endpoints
