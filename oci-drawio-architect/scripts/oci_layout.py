@@ -88,6 +88,7 @@ HUB_GAP = 45
 HUB_ICON_Y0 = 70
 HUB_PITCH = 200
 VCN_COLUMN_GAP = 45
+VCN_MIN_W = 300       # narrowest VCN box (one subnet column)
 MAX_ROW_W = 1000
 ROW_TIERS = ("lb", "app", "compute", "mgmt", "other")
 DATA_TIERS = ("data",)
@@ -284,7 +285,10 @@ def _layout_subnet(d: DrawioBuilder, vcn_id, subnet, x, y, max_cols, reg, min_w=
 
 
 def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX_ROW_W,
-                inset_left=0, right_pad=PAD, bottom_pad=VCN_BOTTOM_PAD, min_h=200):
+                inset_left=0, right_pad=PAD, bottom_pad=VCN_BOTTOM_PAD, min_h=200,
+                min_w=VCN_MIN_W):
+    """Lay out one VCN box; min_h / min_w are the minimum FINAL height / width (borders
+    included), so the caller can reserve room for the gateways that straddle the border."""
     vid = d.add_group(_vcn_label(vcn), x, y, 400, 300, parent=region_id, group_type="vcn",
                       key=f"vcn:{vcn.get('name', '')}" if vcn.get("name") else None,
                       metadata=vcn.get("metadata"), tooltip=vcn.get("tooltip"))
@@ -345,8 +349,8 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
                                    min_w=row_w if row_w else None)
         cy += h + V_GAP
 
-    w, h = d.fit_to_children(vid, pad=PAD, min_w=300, min_h=min_h)
-    w += right_pad - PAD
+    w, h = d.fit_to_children(vid, pad=PAD, min_w=VCN_MIN_W, min_h=min_h)
+    w = max(w + right_pad - PAD, min_w)
     h += bottom_pad - PAD
     d.resize(vid, w=w, h=h)
     return vid, w, h
@@ -418,6 +422,13 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     x = vcn_x
     for i, vcn in enumerate(vcns):
         sides = _gateway_sides(vcn, i, order)
+        # Reserve the room the straddling gateways need: one bottom slot every GW_PITCH
+        # from vx + PAD (the trailing PAD also covers the last caption's 15 px overhang),
+        # and one side slot every SIDE_GW_PITCH from SIDE_GW_Y0 / LEFT_GW_Y0.
+        need_w = max(
+            VCN_MIN_W,
+            (PAD + (len(sides["bottom"]) - 1) * GW_PITCH + ICON_W + PAD) if sides["bottom"] else 0,
+        )
         need_h = max(
             200,
             (SIDE_GW_Y0 + (len(sides["right"]) - 1) * SIDE_GW_PITCH + ICON_FOOTPRINT_H + PAD) if sides["right"] else 0,
@@ -427,7 +438,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                                 inset_left=SIDE_INSET if sides["left"] else 0,
                                 right_pad=VCN_SIDE_PAD if sides["right"] else PAD,
                                 bottom_pad=VCN_BOTTOM_PAD_GW if sides["bottom"] else VCN_BOTTOM_PAD,
-                                min_h=need_h)
+                                min_h=need_h, min_w=need_w)
         vcn_boxes.append((vid, x, VCN_Y, w, h))
         for side in ("bottom", "right", "left"):
             for slot, g in enumerate(sides[side]):

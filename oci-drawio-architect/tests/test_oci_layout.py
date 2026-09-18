@@ -41,6 +41,15 @@ def simple_vcn(name, address=None, gateways=None, services=None, item="app"):
             "services": services or [], "gateways": gateways or []}
 
 
+def wide_vcn(name):
+    """A taller / wider neighbour column, so an overflowing gateway would collide with it."""
+    tiers = ("lb", "app", "mgmt", "data")
+    return {"name": name, "cidr": "10.1.0.0/16", "services": [], "gateways": [],
+            "subnets": [{"name": f"sn-{name}-{t}", "cidr": f"10.1.{i}.0/24", "tier": t,
+                         "items": [{"icon": "vm", "label": f"VM {t} {name}", "address": f"{name}-{t}"}]}
+                        for i, t in enumerate(tiers)]}
+
+
 MODEL_GW = {
     "subject": "gw", "region": "us-ashburn-1",
     "vcns": [simple_vcn("a", gateways=[
@@ -126,6 +135,40 @@ class LpgSideTests(unittest.TestCase):
         self.assertEqual(ol._gateway_side(gw("sgw", "service_gateway", "x", "s"), 0, {}), "right")
         self.assertEqual(ol._gateway_side(gw("igw", "internet_gateway", "x", "i"), 0, {}), "bottom")
         self.assertEqual(ol._gateway_side({"icon": "nat_gateway", "label": "n"}, 0, {}), "bottom")
+
+
+class BottomGatewayWidthTests(unittest.TestCase):
+    """A narrow VCN widens so 3+ bottom-border gateways stay on its own border (GW_PITCH = 180)."""
+
+    def _model(self, n):
+        gws = [gw("igw", "internet_gateway", "Internet\nGateway", "igw"),
+               gw("nat", "nat_gateway", "NAT\nGateway", "nat"),
+               gw("lpg", "remote_peering_gateway", "LPG\nno peer", "lpg"),
+               gw("igw", "internet_gateway", "Internet\nGateway 2", "igw2")][:n]
+        return {"subject": "gw-width", "region": "us-ashburn-1",
+                "vcns": [simple_vcn("a", gateways=gws), wide_vcn("b")]}
+
+    def test_three_bottom_gateways_widen_the_vcn_and_stay_inside_it(self):
+        d = quiet(ol.build_diagram, self._model(3))
+        vx, vy, vw, vh = d.abs_bbox("vcn-a")
+        self.assertGreaterEqual(vw, ol.PAD + 2 * ol.GW_PITCH + db.ICON_W + ol.PAD)
+        for cid in ("igw", "nat", "lpg"):
+            fx, fy, fw, fh = d._abs_footprint(cid)
+            self.assertGreaterEqual(fx, vx, cid)
+            self.assertLessEqual(fx + fw, vx + vw, cid)          # icon + caption on its own border
+        bx, by, bw, bh = d.abs_bbox("vcn-b")
+        self.assertGreaterEqual(bx, vx + vw)                     # no reach into the next column
+        self.assertEqual(errors_of(d), [])
+
+    def test_a_fourth_bottom_gateway_widens_the_vcn_by_one_pitch(self):
+        w3 = quiet(ol.build_diagram, self._model(3)).abs_bbox("vcn-a")[2]
+        w4 = quiet(ol.build_diagram, self._model(4)).abs_bbox("vcn-a")[2]
+        self.assertEqual(w4 - w3, ol.GW_PITCH)
+
+    def test_the_guard_leaves_a_gateway_less_vcn_at_the_minimum_width(self):
+        d = quiet(ol.build_diagram, {"subject": "plain", "region": "us-ashburn-1",
+                                     "vcns": [simple_vcn("a")]})
+        self.assertEqual(d.abs_bbox("vcn-a")[2], ol.VCN_MIN_W)
 
 
 if __name__ == "__main__":
