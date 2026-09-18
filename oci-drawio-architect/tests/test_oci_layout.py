@@ -171,5 +171,66 @@ class BottomGatewayWidthTests(unittest.TestCase):
         self.assertEqual(d.abs_bbox("vcn-a")[2], ol.VCN_MIN_W)
 
 
+def svc(icon, address, **extra):
+    s = {"icon": icon, "label": icon.replace("_", " ").title(), "address": address}
+    s.update(extra)
+    return s
+
+
+class OsnPanelTests(unittest.TestCase):
+    def test_regional_services_move_to_the_osn_panel_right_of_the_vcn(self):
+        model = {"subject": "svc", "region": "us-ashburn-1", "vcns": [simple_vcn(
+            "a", gateways=[gw("sgw", "service_gateway", "Service\nGateway", "sgw")],
+            services=[svc("logging", "log"), svc("buckets", "bkt"), svc("file_storage", "fss")])]}
+        d = quiet(ol.build_diagram, model)
+        vx, vy, vw, vh = d.abs_bbox("vcn-a")
+        ox, oy, ow, oh = d.abs_bbox("osn")
+        self.assertEqual(d._cells["osn"]["group_type"], "oracle_services_network")
+        self.assertEqual(d._cells["osn"]["parent"], "region")
+        self.assertEqual(style_of(d, "osn")["align"], "left")
+        # a right-border SGW widens the last column gap so its caption clears the panel
+        self.assertEqual(ox, vx + vw + ol.OSN_GAP + (ol.VCN_COLUMN_GAP_GW - ol.VCN_COLUMN_GAP))
+        self.assertEqual((oy, oh), (vy, vh))                          # same vertical extent as the VCN
+        self.assertEqual(d._cells["log"]["parent"], "osn")
+        self.assertEqual(d._cells["bkt"]["parent"], "osn")
+        self.assertEqual(d._cells["fss"]["parent"], "services-a")      # VCN-resident stays in the VCN panel
+        self.assertEqual(d._cells["services-a"]["parent"], "vcn-a")
+        osn_edges = [e for e in d._cells.values() if e["kind"] == "edge" and e.get("target") == "osn"]
+        self.assertEqual([(e["source"], e["label"]) for e in osn_edges], [("sgw", "")])
+        self.assertEqual(style_of(d, "sgw-osn")["endArrow"], "none")
+        self.assertEqual(errors_of(d), [])
+
+    def test_all_regional_means_no_vcn_services_panel_and_services_alias(self):
+        model = {"subject": "svc", "region": "us-ashburn-1",
+                 "vcns": [simple_vcn("a", services=[svc("logging", "log"), svc("alarms", "alarm")])],
+                 "edges": [{"source": "app-a", "target": "services", "label": "logs", "kind": "control"}]}
+        d = quiet(ol.build_diagram, model)
+        self.assertNotIn("services-a", d._cells)
+        edge = next(e for e in d._cells.values() if e["kind"] == "edge" and e.get("source") == "app-a")
+        self.assertEqual(edge["target"], "osn")
+        self.assertEqual(errors_of(d), [])
+
+    def test_regional_override_and_top_level_services(self):
+        model = {"subject": "svc", "region": "us-ashburn-1",
+                 "vcns": [simple_vcn("a", services=[svc("logging", "log", regional=False)]),
+                          simple_vcn("b", services=[])],
+                 "services": [svc("vault", "vault"), svc("bastion", "bastion", regional=False)]}
+        d = quiet(ol.build_diagram, model)
+        self.assertEqual(d._cells["log"]["parent"], "services-a")
+        self.assertEqual(d._cells["vault"]["parent"], "osn")
+        self.assertEqual(d._cells["bastion"]["parent"], "services")     # region-level "OCI Services" panel (2 VCNs)
+        bx, _, bw, _ = d.abs_bbox("vcn-b")
+        sx, _, sw, _ = d.abs_bbox("services")
+        ox, _, _, _ = d.abs_bbox("osn")
+        self.assertGreater(sx, bx + bw)
+        self.assertGreater(ox, sx + sw)
+        self.assertEqual(errors_of(d), [])
+
+    def test_no_regional_services_means_no_osn_panel(self):
+        d = quiet(ol.build_diagram, MODEL_GW)
+        self.assertNotIn("osn", d._cells)
+        self.assertEqual([e for e in d._cells.values() if e["kind"] == "edge" and e.get("target") == "osn"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
