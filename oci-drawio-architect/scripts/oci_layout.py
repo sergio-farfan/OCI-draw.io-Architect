@@ -90,7 +90,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from drawio_builder import (  # noqa: E402
     BADGE_GAP, BADGE_RESERVE, BADGE_SIZE, CHAR_W_RATIO, COL_W, COLORS, GAP, ICON_FOOTPRINT_H, ICON_W,
-    LABEL_FONT_SIZE, LABEL_LINE_H, PAD, ROW1_Y, ROW_H, DrawioBuilder, edge_label_extent,
+    LABEL_FONT_SIZE, LABEL_LINE_H, LABEL_W, PAD, ROW1_Y, ROW_H, DrawioBuilder, edge_label_extent,
     escape_label, is_warning, label_lines, render, wrap_hints,
 )
 from oci_topology import (  # noqa: E402
@@ -582,8 +582,12 @@ def _drg_cluster_geometry(drg: dict, style: str) -> dict:
     atts = _drg_attachments(drg)
     right = [a for a in atts if attachment_type(a) == "vcn"]
     left = [a for a in atts if attachment_type(a) != "vcn"]
-    left_w = ATT_W + ATT_GAP if left else 0
-    right_w = ATT_W + ATT_GAP if right else 0
+    # A bare side still carries the 105 px caption, 15 px wider than the 75 px
+    # slot on each side; an attachment block absorbs it, the box style pads with
+    # PAD already (spec A23).
+    caption_pad = 0 if style == "box" else (LABEL_W - ICON_W) // 2
+    left_w = ATT_W + ATT_GAP if left else caption_pad
+    right_w = ATT_W + ATT_GAP if right else caption_pad
     left_h, left_block = _att_block(left)
     right_h, right_block = _att_block(right)
     body_h = max(ICON_FOOTPRINT_H, left_block, right_block)
