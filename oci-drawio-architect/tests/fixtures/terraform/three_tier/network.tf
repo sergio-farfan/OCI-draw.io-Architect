@@ -125,3 +125,15 @@ resource "oci_core_ipsec" "vpn" {
   display_name   = "vpn-hq"
   static_routes  = ["192.168.0.0/16"]
 }
+
+resource "oci_core_network_security_group" "lb" {
+  compartment_id = oci_identity_compartment.app.id
+  vcn_id         = oci_core_vcn.main.id
+  display_name   = "nsg-lb"
+}
+
+resource "oci_core_network_security_group" "mgmt" {
+  compartment_id = oci_identity_compartment.app.id
+  vcn_id         = oci_core_vcn.main.id
+  display_name   = "nsg-mgmt"
+}
