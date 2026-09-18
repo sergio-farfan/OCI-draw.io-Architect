@@ -325,6 +325,17 @@ class OsnPanelTests(unittest.TestCase):
         self.assertEqual(panels, ["osn"])
         self.assertEqual(errors_of(d), [])
 
+    def test_the_region_services_panel_matches_the_vcn_column_height(self):
+        """A28: spec 7.2 - the legacy 'OCI Services' panel is height-matched like the OSN panel."""
+        model = {"subject": "two", "region": "us-ashburn-1",
+                 "vcns": [simple_vcn("a"), wide_vcn("b")],
+                 "services": [svc("file_storage", "fss")]}
+        d = quiet(ol.build_diagram, model)
+        _, by, _, bh = d.abs_bbox("vcn-b")
+        _, py, _, ph = d.abs_bbox("services")
+        self.assertEqual((py, ph), (by, bh))
+        self.assertEqual(errors_of(d), [])
+
 
 HYBRID = {
     "subject": "Spoke", "region": "us-ashburn-1",

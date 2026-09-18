@@ -799,17 +799,18 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         next_left = all_sides[i + 1]["left"] if i + 1 < len(all_sides) else []
         x += w + (VCN_COLUMN_GAP_GW if (sides["right"] or next_left) else VCN_COLUMN_GAP)
 
+    ref_h = max((b[4] for b in vcn_boxes), default=400)
     if top_services:
         rows_n, cols = _grid(len(top_services), 2)
-        pid = d.add_group("OCI Services", x, VCN_Y, cols * COL_W + SUBNET_EXTRA_W,
-                          ROW1_Y + (rows_n - 1) * ROW_H + ICON_FOOTPRINT_H + SUBNET_BOTTOM_PAD,
+        prov_h = ROW1_Y + (rows_n - 1) * ROW_H + ICON_FOOTPRINT_H + SUBNET_BOTTOM_PAD
+        pid = d.add_group("OCI Services", x, VCN_Y, cols * COL_W + SUBNET_EXTRA_W, prov_h,
                           parent=rid, group_type="services", key="services")
         reg.containers["services"] = pid
         _icon_items(d, pid, top_services, cols, reg=reg)
-        pw, _ = d.fit_to_children(pid, pad=PAD)
+        # spec 7.2: height-matched to the tallest VCN column, like the OSN panel
+        pw, _ = d.fit_to_children(pid, pad=PAD, min_h=max(prov_h, ref_h))
         x += pw + VCN_COLUMN_GAP
 
-    ref_h = max((b[4] for b in vcn_boxes), default=400)
     osn_id = None
     if osn_items:
         # the VCN loop already added the trailing column gap: subtracting VCN_COLUMN_GAP
