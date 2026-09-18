@@ -204,7 +204,7 @@ Edge routing modes (`route=`):
 
 Metadata, tooltips, links: `metadata={"ocid": "...", "shape": "VM.Standard.E5.Flex"}` (keys `^[A-Za-z_][A-Za-z0-9_-]*$`, not id/label/placeholders/tooltip/link) and `tooltip="..."` wrap the cell in an `<object>` (`<UserObject>` when `link=` is given) so the data survives draw.io round-trips and shows in Edit Data. `key="app-vm"` gives a stable cell id (slugged: other characters become `-`).
 
-Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_page(0)` to return); call `add_title`/`fit_page` per page; `validate()` covers all pages. Legend: `_, _, _, bottom = d.content_bbox(); d.add_legend(PAD, bottom + GAP)` before `fit_page()`. Table: `d.add_table([["Direction", "Source", "Ports"], ["Ingress", "0.0.0.0/0", "443"]], PAD, 75, col_widths=[80, 170, 60], title="nsg-app (1 rule)")`. Complete demonstration of every type, all three edge modes, legend, table and a second page: `examples/generate_demo_diagram.py`.
+Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_page(0)` to return); call `add_title`/`fit_page` per page; `validate()` covers all pages. Legend: `_, _, _, bottom = d.content_bbox(); d.add_legend(PAD, bottom + GAP)` before `fit_page()`. Table: `d.add_table([["Direction", "Source", "Ports"], ["Ingress", "0.0.0.0/0", "443"]], PAD, 75, col_widths=[80, 170, 60], title="nsg-app (1 rule)")`. Demonstration of the recipe on a two-VCN hybrid model (both `drg_style` options, all four edge kinds, legend) plus a third page built with the custom API (`add_table` for an NSG rule list): `examples/generate_demo_diagram.py`.
 
 ## 7. Acceptance criteria (all mandatory)
 
@@ -239,6 +239,6 @@ Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_
 - Model producers: `${CLAUDE_PLUGIN_ROOT}/scripts/parse_terraform.py` (Terraform dir / plan / state -> model.json), `${CLAUDE_PLUGIN_ROOT}/scripts/query_tenancy.py` (experimental as-built via OCI CLI)
 - Topology helpers: `${CLAUDE_PLUGIN_ROOT}/scripts/oci_topology.py`
 - Gate and tools: `${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/render_drawio.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/detect_settings.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/smoke_test.sh`
-- Examples: `${CLAUDE_PLUGIN_ROOT}/examples/generate_reference_layout.py` (MODEL -> `write_diagram`, reproduces the reference), `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (custom layout, every container type, three edge modes, legend, table, second page)
+- Examples: `${CLAUDE_PLUGIN_ROOT}/examples/generate_reference_layout.py` (MODEL -> `write_diagram`, reproduces the reference), `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (recipe on a hybrid model in both `drg_style`s, four edge kinds, legend, plus a custom-API NSG table page)
 - Icons: `${CLAUDE_PLUGIN_ROOT}/icons/` - 159 SVGs in 12 categories, 206 aliases; catalog `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/icon-catalog.md`
 - Styles: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/oracle-styles.md`; pitfalls: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/gotchas.md`
