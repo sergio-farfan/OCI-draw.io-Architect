@@ -11,22 +11,34 @@ Inputs (one of)
 Output: the MODEL as JSON on stdout (or ``--out FILE``).  A one-line summary goes
 to stderr.
 
-MODEL schema (``SCHEMA_VERSION = 1``)
+MODEL schema (``SCHEMA_VERSION = 2``)
 -------------------------------------
 ::
 
     {
-      "schema_version": 1,
+      "schema_version": 2,
       "subject": str,                 # diagram title subject (VCN or project name)
       "region": str | null,           # "eu-frankfurt-1"
       "region_label": str | null,     # "Frankfurt"
       "compartment": str | null,      # compartment name when it can be determined
       "tenancy_name": str | null,
       "source": {"mode": "hcl"|"plan"|"state"|"tenancy", "path": str | null},
+      "drg_style": "auto"|"icon"|"box",
+      "drgs": [                       # dynamic routing gateways, drawn at region level
+        {
+          "name": str, "address": str, "label": str,
+          "attachments": [
+            {"type": "vcn"|"ipsec"|"virtual_circuit"|"rpc"|"loopback",
+             "address": str, "label": str,
+             "vcn": str | null,       # VCN name / address for "vcn" attachments
+             "target": str | null}    # hub item address the attachment connects to
+          ]
+        }
+      ],
       "hub": {                        # on-premises / transit side, null when absent
         "name": str,
         "items": [ HUB_ITEM ],        # {"icon": str, "label": str, "type": str, "address": str | null}
-        "link_label": str | null      # "IPSec VPN", "FastConnect", "IPSec VPN / FastConnect"
+        "link_label": str | null      # hand-written models only; parser output sets null
       } | null,
       "vcns": [
         {
@@ -38,18 +50,21 @@ MODEL schema (``SCHEMA_VERSION = 1``)
               "items": [ ITEM ]
             }
           ],
-          "services": [ ITEM ],       # VCN-scoped / same-compartment resources outside any subnet
+          "services": [ ITEM ],       # VCN-scoped / same-compartment resources outside any subnet,
+                                      # each carrying "regional": bool
           "controls": [ ITEM ],       # route tables, security lists, NSGs (usually not drawn)
           "gateways": [
-            {"icon": "internet_gateway"|"nat_gateway"|"service_gateway"|"drg"|"remote_peering_gateway",
-             "type": "igw"|"nat"|"sgw"|"drg"|"lpg", "label": str, "address": str | null}
+            {"icon": "internet_gateway"|"nat_gateway"|"service_gateway"|"remote_peering_gateway",
+             "type": "igw"|"nat"|"sgw"|"lpg", "label": str, "address": str | null,
+             "peer": str | null}      # lpg only: the peer LPG address
           ]
         }
       ],
-      "services": [ ITEM ],           # regional resources when there is no single VCN to attach them to
+      "services": [ ITEM ],           # resources with no single VCN to attach them to ("regional": bool)
       "compartments": [ str ],
       "edges": [
-        {"source": str, "target": str, "label": str, "kind": "data"|"control", "inferred": bool}
+        {"source": str, "target": str, "label": str,
+         "kind": "data"|"control"|"association"|"attachment", "inferred": bool}
       ]
     }
 
@@ -60,11 +75,15 @@ mode because ``count``/``for_each`` cannot be expanded statically; the full
 indexed address such as ``oci_core_instance.app[0]`` in plan/state mode) or the
 OCID in live-tenancy mode (see ``query_tenancy.py``).  Addresses are unique per
 model and meant to seed deterministic draw.io cell ids.  A DRG is reported once
-per attached VCN in ``gateways`` (addressed by the attachment, or by the
-synthetic ``<drg>@<vcn>`` when the attachment is implicit) and once in
-``hub.items`` (addressed by the DRG itself).  ``edges[].inferred`` is ``false``
-for edges backed by an explicit reference (LB backend -> instance, IPSec -> CPE/DRG)
-and ``true`` for the tier heuristics (LB -> app compute, app compute -> database).
+in ``drgs`` with one typed attachment per ``oci_core_drg_attachment`` (VCN),
+``oci_core_ipsec`` (ipsec, target = the CPE), ``oci_core_virtual_circuit``
+(virtual_circuit) and ``oci_core_remote_peering_connection`` (rpc); a DRG without
+attachments in a single-VCN model gets an implicit ``<drg>@<vcn>`` attachment.
+``hub`` holds the on-premises side only (CPE, virtual circuit, RPC peer).  LPG
+pairs produce one ``Local Peering`` edge of kind ``attachment``; the layout draws
+the DRG attachment connectors itself.  ``edges[].inferred`` is ``false`` for
+edges backed by an explicit reference (LB backend -> instance, LPG peering) and
+``true`` for the tier heuristics (LB -> app compute, app compute -> database).
 Every ``icon`` value is a key of ``drawio_builder.ICON_ALIASES``; the local
 peering gateway uses ``remote_peering_gateway`` because no dedicated LPG glyph is
 bundled.
@@ -91,16 +110,31 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import detect_settings as ds  # noqa: E402
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 TIERS = ("lb", "app", "compute", "mgmt", "data", "other")
-EDGE_KINDS = ("data", "control")
+EDGE_KINDS = ("data", "control", "association", "attachment")
+ATTACHMENT_TYPES = ("vcn", "ipsec", "virtual_circuit", "rpc", "loopback")
+DRG_STYLES = ("auto", "icon", "box")
 GATEWAY_ICONS: Dict[str, str] = {
     "igw": "internet_gateway",
     "nat": "nat_gateway",
     "sgw": "service_gateway",
-    "drg": "drg",
     "lpg": "remote_peering_gateway",
 }
+# Regional Oracle services (drawn in the Oracle Services Network panel by the layout).
+REGIONAL_TYPES = frozenset({
+    "oci_objectstorage_bucket", "oci_kms_vault", "oci_kms_key", "oci_certificates_management_certificate",
+    "oci_waf_web_app_firewall", "oci_logging_log_group", "oci_monitoring_alarm", "oci_apm_apm_domain",
+    "oci_streaming_stream", "oci_queue_queue", "oci_events_rule", "oci_sch_service_connector",
+    "oci_ons_notification_topic", "oci_datascience_project", "oci_analytics_analytics_instance",
+    "oci_devops_project", "oci_artifacts_container_repository", "oci_dns_zone",
+})
+REGIONAL_TYPE_PREFIXES = ("oci_ai_", "oci_generative_ai_")
+
+
+def is_regional_type(rtype: str) -> bool:
+    return rtype in REGIONAL_TYPES or rtype.startswith(REGIONAL_TYPE_PREFIXES)
+
 
 # ---------------------------------------------------------------------------
 # Resource type -> (icon key, default label)
@@ -185,7 +219,7 @@ GATEWAY_TYPES: Dict[str, str] = {
     "oci_core_service_gateway": "sgw",
     "oci_core_local_peering_gateway": "lpg",
 }
-# hub-side resource -> link label it implies (None: no link label)
+# hub-side resource -> the link it implies (documentation; parser output sets hub.link_label to None)
 HUB_TYPES: Dict[str, Optional[str]] = {
     "oci_core_cpe": None,
     "oci_core_ipsec": "IPSec VPN",
@@ -245,6 +279,8 @@ def new_model(subject: str = "OCI Architecture", region: Optional[str] = None,
         "tenancy_name": None,
         "source": {"mode": source_mode, "path": source_path},
         "hub": None,
+        "drgs": [],
+        "drg_style": "auto",
         "vcns": [],
         "services": [],
         "compartments": [],
@@ -274,6 +310,15 @@ def new_gateway(gtype: str, label: str, address: Optional[str]) -> dict:
 
 def new_hub_item(icon: str, label: str, rtype: str, address: Optional[str]) -> dict:
     return {"icon": icon, "label": label, "type": rtype, "address": address}
+
+
+def new_drg(name: str, address: str, label: Optional[str] = None) -> dict:
+    return {"name": name, "address": address, "label": label or f"DRG\n{name}", "attachments": []}
+
+
+def new_attachment(atype: str, address: str, label: str, vcn: Optional[str] = None,
+                   target: Optional[str] = None) -> dict:
+    return {"type": atype, "address": address, "label": label, "vcn": vcn, "target": target}
 
 
 def new_edge(source: str, target: str, label: str = "", kind: str = "data", inferred: bool = False) -> dict:
@@ -345,6 +390,8 @@ def _validate_item(errors: List[str], item, path: str, with_metadata: bool, icon
     _expect(errors, item.get("address"), (str, type(None)), f"{path}.address")
     if with_metadata:
         _expect(errors, item.get("metadata"), dict, f"{path}.metadata")
+    if "regional" in item:
+        _expect(errors, item["regional"], bool, f"{path}.regional")
     if icon_keys is not None and isinstance(item.get("icon"), str) and item["icon"] not in icon_keys:
         errors.append(f"{path}.icon: unknown icon key {item['icon']!r}")
 
@@ -367,6 +414,33 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
         if model["source"].get("mode") not in ("hcl", "plan", "state", "tenancy"):
             errors.append("source.mode: expected hcl|plan|state|tenancy")
         _expect(errors, model["source"].get("path"), (str, type(None)), "source.path")
+    if model.get("drg_style") not in DRG_STYLES:
+        errors.append(f"drg_style: {model.get('drg_style')!r} not in {DRG_STYLES}")
+    addresses = set(model_addresses(model))
+    vcn_keys = {v.get(k) for v in (model.get("vcns") or []) if isinstance(v, dict) for k in ("name", "address")}
+    if _expect(errors, model.get("drgs"), list, "drgs"):
+        for di, drg in enumerate(model["drgs"]):
+            dp = f"drgs[{di}]"
+            if not _expect(errors, drg, dict, dp):
+                continue
+            _expect(errors, drg.get("name"), str, f"{dp}.name")
+            _expect(errors, drg.get("address"), str, f"{dp}.address")
+            _expect(errors, drg.get("label"), str, f"{dp}.label")
+            if _expect(errors, drg.get("attachments"), list, f"{dp}.attachments"):
+                for ai, att in enumerate(drg["attachments"]):
+                    ap = f"{dp}.attachments[{ai}]"
+                    if not _expect(errors, att, dict, ap):
+                        continue
+                    if att.get("type") not in ATTACHMENT_TYPES:
+                        errors.append(f"{ap}.type: {att.get('type')!r} not in {ATTACHMENT_TYPES}")
+                    _expect(errors, att.get("address"), str, f"{ap}.address")
+                    _expect(errors, att.get("label"), str, f"{ap}.label")
+                    _expect(errors, att.get("vcn"), (str, type(None)), f"{ap}.vcn")
+                    _expect(errors, att.get("target"), (str, type(None)), f"{ap}.target")
+                    if att.get("type") == "vcn" and isinstance(att.get("vcn"), str) and att["vcn"] not in vcn_keys:
+                        errors.append(f"{ap}.vcn: {att['vcn']!r} is not a VCN name or address in the model")
+                    if isinstance(att.get("target"), str) and att["target"] not in addresses:
+                        errors.append(f"{ap}.target: {att['target']!r} is not an address in the model")
 
     hub = model.get("hub")
     if hub is not None and _expect(errors, hub, dict, "hub"):
@@ -414,6 +488,8 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
                         errors.append(f"{gp}.icon: {gw.get('icon')!r} does not match type {gw['type']!r}")
                     _expect(errors, gw.get("label"), str, f"{gp}.label")
                     _expect(errors, gw.get("address"), (str, type(None)), f"{gp}.address")
+                    if "peer" in gw:
+                        _expect(errors, gw["peer"], (str, type(None)), f"{gp}.peer")
 
     if _expect(errors, model.get("services"), list, "services"):
         for ii, item in enumerate(model["services"]):
@@ -422,7 +498,6 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
         for ci, name in enumerate(model["compartments"]):
             _expect(errors, name, str, f"compartments[{ci}]")
     if _expect(errors, model.get("edges"), list, "edges"):
-        addresses = set(model_addresses(model))
         for ei, edge in enumerate(model["edges"]):
             ep = f"edges[{ei}]"
             if not _expect(errors, edge, dict, ep):
@@ -445,11 +520,17 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
 
 
 def model_addresses(model: dict) -> Iterator[str]:
-    """Yield every address in the model (containers, items, gateways, hub items)."""
+    """Yield every address in the model (containers, items, gateways, hub items, DRGs)."""
     hub = model.get("hub") or {}
     for item in hub.get("items") or []:
         if item.get("address"):
             yield item["address"]
+    for drg in model.get("drgs") or []:
+        if drg.get("address"):
+            yield drg["address"]
+        for att in drg.get("attachments") or []:
+            if att.get("address"):
+                yield att["address"]
     for vcn in model.get("vcns") or []:
         if vcn.get("address"):
             yield vcn["address"]
@@ -469,7 +550,7 @@ def model_addresses(model: dict) -> Iterator[str]:
 
 
 def model_is_empty(model: dict) -> bool:
-    return not (model.get("vcns") or model.get("services") or model.get("hub"))
+    return not (model.get("vcns") or model.get("services") or model.get("hub") or model.get("drgs"))
 
 
 def dedupe_edges(edges: List[dict]) -> List[dict]:
@@ -493,6 +574,10 @@ def select_vcn(model: dict, name: str) -> bool:
         return False
     model["vcns"] = hits[:1]
     model["subject"] = hits[0]["name"]
+    keep_vcn = {hits[0]["name"], hits[0]["address"]}
+    for drg in model.get("drgs") or []:
+        drg["attachments"] = [a for a in drg.get("attachments") or []
+                              if a.get("type") != "vcn" or a.get("vcn") in keep_vcn]
     keep = set(model_addresses(model))
     model["edges"] = [e for e in model["edges"] if e["source"] in keep and e["target"] in keep]
     return True
@@ -1029,7 +1114,7 @@ class ModelBuilder:
         self.item_type: Dict[str, str] = {}
         self.item_index: Dict[str, dict] = {}
         self.hub_items: List[dict] = []
-        self.link_labels: List[str] = []
+        self.drg_by_addr: Dict[str, dict] = {}
         self.explicit_lb_targets: Dict[str, bool] = {}
 
     # -- reference resolution ------------------------------------------------
@@ -1160,13 +1245,20 @@ class ModelBuilder:
             if vcn is None:
                 continue
             default = RESOURCE_ICONS[r.rtype][1]
-            vcn["gateways"].append(new_gateway(gtype, r.label(default), r.address))
+            gw = new_gateway(gtype, r.label(default), r.address)
+            if gtype == "lpg":
+                peer = self.first_ref(r, ("peer_id",), "oci_core_local_peering_gateway")
+                gw["peer"] = peer.address if peer is not None else None
+            vcn["gateways"].append(gw)
 
     def _build_drgs(self) -> None:
         drgs = [r for r in self.resources if r.rtype == DRG_TYPE]
+        for drg in drgs:
+            entry = new_drg(drg.label("DRG"), drg.address)
+            self.drg_by_addr[drg.address] = entry
+            self.model["drgs"].append(entry)
         if not drgs:
             return
-        attached: Dict[str, set] = {}
         for att in self.resources:
             if att.rtype != DRG_ATTACHMENT_TYPE:
                 continue
@@ -1174,38 +1266,54 @@ class ModelBuilder:
             vcn = self._vcn_or_single(att, ("vcn_id", "id", "network_details"))
             if drg is None or vcn is None:
                 continue
-            attached.setdefault(drg.address, set()).add(vcn["address"])
-            vcn["gateways"].append(new_gateway("drg", drg.label("DRG"), att.address))
+            self.drg_by_addr[drg.address]["attachments"].append(
+                new_attachment("vcn", att.address, att.label(f"VCN attachment\n{vcn['name']}"), vcn=vcn["name"]))
         for drg in drgs:
-            if drg.address not in attached:
-                vcn = self._single_vcn()
-                if vcn is not None:
-                    vcn["gateways"].append(new_gateway("drg", drg.label("DRG"), f"{drg.address}@{vcn['address']}"))
-            self.hub_items.append(new_hub_item("drg", drg.label("DRG"), drg.rtype, drg.address))
+            entry = self.drg_by_addr[drg.address]
+            vcn = self._single_vcn()
+            if not entry["attachments"] and vcn is not None:
+                entry["attachments"].append(new_attachment(
+                    "vcn", f"{drg.address}@{vcn['address']}", f"VCN attachment\n{vcn['name']}", vcn=vcn["name"]))
 
     def _build_hub(self) -> None:
-        cpe_count = 0
+        onprem = 0
         for r in self.resources:
             if r.rtype not in HUB_TYPES:
                 continue
-            icon, default = RESOURCE_ICONS[r.rtype]
-            link = HUB_TYPES[r.rtype]
-            if link and link not in self.link_labels:
-                self.link_labels.append(link)
             if r.rtype == "oci_core_ipsec" and any(x.rtype == "oci_core_cpe" for x in self.resources):
                 continue  # the CPE resource already draws the on-prem endpoint
-            if r.rtype in ("oci_core_cpe", "oci_core_ipsec", "oci_core_virtual_circuit"):
-                cpe_count += 1
+            icon, default = RESOURCE_ICONS[r.rtype]
+            if r.rtype != "oci_core_remote_peering_connection":
+                onprem += 1
             self.hub_items.append(new_hub_item(icon, r.label(default), r.rtype, r.address))
         if not self.hub_items:
             return
-        if cpe_count:
-            name = "On-premises"
-        else:
-            drg = next((h for h in self.hub_items if h["icon"] == "drg"), None)
-            name = f"{drg['label']} hub" if drg else "Hub"
-        self.model["hub"] = {"name": name, "items": self.hub_items,
-                             "link_label": " / ".join(self.link_labels) if self.link_labels else None}
+        self.model["hub"] = {"name": "On-premises" if onprem else "Remote region",
+                             "items": self.hub_items, "link_label": None}
+
+    def _build_drg_links(self) -> None:
+        """IPSec / FastConnect / RPC resources referencing a DRG become typed attachments."""
+        hub_addresses = {h["address"] for h in self.hub_items}
+        for r in self.resources:
+            if r.rtype == "oci_core_ipsec":
+                cpe = self.first_ref(r, ("cpe_id",), "oci_core_cpe")
+                atype, attrs, target, default = ("ipsec", ("drg_id",),
+                                                cpe.address if cpe is not None else r.address, "IPSec VPN")
+            elif r.rtype == "oci_core_virtual_circuit":
+                atype, attrs, target, default = "virtual_circuit", ("gateway_id",), r.address, "FastConnect"
+            elif r.rtype == "oci_core_remote_peering_connection":
+                atype, attrs, target, default = "rpc", ("drg_id",), r.address, "Remote peering"
+            else:
+                continue
+            drg = self.first_ref(r, attrs, DRG_TYPE)
+            if drg is not None:
+                addr = drg.address
+            elif len(self.drg_by_addr) == 1:
+                addr = next(iter(self.drg_by_addr))
+            else:
+                continue
+            self.drg_by_addr[addr]["attachments"].append(new_attachment(
+                atype, f"{r.address}@{addr}", r.label(default), target=target if target in hub_addresses else None))
 
     # -- items -------------------------------------------------------------------
     def _item_for(self, r: Res) -> Optional[dict]:
@@ -1256,6 +1364,7 @@ class ModelBuilder:
                     vcn["controls"].append(item)
                     self._register(item, r, vcn["address"], None)
                 continue
+            item["regional"] = is_regional_type(r.rtype)
             if vcn is not None:
                 vcn["services"].append(item)
                 self._register(item, r, vcn["address"], None)
@@ -1296,19 +1405,20 @@ class ModelBuilder:
                     port = r.attrs.get("port")
                     edges.append(new_edge(lb.address, t.address, str(port) if port is not None else "", "data", False))
                     self.explicit_lb_targets[lb.address] = True
-        # IPSec / FastConnect: CPE -> DRG
-        hub_addresses = {h["address"] for h in self.hub_items}
+        # Local Peering: one structural edge per LPG pair (declared from whichever side has peer_id)
+        gateway_addresses = {g["address"] for v in self.model["vcns"] for g in v["gateways"] if g.get("address")}
+        seen_pairs = set()
         for r in self.resources:
-            if r.rtype == "oci_core_ipsec":
-                cpe = self.first_ref(r, ("cpe_id",), "oci_core_cpe")
-                drg = self.first_ref(r, ("drg_id",), DRG_TYPE)
-                source = cpe.address if cpe is not None else (r.address if r.address in hub_addresses else None)
-                if source and drg is not None and drg.address in hub_addresses:
-                    edges.append(new_edge(source, drg.address, "IPSec VPN", "control", False))
-            elif r.rtype == "oci_core_virtual_circuit":
-                drg = self.first_ref(r, ("gateway_id",), DRG_TYPE)
-                if drg is not None and drg.address in hub_addresses and r.address in hub_addresses:
-                    edges.append(new_edge(r.address, drg.address, "FastConnect", "control", False))
+            if r.rtype != "oci_core_local_peering_gateway":
+                continue
+            peer = self.first_ref(r, ("peer_id",), "oci_core_local_peering_gateway")
+            if peer is None or r.address not in gateway_addresses or peer.address not in gateway_addresses:
+                continue
+            pair = tuple(sorted((r.address, peer.address)))
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            edges.append(new_edge(pair[0], pair[1], "Local Peering", "attachment", False))
         if self.inferred_edges:
             edges.extend(self._heuristic_edges())
         self.model["edges"] = dedupe_edges(edges)
@@ -1406,6 +1516,7 @@ class ModelBuilder:
         self._build_gateways()
         self._build_drgs()
         self._build_hub()
+        self._build_drg_links()
         self._build_items()
         self._build_edges()
         self._merge_loose()
@@ -1460,8 +1571,11 @@ def summarise(model: dict) -> str:
     n_svc = sum(len(v["services"]) for v in model["vcns"]) + len(model["services"])
     n_gw = sum(len(v["gateways"]) for v in model["vcns"])
     hub = len((model.get("hub") or {}).get("items") or [])
+    drgs = model.get("drgs") or []
+    n_att = sum(len(d.get("attachments") or []) for d in drgs)
     return (f"{model['subject']}: {len(model['vcns'])} VCN(s), {n_sub} subnet(s), {n_items} subnet item(s), "
-            f"{n_svc} service(s), {n_gw} gateway(s), {hub} hub item(s), {len(model['edges'])} edge(s)")
+            f"{n_svc} service(s), {n_gw} gateway(s), {len(drgs)} DRG(s) / {n_att} attachment(s), "
+            f"{hub} hub item(s), {len(model['edges'])} edge(s)")
 
 
 def main(argv: Optional[List[str]] = None) -> int:

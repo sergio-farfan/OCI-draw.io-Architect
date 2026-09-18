@@ -2167,7 +2167,7 @@ git commit -m "feat(layout): --drg-style CLI flag and schema-2 docstring"
 - Consumes: nothing new from other tasks (the parser stays importable on its own; `oci_topology` is not imported here).
 - Produces: `SCHEMA_VERSION = 2`; `EDGE_KINDS = ("data", "control", "association", "attachment")`; `ATTACHMENT_TYPES`, `DRG_STYLES = ("auto", "icon", "box")`, `REGIONAL_TYPES: frozenset`, `REGIONAL_TYPE_PREFIXES`, `is_regional_type(rtype: str) -> bool`; `new_drg(name: str, address: str, label: str | None = None) -> dict`; `new_attachment(atype: str, address: str, label: str, vcn: str | None = None, target: str | None = None) -> dict` (keys `type, address, label, vcn, target`); `new_model()` adds `"drgs": []`, `"drg_style": "auto"`; `GATEWAY_ICONS` without `drg`; LPG gateways carry `peer`; services carry `regional: bool`; `ModelBuilder._build_drg_links()`; `model_addresses()` yields DRG and attachment addresses; `summarise()` mentions DRGs and attachments.
 
-- [ ] **Step 1: Add the hub-and-spoke fixture**
+- [x] **Step 1: Add the hub-and-spoke fixture**
 
 Create `oci-drawio-architect/tests/fixtures/terraform/hub_spoke/main.tf`:
 
@@ -2284,7 +2284,7 @@ resource "oci_logging_log_group" "app" {
 }
 ```
 
-- [ ] **Step 2: Update the existing expectations and add the new tests**
+- [x] **Step 2: Update the existing expectations and add the new tests**
 
 In `oci-drawio-architect/tests/test_parse_terraform.py`:
 
@@ -2416,12 +2416,12 @@ class HclHubSpokeTests(unittest.TestCase):
         self.assertIn("1 DRG(s) / 4 attachment(s)", pt.summarise(self.model))
 ```
 
-- [ ] **Step 3: Run the tests to verify they fail**
+- [x] **Step 3: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_parse_terraform 2>&1 | tail -6`
 Expected: several FAIL/ERROR - `KeyError: 'drgs'`, `AttributeError: module 'parse_terraform' has no attribute 'new_attachment'`, `{'igw','nat','sgw','drg'} != {'igw','nat','sgw'}`.
 
-- [ ] **Step 4: Constants and factories**
+- [x] **Step 4: Constants and factories**
 
 In `parse_terraform.py` replace lines 94-103 (`SCHEMA_VERSION` through the closing `}` of `GATEWAY_ICONS`; keep the `# Resource type -> (icon key, default label)` banner at lines 105-107) with:
 
@@ -2464,7 +2464,7 @@ def new_attachment(atype: str, address: str, label: str, vcn: Optional[str] = No
     return {"type": atype, "address": address, "label": label, "vcn": vcn, "target": target}
 ```
 
-- [ ] **Step 5: Validation, addresses, selection, emptiness, summary**
+- [x] **Step 5: Validation, addresses, selection, emptiness, summary**
 
 In `_validate_item` add after the metadata check:
 
@@ -2541,7 +2541,7 @@ def summarise(model: dict) -> str:
             f"{hub} hub item(s), {len(model['edges'])} edge(s)")
 ```
 
-- [ ] **Step 6: ModelBuilder changes**
+- [x] **Step 6: ModelBuilder changes**
 
 In `ModelBuilder.__init__` replace `self.link_labels: List[str] = []` with `self.drg_by_addr: Dict[str, dict] = {}`. Replace `_build_gateways`, `_build_drgs` and `_build_hub` with:
 
@@ -2658,12 +2658,12 @@ In `_build_edges` delete the `# IPSec / FastConnect: CPE -> DRG` block (from `hu
 
 In `build()` call `self._build_drg_links()` right after `self._build_hub()`. Update the module docstring: schema block (`schema_version: 2`, `"drg_style": "auto"|"icon"|"box"`, the `drgs` block from the spec, `services[].regional: bool`, `gateways[].type` without `drg` and optional `"peer": str | null` on LPGs, `edges[].kind` values) and replace the paragraph "A DRG is reported once per attached VCN ..." with: "A DRG is reported once in ``drgs`` with one typed attachment per ``oci_core_drg_attachment`` (VCN), ``oci_core_ipsec`` (ipsec, target = the CPE), ``oci_core_virtual_circuit`` (virtual_circuit) and ``oci_core_remote_peering_connection`` (rpc); a DRG without attachments in a single-VCN model gets an implicit ``<drg>@<vcn>`` attachment. ``hub`` holds the on-premises side only (CPE, virtual circuit, RPC peer). LPG pairs produce one ``Local Peering`` edge of kind ``attachment``; the layout draws the DRG attachment connectors itself." Concretely, in the docstring schema block: line 15 `MODEL schema (``SCHEMA_VERSION = 2``)`; line 20 `"schema_version": 2,`; after line 26 (`"source": ...`) insert `"drg_style": "auto"|"icon"|"box",` and the `"drgs": [ {"name": str, "address": str, "label": str, "attachments": [ {"type": "vcn"|"ipsec"|"virtual_circuit"|"rpc"|"loopback", "address": str, "label": str, "vcn": str | null, "target": str | null} ]} ],` block from spec section 5; line 42 `"services": [ ITEM ],       # ... ITEM carries "regional": bool`; lines 45-46 `{"icon": "internet_gateway"|"nat_gateway"|"service_gateway"|"remote_peering_gateway", "type": "igw"|"nat"|"sgw"|"lpg", "label": str, "address": str | null, "peer": str | null   # lpg only}`; line 52 `"kind": "data"|"control"|"association"|"attachment"`.
 
-- [ ] **Step 7: Run the parser tests and the suite**
+- [x] **Step 7: Run the parser tests and the suite**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_parse_terraform -v 2>&1 | tail -20 && cd .. && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3`
 Expected: parser tests PASS. The suite shows FAILURES only in `tests/test_query_tenancy.py` (hub/gateway expectations) - fixed in Task 10. If `HclHubSpokeTests.test_lpg_pair_and_local_peering_edge` finds no edge, check that `_build_edges` runs after `_build_gateways` (it does: `build()` order) and that `peer_id` produced a reference (the fixture uses `oci_core_local_peering_gateway.spoke.id`).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/parse_terraform.py oci-drawio-architect/tests/test_parse_terraform.py oci-drawio-architect/tests/fixtures/terraform/hub_spoke/main.tf
