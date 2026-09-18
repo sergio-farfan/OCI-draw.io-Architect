@@ -48,7 +48,9 @@ Model schema (JSON-serialisable dict; every key optional except vcns/subject):
 Edge "kind": data (solid Bark, open arrow), control (dashed Bark, no arrow),
 analytics (solid Sienna), datalake (dashed purple); or pass "dashed"/"color".
 Edge source/target: an item "address", a container reference ("vcn:<name>",
-"subnet:<name>", "hub", "services") or a unique caption first line.
+"subnet:<name>", "hub", "services", "services:<vcn>", "osn") or a unique caption
+first line. "services" / "services:<vcn>" fall back to the Oracle Services
+Network panel when the split left no matching VCN services panel.
 
 Usage (CLI):
     python3 oci_layout.py model.json -o out.drawio [--profile default|official|v1.0]
@@ -504,6 +506,12 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         # when the last column has right-border gateways whose captions need the room.
         osn_x = (x - VCN_COLUMN_GAP + OSN_GAP) if (vcn_boxes or top_services) else x
         osn_id, _, _ = _layout_osn(d, rid, osn_items, osn_x, VCN_Y, ref_h, reg)
+        # spec section 12: a schema-1 edge addressed to "services:<vcn>" must keep resolving
+        # when the split left that VCN without a services panel of its own
+        for _vcn in vcns:
+            _name = str(_vcn.get("name") or "")
+            if _name and not (_vcn.get("services") or []):
+                reg.containers.setdefault("services:%s" % _name, osn_id)
 
     if hub:
         pairs = {(str(e.get("source")), str(e.get("target"))) for e in (model.get("edges") or [])}
