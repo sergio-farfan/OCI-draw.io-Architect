@@ -6,55 +6,61 @@ generated diagram has the same structure as the reference sample:
 
     Title block (bold subject, italic "Region label (region) - Compartment: X")
     Region (solid, label top-left)
-      +-- Hub / on-premises panel (left, vertically centred on the VCN)
+      +-- On-premises panel (left, vertically centred on the VCN stack): CPE, virtual circuit, RPC peer
+      +-- DRG column (region level, centred on the VCN stack): DRG icon with one attachment
+      |   box per attachment beside it (VCN attachments facing the VCNs, on-prem / RPC
+      |   attachments facing the on-premises panel); drg_style "box" wraps them in a dashed group
       +-- VCN column(s)
-            +-- row 1: lb -> app -> compute -> mgmt subnets (traffic order, 2 icon columns)
-            +-- OCI Services panel (right of row 1; VCN-resident services)
-            +-- data-tier subnets stretched to the row width
-      +-- gateways centred on the VCN border (IGW / NAT bottom, SGW right,
-          LPG facing its peer), parented to the region
-      +-- Oracle Services Network panel (region level, right of the VCN columns;
-          regional services, reached from the SGW by an attachment connector)
+      |     +-- row 1: lb -> app -> compute -> mgmt subnets (traffic order, 2 icon columns)
+      |     +-- OCI Services panel (right of row 1) only for VCN-resident services without a subnet
+      |     +-- data-tier subnets stretched to the row width
+      |     gateways centred on the VCN border: IGW / NAT bottom, SGW right, LPG facing its peer
+      +-- Oracle Services Network panel (right of the VCN columns, regional services, fed by the SGW)
       edges auto-routed through the gutters; optional legend below the region.
 
-Model schema (JSON-serialisable dict; every key optional except vcns/subject):
+Model schema v2 (JSON-serialisable dict; every key optional except vcns/subject):
 
     {
-      "subject": "Spoke-VCN-D",           # title: "<subject> - Architecture"
-      "region": "us-ashburn-1", "region_label": "Ashburn",
+      "subject": "Spoke-VCN-D", "region": "us-ashburn-1", "region_label": "Ashburn",
       "compartment": "Spoke-VCN-D", "tenancy_name": null,
-      "hub": {"name": "Hub Network\\nHub-Network\\n(Shared-Services)",
-              "items": [{"icon": "firewall", "label": "Corp VPN\\n(10.0.0.0/8)", "address": "cpe"},
-                        {"icon": "drg", "label": "Dynamic Routing\\nGateway (DRG)", "address": "drg"}],
-              "link_label": "IPSec VPN"},
+      "drg_style": "auto",                # auto | icon | box (CLI --drg-style overrides)
+      "hub": {"name": "On-premises",      # on-premises side only: CPE, IPSec, virtual circuit, RPC peer
+              "items": [{"icon": "cpe", "label": "Corp VPN\\n(10.0.0.0/8)", "address": "cpe"}],
+              "link_label": null},
+      "drgs": [{"name": "drg", "address": "drg", "label": "Dynamic Routing\\nGateway (DRG)",
+                "attachments": [{"type": "vcn", "vcn": "Spoke-VCN-D", "address": "drg-att-spoke",
+                                 "label": "VCN attachment\\nSpoke-VCN-D"},
+                                {"type": "ipsec", "target": "cpe", "address": "vpn@drg", "label": "vpn-hq"}]}],
       "vcns": [{
          "name": "Spoke-VCN-D", "cidr": "10.0.0.0/16",
          "subnets": [{"name": "sn-priv-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": false,
                       "items": [{"icon": "load_balancer", "label": "Load Balancer\\n10.0.0.23",
                                  "address": "lb", "metadata": {"ocid": "..."}, "tooltip": "..."}]}],
-         # regional services -> Oracle Services Network panel;
-         # "regional": false keeps an item in the VCN panel
-         "services": [{"icon": "devops", "label": "DevOps\\nProject + CI/CD", "address": "devops"}],
+         "services": [{"icon": "logging", "label": "Logging", "address": "logs", "regional": true}],
          "services_label": "OCI Services",
-         "gateways": [{"icon": "service_gateway", "type": "sgw",
-                       "label": "Service\\nGateway", "address": "sgw"}]
+         "gateways": [{"icon": "service_gateway", "type": "sgw", "label": "Service\\nGateway", "address": "sgw"},
+                      {"icon": "remote_peering_gateway", "type": "lpg", "label": "LPG", "address": "lpg-a",
+                       "peer": "lpg-b"}]
       }],
-      "services": [ ... ],                  # regional -> Oracle Services Network panel; the rest
-                                            # joins the VCN panel (single VCN) or a region panel
+      "services": [ ... ],                  # more services; regional ones join the OSN panel
       "edges": [{"source": "lb", "target": "app-vm", "label": "3000 / 8000", "kind": "data"}],
       "notes": "optional free text placed under the title"
     }
 
-Edge "kind": data (solid Bark, open arrow), control (dashed Bark, no arrow),
-analytics (solid Sienna), datalake (dashed purple); or pass "dashed"/"color".
-Edge source/target: an item "address", a container reference ("vcn:<name>",
-"subnet:<name>", "hub", "services", "services:<vcn>", "osn") or a unique caption
-first line. "services" / "services:<vcn>" fall back to the Oracle Services
-Network panel when the split left no matching VCN services panel.
+Attachment "type": vcn (target = that VCN's border), ipsec / virtual_circuit (target = the
+on-premises item, connector labelled "Site-to-Site VPN" / "FastConnect"), rpc (target = the
+remote peer item, "Remote Peering"), loopback (not drawn). Services are regional (Oracle
+Services Network panel) when "regional" is true or the icon is in
+oci_topology.REGIONAL_ICON_KEYS; VCN-resident ones stay in the VCN.
+Edge "kind": data (solid, open arrow), control / management (dashed, open arrow),
+association (dotted, no arrowhead), attachment (thin solid, no arrowhead), analytics
+(solid Sienna), datalake (dashed purple); or pass "dashed"/"color" directly.
+Schema-1 models (DRG in hub.items or as a "drg" gateway) are migrated with a WARNING.
 
 Usage (CLI):
     python3 oci_layout.py model.json -o out.drawio [--profile default|official|v1.0]
-                          [--legend] [--logo file] [--strict] [--render png]
+                          [--legend] [--logo file] [--strict] [--render png|svg|pdf]
+                          [--drg-style auto|icon|box]
 
 Usage (Python):
     from oci_layout import build_diagram, write_diagram
@@ -716,12 +722,17 @@ def main(argv=None) -> int:
     ap.add_argument("--strict", action="store_true", help="estimated edge crossings are errors")
     ap.add_argument("--render", default=None, choices=("png", "svg", "pdf"),
                     help="also export with draw.io desktop when available")
+    ap.add_argument("--drg-style", default=None, choices=("auto", "icon", "box"),
+                    help="DRG presentation: icon (DRG icon with attachment boxes beside it) or box "
+                         "(dashed 'DRG: <name>' group holding them); auto = icon unless a DRG has more "
+                         "than 4 attachments (overrides model['drg_style'])")
     args = ap.parse_args(argv)
     model = load_model(args.model)
     subject = model.get("subject") or "Architecture"
     out = Path(args.out) if args.out else Path(f"{subject.replace(' ', '_')}_Architecture.drawio")
     write_diagram(model, out, strict=args.strict, render_fmt=args.render,
-                  style_profile=args.profile, legend=args.legend, logo=args.logo)
+                  style_profile=args.profile, legend=args.legend, logo=args.logo,
+                  drg_style=args.drg_style)
     return 0
 
 
