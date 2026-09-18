@@ -165,6 +165,22 @@ class LpgSideTests(unittest.TestCase):
         self.assertEqual(ol._gateway_side(gw("igw", "internet_gateway", "x", "i"), 0, {}), "bottom")
         self.assertEqual(ol._gateway_side({"icon": "nat_gateway", "label": "n"}, 0, {}), "bottom")
 
+    def test_a_one_sided_model_keeps_the_undeclared_lpg_on_the_bottom_border(self):
+        """Spec 7.3: only a known peer moves an LPG to a side border.
+
+        Terraform declares ``peer_id`` on the requestor only; parse_terraform
+        mirrors it onto the acceptor, so a model that reaches the recipe with
+        one side unset is hand-written - it keeps the documented fallback.
+        """
+        d = quiet(ol.build_diagram, self._model(peer_b=None))
+        ax, ay, aw, ah = d.abs_bbox("vcn-a")
+        lx, _, _, _ = d.abs_bbox("lpg-a")
+        self.assertEqual(lx + ol.GW_SIDE_DX, ax + aw)                 # a still faces b
+        bx, by, bw, bh = d.abs_bbox("vcn-b")
+        _, ry, _, _ = d.abs_bbox("lpg-b")
+        self.assertEqual(ry + ol.GW_STRADDLE, by + bh)                # b has no peer: bottom border
+        self.assertEqual(errors_of(d), [])
+
 
 class BottomGatewayWidthTests(unittest.TestCase):
     """A narrow VCN widens so 3+ bottom-border gateways stay on its own border (GW_PITCH = 180)."""

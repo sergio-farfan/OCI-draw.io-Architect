@@ -258,8 +258,10 @@ class HclHubSpokeTests(unittest.TestCase):
     def test_lpg_pair_and_local_peering_edge(self):
         hub_gws = {g["type"]: g for g in self.vcns["vcn-hub"]["gateways"]}
         spoke_gws = {g["type"]: g for g in self.vcns["vcn-spoke"]["gateways"]}
+        # only the requestor declares peer_id; both sides must carry the peer so each
+        # LPG lands on the border facing the other VCN
         self.assertEqual(hub_gws["lpg"]["peer"], "oci_core_local_peering_gateway.spoke")
-        self.assertIsNone(spoke_gws["lpg"]["peer"])                   # only one side declares peer_id
+        self.assertEqual(spoke_gws["lpg"]["peer"], "oci_core_local_peering_gateway.hub")
         self.assertEqual(set(spoke_gws), {"sgw", "lpg"})
         peering = [e for e in self.model["edges"] if e["label"] == "Local Peering"]
         self.assertEqual(peering, [pt.new_edge("oci_core_local_peering_gateway.hub",
@@ -336,6 +338,134 @@ VCN_ENTRY = """  %s = {
     }
   }
 """
+
+
+class PublicVirtualCircuitTests(unittest.TestCase):
+    """A public FastConnect circuit peers with Oracle's public services, not with a DRG."""
+
+    MAIN_TF = """
+provider "oci" {
+  region = "eu-frankfurt-1"
+}
+
+variable "drg_ocid" {
+  type = string
+}
+
+resource "oci_core_vcn" "a" {
+  display_name = "vcn-a"
+  cidr_blocks  = ["10.0.0.0/16"]
+}
+
+resource "oci_core_drg" "core" {
+  display_name = "drg-core"
+}
+
+resource "oci_core_drg_attachment" "a" {
+  drg_id       = oci_core_drg.core.id
+  display_name = "att-a"
+  network_details {
+    id   = oci_core_vcn.a.id
+    type = "VCN"
+  }
+}
+
+resource "oci_core_virtual_circuit" "public" {
+  display_name = "fc-public"
+  type         = "PUBLIC"
+}
+
+resource "oci_core_virtual_circuit" "private" {
+  display_name = "fc-private"
+  type         = "PRIVATE"
+  gateway_id   = var.drg_ocid
+}
+"""
+
+    @classmethod
+    def setUpClass(cls):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "main.tf").write_text(cls.MAIN_TF)
+            cls.model = pt.parse_terraform_dir(Path(tmp))
+
+    def test_only_the_private_circuit_becomes_a_drg_attachment(self):
+        atts = self.model["drgs"][0]["attachments"]
+        self.assertEqual([(a["type"], a["label"]) for a in atts],
+                         [("vcn", "att-a"), ("virtual_circuit", "fc-private")])
+        self.assertNotIn("oci_core_virtual_circuit.public@oci_core_drg.core", [a["address"] for a in atts])
+        self.assertEqual(pt.validate_model(self.model, BUILDER_ICONS), [])
+
+    def test_both_circuits_stay_on_premises_items(self):
+        self.assertEqual([i["label"] for i in self.model["hub"]["items"]], ["fc-public", "fc-private"])
+
+    def test_the_diagram_of_that_model_validates(self):
+        import oci_layout as ol
+        with contextlib.redirect_stderr(io.StringIO()):
+            d = ol.build_diagram(self.model)
+        self.assertEqual([m for m in d.validate(strict=True)
+                          if not m.split("] ")[-1].startswith("WARNING")], [])
+
+
+class LpgPeerMirrorTests(unittest.TestCase):
+    """``peer`` is symmetric even though only the requestor declares ``peer_id``."""
+
+    @staticmethod
+    def _gw(model, address):
+        return next(g for v in model["vcns"] for g in v["gateways"] if g["address"] == address)
+
+    def parse(self, peer_a="peer_id     = oci_core_local_peering_gateway.b.id", peer_b=""):
+        body = """
+provider "oci" {
+  region = "eu-frankfurt-1"
+}
+
+resource "oci_core_vcn" "a" {
+  display_name = "vcn-a"
+  cidr_blocks  = ["10.0.0.0/16"]
+}
+
+resource "oci_core_vcn" "b" {
+  display_name = "vcn-b"
+  cidr_blocks  = ["10.1.0.0/16"]
+}
+
+resource "oci_core_local_peering_gateway" "a" {
+  vcn_id       = oci_core_vcn.a.id
+  display_name = "lpg-a"
+  %s
+}
+
+resource "oci_core_local_peering_gateway" "b" {
+  vcn_id       = oci_core_vcn.b.id
+  display_name = "lpg-b"
+  %s
+}
+""" % (peer_a, peer_b)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "main.tf").write_text(body)
+            return pt.parse_terraform_dir(Path(tmp))
+
+    def test_the_acceptor_gets_the_peer_of_the_requestor(self):
+        model = self.parse()
+        self.assertEqual(self._gw(model, "oci_core_local_peering_gateway.a")["peer"],
+                         "oci_core_local_peering_gateway.b")
+        self.assertEqual(self._gw(model, "oci_core_local_peering_gateway.b")["peer"],
+                         "oci_core_local_peering_gateway.a")
+        self.assertEqual([e["label"] for e in model["edges"] if e["label"] == "Local Peering"], ["Local Peering"])
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+
+    def test_both_sides_declaring_peer_id_are_left_alone(self):
+        model = self.parse(peer_b="peer_id     = oci_core_local_peering_gateway.a.id")
+        self.assertEqual(self._gw(model, "oci_core_local_peering_gateway.a")["peer"],
+                         "oci_core_local_peering_gateway.b")
+        self.assertEqual(self._gw(model, "oci_core_local_peering_gateway.b")["peer"],
+                         "oci_core_local_peering_gateway.a")
+
+    def test_an_unpaired_lpg_keeps_a_null_peer(self):
+        model = self.parse(peer_a="")
+        for address in ("oci_core_local_peering_gateway.a", "oci_core_local_peering_gateway.b"):
+            self.assertIsNone(self._gw(model, address)["peer"], address)
+        self.assertEqual([e for e in model["edges"] if e["label"] == "Local Peering"], [])
 
 
 class DrgAttachmentTfvarsVcnTests(unittest.TestCase):
