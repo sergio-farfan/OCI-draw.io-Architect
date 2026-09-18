@@ -394,6 +394,23 @@ class DrgColumnTests(unittest.TestCase):
         self.assertEqual(style_of(d, "e-lake")["strokeColor"], db.COLORS["edge_purple"])
         self.assertEqual(style_of(d, "e-dashed")["endArrow"], "none")     # explicit dashed keeps the profile look
 
+    def test_a_bare_cluster_side_reserves_the_caption_overhang(self):
+        """A23: the 105 px caption overhangs the 75 px slot by 15 px on a side with no box."""
+        pad = (db.LABEL_W - db.ICON_W) // 2
+        g = ol._drg_cluster_geometry({"name": "drg", "attachments": [
+            {"type": "vcn", "vcn": "a", "address": "att-a"}]}, "icon")
+        self.assertEqual(g["left_w"], pad)
+        self.assertEqual(g["inner_w"], pad + db.ICON_W + ol.ATT_W + ol.ATT_GAP)
+        box = ol._drg_cluster_geometry({"name": "drg", "attachments": [
+            {"type": "vcn", "vcn": f"v{i}", "address": f"att-{i}"} for i in range(5)]}, "box")
+        self.assertEqual(box["left_w"], 0)                 # box style pads with PAD already
+
+    def test_the_drg_caption_starts_at_the_cluster_edge(self):
+        d = quiet(ol.build_diagram, HYBRID)
+        lx, _, _, _ = d.abs_bbox("drg-label")
+        ax, _, aw, _ = d.abs_bbox("att-spoke")
+        self.assertEqual(ax + aw - lx, ol._drg_column_width(HYBRID["drgs"], "auto"))
+
 
 class UnnamedDrgTests(unittest.TestCase):
     """A22: an unnamed DRG must never be called 'DRG' - two of them collided on the key drg:DRG."""
