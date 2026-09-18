@@ -224,6 +224,20 @@ class BottomGatewayWidthTests(unittest.TestCase):
                                      "vcns": [simple_vcn("a")]})
         self.assertEqual(d.abs_bbox("vcn-a")[2], ol.VCN_MIN_W)
 
+    def test_a_next_column_left_gateway_widens_the_previous_column_gap(self):
+        """A17: the gap must hold the widest caption of either facing border."""
+        model = {"subject": "peer", "region": "us-ashburn-1", "vcns": [
+            simple_vcn("a"),
+            simple_vcn("b", gateways=[gw("lpg", "remote_peering_gateway",
+                                         "Local Peering\nGateway", "lpg-b", peer="a")])]}
+        d = quiet(ol.build_diagram, model)
+        ax, ay, aw, ah = d.abs_bbox("vcn-a")
+        bx, by, bw, bh = d.abs_bbox("vcn-b")
+        self.assertEqual(bx - (ax + aw), ol.VCN_COLUMN_GAP_GW)
+        cap_x = d.abs_bbox(d._cells["lpg-b"]["label_id"])[0]
+        self.assertGreaterEqual(cap_x, ax + aw)              # the caption clears VCN a entirely
+        self.assertEqual(errors_of(d), [])
+
 
 def svc(icon, address, **extra):
     s = {"icon": icon, "label": icon.replace("_", " ").title(), "address": address}
