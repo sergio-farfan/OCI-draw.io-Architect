@@ -625,7 +625,7 @@ git commit -m "feat(builder,layout): route table / security list corner badges a
 - Consumes: Task 14 (`_add_subnet_badges`, `_add_nsg_badge`, `add_badge`, ids `<subnet id>-rt` / `-sl` / `<host id>-nsg`); Task 9 `ModelBuilder` (`first_ref(res, attrs, rtype=None, rtypes=None)`, `all_refs(res, attrs, rtypes=None)`, `item_index`, `build()` order `_build_items -> _build_edges`), `new_subnet(name, address, cidr=None, public=None, tier=None)`, `_validate_item(errors, item, path, with_metadata, icon_keys)`, `validate_model`, `Res(address, rtype, name, attrs=None, refs=None)`; Task 10 `query_tenancy._REF_FIELDS`, `apply_relationships`, `normalise_entity`; Task 12 documentation text (anchors quoted below); Task 13 `EndToEndTests._gate(model, name)`.
 - Produces: `parse_terraform` constants `ROUTE_TABLE_TYPE = "oci_core_route_table"`, `SECURITY_LIST_TYPE = "oci_core_security_list"`, `NSG_TYPE = "oci_core_network_security_group"`, `NSG_ATTRS = ("nsg_ids", "network_security_group_ids")`, `VNIC_ATTACHMENT_TYPES = frozenset({"oci_core_vnic_attachment", "oci_core_vnic"})`; `badge_ref(name: str, address: str | None = None) -> dict` (`{"name", "address"}`); `new_subnet()` adds `"route_table": None, "security_lists": []`; `_validate_badge_refs(errors, value, path, single=False) -> None`; `ModelBuilder._badge_ref(res, default) -> dict`, `_nsg_refs(res) -> list[dict]`, `_build_vnic_nsgs() -> None`; items carry `nsgs` only when non-empty. `query_tenancy._REF_FIELDS` gains `security_list_ids`, `nsg_ids`, `network_security_group_ids`; VNIC -> host copies `nsg_ids`. Validation messages: `<path>.route_table: expected str, got int`, `<path>.security_lists[0].name: expected str, got NoneType`, `<path>.items[0].nsgs: expected list, got str`. (Only single-type `_expect` calls read well: `_expect` formats the expected type as `getattr(types, "__name__", types)`, so the tuple call `_expect(errors, ref.get("address"), (str, type(None)), f"{rp}.address")` prints `expected (<class 'str'>, <class 'NoneType'>), got int`. That is the existing helper's behaviour, no test asserts it - do not "fix" `_expect`.)
 
-- [ ] **Step 1: Extend the fixtures**
+- [x] **Step 1: Extend the fixtures**
 
 `oci-drawio-architect/tests/fixtures/terraform/three_tier/compute.tf`: in `resource "oci_load_balancer_load_balancer" "public"` replace
 
@@ -711,7 +711,7 @@ resource "oci_core_network_security_group" "mgmt" {
 Run: `python3 -c "import json; json.load(open('oci-drawio-architect/tests/fixtures/tenancy/topology_bundle.json')); print('json ok')"`
 Expected: `json ok`.
 
-- [ ] **Step 2: Write the failing parser tests**
+- [x] **Step 2: Write the failing parser tests**
 
 Append to class `HclThreeTierTests` in `oci-drawio-architect/tests/test_parse_terraform.py` (after `test_network_controls_are_separated`):
 
@@ -780,7 +780,7 @@ Append to class `HelperTests` in the same file:
         self.assertIn("vcns[0].subnets[0].items[0].nsgs: expected list, got str", joined)
 ```
 
-- [ ] **Step 3: Write the failing tenancy tests**
+- [x] **Step 3: Write the failing tenancy tests**
 
 In `oci-drawio-architect/tests/test_query_tenancy.py`, in `test_search_items_become_services_dead_and_helper_entities_are_dropped` replace
 
@@ -841,12 +841,12 @@ Append to class `EndToEndTests` in `oci-drawio-architect/tests/test_oci_layout.p
         self.assertEqual(text.count("ociRole=badge"), 4)          # rt + sl on sn-lb-public, NSG on the LB and the instance
 ```
 
-- [ ] **Step 4: Run the tests to verify they fail**
+- [x] **Step 4: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_parse_terraform.HclThreeTierTests tests.test_parse_terraform.HelperTests tests.test_query_tenancy.BundleModelTests tests.test_query_tenancy.HelperTests tests.test_oci_layout.EndToEndTests 2>&1 | tail -12`
 Expected: `test_subnet_security_constructs_are_badge_fields` and `test_security_constructs_become_badge_fields` ERROR with `KeyError: 'route_table'`; `test_nsgs_are_item_badge_fields_never_workload_icons` with `KeyError: 'nsgs'`; `test_badge_fields_from_json_shaped_resources` with `KeyError: 'route_table'` (the left operand is evaluated before `pt.badge_ref`); `test_security_reference_fields_are_normalised` with `KeyError: 'nsg_ids'`; `test_validate_model_reports_bad_badge_fields` **FAILS**, not errors - it only assigns the bad values (`sn["route_table"] = 5`), so `validate_model` returns `[]` and the first `assertIn` reports `'vcns[0].subnets[0].route_table: expected str, got int' not found in ''`; `test_three_tier_and_tenancy_models_draw_badges` FAILS with `0 != 5`; `test_search_items_become_services_dead_and_helper_entities_are_dropped` already PASSES (the fixture now has NSG entities and the existing parser files them under `controls`). Everything else in those classes still passes.
 
-- [ ] **Step 5: Implement the parser fields**
+- [x] **Step 5: Implement the parser fields**
 
 In `oci-drawio-architect/scripts/parse_terraform.py`:
 
@@ -1021,7 +1021,7 @@ attached to an instance become the item's ``nsgs``. The layout draws them as bad
 top-right corner and on the resource icon. ``controls`` still lists the resources themselves.
 ```
 
-- [ ] **Step 6: Implement the tenancy fields**
+- [x] **Step 6: Implement the tenancy fields**
 
 In `oci-drawio-architect/scripts/query_tenancy.py`:
 
@@ -1052,19 +1052,19 @@ with
 
 3. In the module docstring, after the sentence Task 10 added (`... DRGs and their attachments are reported in ``drgs[]`` (schema 2), the hub holds the on-premises side only.`) append: `Subnet ``routeTableId`` / ``securityListIds`` and VNIC / load balancer ``nsgIds`` / ``networkSecurityGroupIds`` become the badge fields ``route_table``, ``security_lists`` and ``nsgs`` (NSGs of a resource whose VNIC the topology does not return are only captured when the resource entity itself carries the field).`
 
-- [ ] **Step 7: Run the tests, the suite and the end-to-end gates**
+- [x] **Step 7: Run the tests, the suite and the end-to-end gates**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_parse_terraform tests.test_query_tenancy tests.test_oci_layout.EndToEndTests 2>&1 | tail -4 && cd .. && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3 && python3 oci-drawio-architect/scripts/parse_terraform.py oci-drawio-architect/tests/fixtures/terraform/three_tier --out /tmp/v13-tt.json && python3 oci-drawio-architect/scripts/oci_layout.py /tmp/v13-tt.json -o /tmp/v13-tt.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/v13-tt.drawio && grep -c "ociRole=badge" /tmp/v13-tt.drawio && python3 oci-drawio-architect/scripts/query_tenancy.py --compartment-id ocid1.compartment.oc1..aaaaaaaashopprod000001 --from-json oci-drawio-architect/tests/fixtures/tenancy/topology_bundle.json --out /tmp/v13-ten.json && python3 oci-drawio-architect/scripts/oci_layout.py /tmp/v13-ten.json -o /tmp/v13-ten.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/v13-ten.drawio`
 Expected: all three modules `OK`; suite `OK`; `parse_terraform.py` prints `Wrote /tmp/v13-tt.json` and a summary line; both `check_overlaps.py` lines print `OK: no container overlaps or layout errors`; the `grep -c` prints `5`. If the instance shows only `nsg-app`, `_build_vnic_nsgs` ran before `_build_items` filled `item_index` - check the `build()` order.
 
-- [ ] **Step 8: Commit the code**
+- [x] **Step 8: Commit the code**
 
 ```bash
 git add oci-drawio-architect/scripts/parse_terraform.py oci-drawio-architect/scripts/query_tenancy.py oci-drawio-architect/tests/fixtures/terraform/three_tier/compute.tf oci-drawio-architect/tests/fixtures/terraform/three_tier/network.tf oci-drawio-architect/tests/fixtures/tenancy/topology_bundle.json oci-drawio-architect/tests/test_parse_terraform.py oci-drawio-architect/tests/test_query_tenancy.py oci-drawio-architect/tests/test_oci_layout.py
 git commit -m "feat(parser,tenancy): route table, security list and NSG badge fields"
 ```
 
-- [ ] **Step 9: Documentation**
+- [x] **Step 9: Documentation**
 
 All anchors below are content in the files as left by Task 12; find them by text.
 
@@ -1141,13 +1141,13 @@ corner. Custom layouts: place the badge after the host's final size is known and
 
 `CLAUDE.md` (repository root): in the API table insert after the `place_icons` row: `| `add_badge(icon_key, cx, cy, parent, host, size, key, metadata, tooltip)` | Caption-less 22 px icon centred on (cx, cy): route table / security list on a subnet corner, NSG on a resource icon |`; append to the paragraph under `### `oci_layout.py` — Layout Recipe`: `Subnet `route_table` / `security_lists` and item `nsgs` become badges (`_add_subnet_badges`, `_add_nsg_badge`; ids `<subnet>-rt`, `<subnet>-sl`, `<icon>-nsg`).`
 
-- [ ] **Step 10: Verify**
+- [x] **Step 10: Verify**
 
 Run: `: "${FORBIDDEN:?export FORBIDDEN=<name1|name2|...> first}" && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3 && python3 oci-drawio-architect/scripts/build_icon_catalog.py --check && grep -rniE "$FORBIDDEN" docs/superpowers/specs/2026-09-17-security-constructs-addendum.md docs/superpowers/plans/2026-09-17-security-constructs-task14.md oci-drawio-architect/examples oci-drawio-architect/tests/fixtures oci-drawio-architect/CHANGELOG.md README.md oci-drawio-architect/README.md oci-drawio-architect/skills oci-drawio-architect/commands CLAUDE.md; echo "public-repo grep exit $? (1 = clean)" && grep -rn "NSG last" oci-drawio-architect/skills oci-drawio-architect/commands; echo "stale guidance grep exit $? (1 = clean)"`
 where `FORBIDDEN` is exported beforehand as a pipe-separated, case-insensitive list of the company, project, tenancy, compartment and colleague names from the private review inputs (the list itself must never be written into the repository).
 Expected: suite `OK`; catalog check `OK`; both greps exit 1.
 
-- [ ] **Step 11: Commit the documentation**
+- [x] **Step 11: Commit the documentation**
 
 ```bash
 git add oci-drawio-architect/skills oci-drawio-architect/commands oci-drawio-architect/CHANGELOG.md README.md oci-drawio-architect/README.md CLAUDE.md

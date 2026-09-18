@@ -62,12 +62,13 @@ Classify `$ARGUMENTS`; if empty, ask one AskUserQuestion with these five options
    1. `subject` = VCN name for a single VCN, else the system name; `region`, `region_label`, `compartment`, `tenancy_name` from settings.
    2. Captions follow `"Role\nidentifier\nsize"`: max 3 lines of about 16 characters (`"App VM\n10.0.1.5\n4 OCPU / 32 GB"`, `"ADB prod\napp-db\n16 ECPU / 4 TB"`). Shorten with `...` instead of adding lines.
    3. `tier` per subnet: `lb`, `app`, `compute`, `mgmt`, `data` (`other` for the rest). Infer from names when Terraform gives none (lb/web/dmz/pub, app/api/worker, oke/node/compute, mgmt/bastion/ops, db/data/database).
-   4. Item order inside a subnet: primary resource (LB, VM, DB) -> attached (block volume, certificate, WAF) -> NSG last.
+   4. Item order inside a subnet: primary resource (LB, VM, DB) -> attached resources (block volume, certificate, WAF). NSGs are not items (2.4.10).
    5. Regional services (Logging, Monitoring / Alarms, Notifications, Events, Connector Hub, IAM / Identity, Vault / KMS, Certificates, Object Storage, OCIR, AI, Data Safe, Streaming, Queue, APM, DevOps, DNS zones) go to `vcn.services` or `model.services`; the recipe draws them in the region-level Oracle Services Network panel. VCN-resident services without a subnet (mount targets, file systems, private DNS resolvers) also go to `vcn.services` with `"regional": false` when the table would misclassify them.
    6. Gateways (IGW, NAT, SGW, LPG) go to `vcn.gateways` with `type` (`igw`, `nat`, `sgw`, `lpg`), two-line captions and, for LPGs, `peer`. Never put a DRG or a DRG attachment in `gateways`.
    7. DRGs go to `model.drgs` with one attachment per attached network (`type` `vcn` + `vcn` name, `ipsec` / `virtual_circuit` / `rpc` + `target` hub item address). CPE, IPSec endpoint, FastConnect virtual circuit, RPC peer and on-premises firewalls go to `model.hub` (`name = "On-premises"`). Add an explicit `cpe -> drg` edge only when the model has no `ipsec` attachment. Choose `drg_style`: `icon` (default, architecture views) or `box` when the reader wants the attachments as a network detail (`auto` = box above 4 attachments).
    8. Give every item an `address`; edges use addresses (or `vcn:<name>`, `subnet:<name>`, `hub`, `services`). Add an edge only where a route rule, security rule, LB backend set or DB connection justifies it; `label` = port(s) (`"443"`, `"1522"`, `"3000 / 8000"`); `kind` = `data` for traffic, `control` for management/API calls, `analytics`/`datalake` for those flows. Target 0.3-0.6 edges per icon.
    9. Keep OCIDs and shapes in item `metadata` and a one-line `tooltip`.
+   10. Security constructs: put the subnet's route table in `subnet.route_table` and its security lists in `subnet.security_lists`, and the NSGs of a resource in that item's `nsgs` (names, or `{"name", "address"}` when you want the badge as an edge endpoint). The recipe draws them as badges on the subnet's top-right corner and on the resource's icon; never add `route_table`, `security_list` or `nsg` icons to a subnet.
 
 ## Step 3 - Generate `generate_<subject>_drawio.py`
 
@@ -89,8 +90,9 @@ MODEL = {
         {"name": "sn-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": True,
          "items": [{"icon": "load_balancer", "label": "Load Balancer\n10.0.0.7", "address": "lb"}]},
         {"name": "sn-app", "cidr": "10.0.1.0/24", "tier": "app",
-         "items": [{"icon": "vm", "label": "App VM\n10.0.1.5\n4 OCPU / 32 GB", "address": "app"},
-                   {"icon": "nsg", "label": "NSG\nnsg-app", "address": "nsg-app"}]},
+         "route_table": "rt-app", "security_lists": ["sl-app"],
+         "items": [{"icon": "vm", "label": "App VM\n10.0.1.5\n4 OCPU / 32 GB", "address": "app",
+                    "nsgs": ["nsg-app"]}]},
         {"name": "sn-db", "cidr": "10.0.2.0/24", "tier": "data",
          "items": [{"icon": "autonomous_db", "label": "ADB prod\napp-db\n4 ECPU / 1 TB", "address": "adb"}]}],
         "services": [{"icon": "logging", "label": "Logging", "address": "logging", "regional": True}],
@@ -99,8 +101,7 @@ MODEL = {
     "edges": [{"source": "igw", "target": "lb", "label": "443", "kind": "data"},
               {"source": "lb", "target": "app", "label": "8080", "kind": "data"},
               {"source": "app", "target": "adb", "label": "1522", "kind": "data"},
-              {"source": "app", "target": "sgw", "label": "OCI APIs", "kind": "control"},
-              {"source": "app", "target": "nsg-app", "label": "", "kind": "association"}],
+              {"source": "app", "target": "sgw", "label": "OCI APIs", "kind": "control"}],
 }
 
 write_diagram(MODEL, "app-prod_Architecture.drawio", render_fmt="png")
@@ -119,7 +120,7 @@ write_diagram(MODEL, "app-prod_Architecture.drawio", render_fmt="png")
 1. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" "<Subject>_Architecture.drawio"` must exit 0 (1 = errors, 2 = unreadable/unparsable file). Add `--strict` to make crossings blocking.
 2. Fix every `ERROR`/`OVERLAP` line (table below). Read every `WARNING`: long caption -> shorten to 3 lines; estimated crossing -> look at the PNG, then reorder items, move the item to the right tier/panel, or (custom layouts) add `label_pos`/`route="direct"`; accept only when the PNG shows no real crossing.
 3. If Step 4 did not render: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_drawio.py" "<Subject>_Architecture.drawio" -f png` (exit 3 = draw.io absent -> skip and say so).
-4. READ the PNG with the Read tool and check: all glyphs the same size; every caption legible, inside its container, not overlapping; edges run in gutters and cross no icon or caption; on-premises panel and DRG centred on the VCN stack; DRG outside every VCN, attachment boxes beside it; gateways centred on the VCN border; Oracle Services Network panel right of the VCNs; nothing outside the region; no large empty areas.
+4. READ the PNG with the Read tool and check: all glyphs the same size; every caption legible, inside its container, not overlapping; edges run in gutters and cross no icon or caption; on-premises panel and DRG centred on the VCN stack; DRG outside every VCN, attachment boxes beside it; gateways centred on the VCN border; Oracle Services Network panel right of the VCNs; route table / security list badges on the subnets' top-right corners and NSG badges on the top-right of their icons, none of them drawn as captioned icons; nothing outside the region; no large empty areas.
 5. Anything failing -> back to Step 2. At most 3 iterations.
 
 ## Step 6 - Report

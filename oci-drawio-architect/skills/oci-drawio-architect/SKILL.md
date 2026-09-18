@@ -15,13 +15,14 @@ Diagrams are data: a MODEL dict laid out by `scripts/oci_layout.py` on top of `s
 4. DRG column (`drgs[]`): region-level DRG icon between the on-premises panel and the VCN columns, centred on the VCN stack; one rounded attachment box (100 px wide, 44 px tall minimum, Ivy border; taller when the display name needs more lines, which also widens the stacking pitch) per attachment beside it - VCN attachments on the side facing the VCNs, IPSec / FastConnect / RPC attachments on the side facing the on-premises panel - each linked to its target by an arrowhead-less `attachment` connector (`Site-to-Site VPN`, `FastConnect`, `Remote Peering`). `drg_style` `icon` (default) or `box` (dashed `DRG: <name>` group); `auto` picks `box` above 4 attachments.
 5. VCN: label `VCN: <name> (<cidr>)`, Sienna dashed 2 px. Several VCNs are columns left to right, 45 px apart.
 6. Subnet: label `<name> (<cidr>)` (+ ` - public` when `public`), Sienna dashed 1 px. Row 1 holds lb -> app -> compute -> mgmt -> other subnets in traffic order, 2 icon columns each, wrapping to a new row past 1000 px; data-tier subnets are stretched under the rows (up to 5 columns).
-7. Icon order inside a subnet: primary resource (LB, VM, DB) -> attached resources (block volume, certificate, WAF) -> NSG last.
+7. Icon order inside a subnet: primary resource (LB, VM, DB) -> attached resources (block volume, certificate, WAF). Route tables, security lists and NSGs are never icons in a subnet (item 11).
 8. Caption convention: `Role\nidentifier\nsize` - at most 3 lines of about 16 characters at 11 px, centred under a 75x95 slot; every glyph is fitted to 70x70 so all icons look the same size.
 9. OCI Services panel (`services`): inside the VCN, right of row 1, only for VCN-resident services without a subnet. Regional services (Logging, Logging Analytics, Monitoring / Alarms, Notifications, Events, Connector Hub, IAM / Identity, Vault / KMS, Certificates, Object Storage, OCIR, AI services, Data Safe, Data Science, Analytics, Streaming, Queue, APM, DevOps, DNS zones, WAF policies; full list `oci_topology.REGIONAL_ICON_KEYS`) go to ONE region-level `Oracle Services Network` panel right of the VCN columns, height matched to the tallest VCN, fed by an `attachment` connector from the Service Gateway. `"regional": false` on an item keeps it in the VCN panel.
 10. Gateways straddle the VCN border (glyph centre on the line, caption with an opaque region-fill background, parent = region): IGW and NAT on the bottom border (pitch 180), the Service Gateway on the right border facing the OSN panel, LPGs on the border facing their peer VCN (`peer` = peer LPG address or VCN name, set on both sides of a pair; unknown peer -> bottom) linked by a `Local Peering` attachment connector.
-11. Edges: `data` solid Bark open arrow (label = protocol / port); `control` dashed Bark open arrow (management / administrative); `association` dotted, no arrowhead (dependency, configuration relationship); `attachment` thin solid, no arrowhead (structural: DRG attachments, LPG pairs, SGW -> OSN); `analytics` solid Sienna and `datalake` dashed purple remain. Routed automatically through the gutters.
-12. No legend by default (`legend=True` only on request or with 3+ edge kinds); `notes` text appears right of the title only when set.
-13. Page = content + 20 px margin rounded up to 10 (`fit_page`), white background, `default` style profile, Oracle Sans font stack.
+11. Security constructs are badges: a subnet's route table and security lists are half-size (22 px) caption-less icons straddling the subnet's top-right corner (route table centred on the corner, security lists one badge to its left; toolkit slide 18 uses the icons at half size as labels of the subnet box); an NSG is a 22 px shield badge in the top-right of the protected resource's 75x95 slot. Names go to the tooltip and metadata. Model fields: `subnet.route_table`, `subnet.security_lists`, `item.nsgs`.
+12. Edges: `data` solid Bark open arrow (label = protocol / port); `control` dashed Bark open arrow (management / administrative); `association` dotted, no arrowhead (dependency, configuration relationship); `attachment` thin solid, no arrowhead (structural: DRG attachments, LPG pairs, SGW -> OSN); `analytics` solid Sienna and `datalake` dashed purple remain. Routed automatically through the gutters.
+13. No legend by default (`legend=True` only on request or with 3+ edge kinds); `notes` text appears right of the title only when set.
+14. Page = content + 20 px margin rounded up to 10 (`fit_page`), white background, `default` style profile, Oracle Sans font stack.
 
 ## 2. Model schema (`oci_layout.py` docstring)
 
@@ -43,7 +44,9 @@ MODEL = {
      "name": "Spoke-VCN-D", "cidr": "10.0.0.0/16",
      "subnets": [{"name": "sn-priv-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": False,
                   "items": [{"icon": "load_balancer", "label": "Load Balancer\n10.0.0.23",
-                             "address": "lb", "metadata": {"ocid": "..."}, "tooltip": "..."}]}],
+                             "address": "lb", "metadata": {"ocid": "..."}, "tooltip": "...",
+                             "nsgs": ["nsg-lb"]}],
+                  "route_table": "rt-lb", "security_lists": ["sl-lb"]}],
      "services": [{"icon": "logging", "label": "Logging", "address": "logs", "regional": True}],
      "services_label": "OCI Services",
      "gateways": [{"icon": "service_gateway", "type": "sgw", "label": "Service\nGateway", "address": "sgw"},
@@ -64,12 +67,13 @@ Rules:
 5. Escape nothing yourself: labels are plain text, `\n` becomes `<br>`.
 6. DRGs: never inside `hub.items` or `vcn.gateways`; `drgs[].attachments[].type` in `vcn | ipsec | virtual_circuit | rpc | loopback`, `vcn` = VCN name, `target` = hub item address. Schema-1 models are migrated with a `WARNING: legacy model:` line - move the DRG to `drgs` to silence it.
 7. Edge endpoints also accept `drg:<name>`, a DRG address, an attachment address and `osn`.
+8. Security constructs: `subnet.route_table` (str or `{"name", "address"}`), `subnet.security_lists` and `item.nsgs` (lists of the same forms) draw badges; never add `route_table`, `security_list` or `nsg` items to a subnet. An entry with an `address` can be an edge endpoint (`{"source": "rt-private", "target": "sgw"}`).
 
 ## 3. Layout recipe (`build_diagram`)
 
 `build_diagram(model, style_profile="default", legend=False, logo=None, page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None) -> DrawioBuilder` and `write_diagram(model, out_path, strict=False, render_fmt=None, **opts) -> Path` (build + `validate` + `write`, optional draw.io export). CLI: `python3 oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo FILE] [--strict] [--render png|svg|pdf] [--drg-style auto|icon|box]`.
 
-Order of operations: migrate legacy model -> classify topology -> title -> region -> for each VCN: subnet rows -> VCN-resident services panel -> data subnets -> `fit_to_children(vcn)` -> border gateways (region children) -> optional region-level OCI Services panel -> Oracle Services Network panel -> on-premises panel -> DRG column -> `fit_to_children(region)` -> SGW -> OSN connectors -> attachment connectors -> model edges -> optional legend -> `fit_page()`.
+Order of operations: migrate legacy model -> classify topology -> title -> region -> for each VCN: subnet rows (each subnet: icons with their NSG badges -> `fit_to_children(subnet)` -> route table / security list badges on the subnet's top-right corner) -> VCN-resident services panel -> data subnets -> `fit_to_children(vcn)` -> border gateways (region children) -> optional region-level OCI Services panel -> Oracle Services Network panel -> on-premises panel -> DRG column -> `fit_to_children(region)` -> SGW -> OSN connectors -> attachment connectors -> model edges -> optional legend -> `fit_page()`.
 
 | Constant | Value | Constant | Value |
 |----------|-------|----------|-------|
@@ -87,6 +91,7 @@ Order of operations: migrate legacy model -> classify topology -> title -> regio
 | `OSN_GAP` | 45 | `GW_STRADDLE` / `GW_SIDE_DX` | 40 / 38 |
 | `SIDE_GW_Y0` / `LEFT_GW_Y0` / `SIDE_GW_PITCH` | 50 / 50 / 160 | `VCN_BOTTOM_PAD_GW` / `VCN_SIDE_PAD` / `SIDE_INSET` | 60 / 60 / 40 |
 | `VCN_COLUMN_GAP_GW` | 110 | | |
+| `BADGE_SIZE` (badge side) | 22 | `BADGE_GAP` (route table -> security list badge) | 4 |
 
 ## 4. Icon selection
 
@@ -105,8 +110,8 @@ Order of operations: migrate legacy model -> classify topology -> title -> regio
 | `oci_core_remote_peering_connection` | `rpg` | `hub.items` + `drgs[].attachments` (`type: rpc`) |
 | `oci_core_cpe` / `oci_core_ipsec` / `oci_core_virtual_circuit` | `cpe` / (attachment `ipsec`) / `cpe` | `hub.items` / `drgs[].attachments` / `hub.items` + attachment `virtual_circuit` (private circuits only: a `PUBLIC` circuit peers with Oracle public services and gets no DRG attachment) |
 | `oci_network_firewall_network_firewall` | `firewall` | subnet (hub VCN) |
-| `oci_core_network_security_group` | `nsg` | last item of its subnet |
-| `oci_core_security_list` / `oci_core_route_table` | `security_list` / `route_table` | omit (or `add_table` on page 2) |
+| `oci_core_network_security_group` | `nsg` (badge) | `items[].nsgs` of the protected resources - never an item |
+| `oci_core_security_list` / `oci_core_route_table` | `security_list` / `route_table` (badges) | `subnets[].security_lists` / `subnets[].route_table`; rule tables via `add_table` on page 2 |
 | `oci_load_balancer_load_balancer` / `oci_network_load_balancer_*` | `load_balancer` (`flexible_lb`) | lb subnet |
 | `oci_apigateway_gateway` / `oci_waf_web_app_firewall` / `oci_certificates_management_certificate` | `api_gateway` / `waf` / `certificates` | lb subnet |
 | `oci_core_instance` (shape `BM.*` -> `bare_metal`) | `vm` | app / compute / mgmt subnet |
@@ -156,6 +161,7 @@ Use only when the recipe cannot express the architecture (availability/fault dom
 | `add_icon(label, icon_key, x, y, parent="1", w=None, h=None, metadata=None, tooltip=None, key=None, label_w=None, label_h=None, raw_html=False, font_size=None, link=None, label_fill=None) -> str` | (x, y) = top-left of the 75x95 slot; caption auto-height; `raw_html=True` passes markup unescaped; `label_fill` gives the caption an opaque background for icons straddling a dashed border |
 | `add_box(label, x, y, w, h, parent="1", key=None, style_extra="", metadata=None, tooltip=None) -> str` | small labelled rounded rectangle (DRG attachment marker, note); a routing obstacle and valid edge endpoint |
 | `place_icons(parent, items, cols, x0=20, y0=50, col_w=130, row_h=160, **icon_kwargs) -> (ids, (x, y, right, bottom))` | items: `(label, icon)` tuples or dicts with label, icon, metadata, tooltip, key, link |
+| `add_badge(icon_key, cx, cy, parent="1", host=None, size=22, key=None, metadata=None, tooltip=None) -> str` | caption-less half-size icon centred on (cx, cy) in parent coordinates; `host` = the subnet or icon it decorates (may be overlapped by the badge, ignored by `fit_to_children`); style `ociRole=badge;ociHost=<id>` |
 | `fit_to_children(cid, pad=20, min_w=None, min_h=None) -> (w, h)`; `resize(cid, w=None, h=None, x=None, y=None)` | fit after children exist; x/y unchanged |
 | `bbox(cid)` / `abs_bbox(cid)` / `footprint(cid) -> (x, y, w, h)`; `content_bbox(page_idx=None) -> (x, y, right, bottom)`; `fit_page(margin=20) -> (w, h)` | footprint = slot + caption |
 | `add_title(subject, region_label=None, region=None, compartment=None, tenancy=None, x=20, y=8, w=600, h=55, font_size=18, font_family=None, logo=None, logo_w=148, logo_h=39, page_w=None, key="title") -> {"title", "logo"}` | missing Pillow/logo file prints a warning, does not fail |
@@ -184,6 +190,7 @@ spoke = d.add_group("VCN: spoke-a (10.1.0.0/16)", PAD + ICON_W + 15 + 100 + 45, 
 sn = d.add_group("sn-app (10.1.1.0/24)", PAD, ROW1_Y, 200, 150, parent=spoke, group_type="subnet", key="sn-app")
 (vm,), _ = d.place_icons(sn, [{"label": "App VM\n10.1.1.5", "icon": "vm", "key": "app-vm",
                                "metadata": {"ocid": "ocid1.instance.oc1..x"}, "tooltip": "primary app node"}], cols=1)
+d.add_badge("nsg", PAD + ICON_W - 11, ROW1_Y + 11, parent=sn, host=vm, key="app-vm-nsg", tooltip="NSG: nsg-app")   # shield on the VM's slot
 for cid in (sn, spoke, region):
     d.fit_to_children(cid)
 d.add_edge(att, spoke, "", kind="attachment")        # structural: box -> VCN border, no arrowhead
@@ -211,7 +218,7 @@ Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_
 1. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" <file>.drawio` exits 0 and prints `OK: no container overlaps or layout errors (...)`.
 2. Zero `ERROR:`/`OVERLAP:` lines (unknown parents or endpoints, intersecting containers, shapes outside their parent, icon/caption collisions).
 3. Every `WARNING:` line was read and either fixed (caption > 3 lines; estimated crossing; content exceeds page) or confirmed harmless in the PNG.
-4. PNG self-review (`render_drawio.py <file> -f png`, then Read the PNG): glyphs uniform; captions legible, 3 lines max, inside their container, no overlaps; edges in gutters, none across icons or captions, labels readable; on-premises panel and DRG column centred on the VCN stack; DRG outside every VCN with its attachment boxes beside it; gateways centred on the VCN border; regional services in the Oracle Services Network panel right of the VCNs; nothing outside the region; no large empty area; title and region label follow section 1.
+4. PNG self-review (`render_drawio.py <file> -f png`, then Read the PNG): glyphs uniform; captions legible, 3 lines max, inside their container, no overlaps; edges in gutters, none across icons or captions, labels readable; on-premises panel and DRG column centred on the VCN stack; DRG outside every VCN with its attachment boxes beside it; gateways centred on the VCN border; regional services in the Oracle Services Network panel right of the VCNs; route tables and security lists as badges on the subnets' top-right corners and NSGs as shield badges on their resources, never as workload icons; nothing outside the region; no large empty area; title and region label follow section 1.
 5. The generated script imports from the plugin `scripts` directory and contains no copied builder code; file size is roughly 7-13 KB per icon (the 31-icon reference is 280 KB).
 
 ## 8. Failure handling
@@ -226,6 +233,7 @@ Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_
 | `OVERLAP` / `extends outside its parent` / `overlaps` | recipe: split the VCN or move items; custom: `fit_to_children` innermost first, siblings at `bbox()` + `GAP`, icon pitch `COL_W`/`ROW_H` |
 | `ERROR: DRG '...' is inside VCN '...'` | move the DRG to `drgs[]` (recipe) or parent it to the region outside every VCN box (custom) |
 | `ERROR: '...' lies inside '...' but is not one of its children` | the icon's box overlaps a VCN / subnet it does not belong to; move it or make it a child of that container |
+| `ERROR: 'X' [abs ...] overlaps '(unlabelled)' [abs ...]` where the unlabelled cell is a badge | the badge covers an icon that is not its host: pass `host=<that icon id>` to `add_badge` (recipe: move the `nsgs` field to that item) |
 | `WARNING: caption ... needs ~N lines` | rewrite as `Role\nidentifier\nsize` |
 | `WARNING: edge ... is estimated to cross` | reorder items / change tier; custom: `route="direct"` or explicit `waypoints`; accept only if the PNG is clean |
 | `draw.io desktop not found` (render exit 3) | skip the PNG and say so; `DRAWIO_BIN=/path/to/drawio` overrides discovery |
