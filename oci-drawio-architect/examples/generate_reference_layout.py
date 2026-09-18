@@ -6,7 +6,9 @@ diagram is described as data (MODEL below) and laid out by
 scripts/oci_layout.py, so a generated script only has to fill in the model:
 subnets in traffic order, icons per subnet, regional services (drawn in the
 Oracle Services Network panel), gateways on the VCN border, the DRG with its
-attachments, the on-premises panel and the edges.
+attachments, the on-premises panel and the edges. Security constructs are
+badges, not workload icons: each NSG is listed in the "nsgs" field of the
+resource it protects and drawn as a shield over that resource's icon.
 
 Usage:
     python3 generate_reference_layout.py [output.drawio] [--render]
@@ -43,31 +45,31 @@ MODEL = {
         "subnets": [
             {"name": "sn-priv-lb", "cidr": "10.0.0.0/24", "tier": "lb", "items": [
                 {"icon": "load_balancer", "label": "Load Balancer\n10.0.0.23", "address": "lb",
-                 "metadata": {"ip": "10.0.0.23"}, "tooltip": "Private load balancer"},
+                 "metadata": {"ip": "10.0.0.23"}, "tooltip": "Private load balancer",
+                 "nsgs": ["nsg-priv-lb"]},
                 {"icon": "certificates", "label": "SSL Certificate\n*.internal...", "address": "cert"},
                 {"icon": "waf", "label": "OCI Edge WAF", "address": "waf"},
-                {"icon": "nsg", "label": "NSG\nnsg-priv-lb", "address": "nsg-lb"},
             ]},
             {"name": "sn-priv-app", "cidr": "10.0.1.0/24", "tier": "app", "items": [
-                {"icon": "vm", "label": "App VM\n10.0.1.251\n16 OCPU / 96 GB", "address": "app-vm"},
+                {"icon": "vm", "label": "App VM\n10.0.1.251\n16 OCPU / 96 GB", "address": "app-vm",
+                 "nsgs": ["nsg-priv-app"]},
                 {"icon": "functions", "label": "Functions App", "address": "fn"},
                 {"icon": "block_storage", "label": "Block Volume\n500 GB", "address": "bv-app"},
-                {"icon": "nsg", "label": "NSG\nnsg-priv-app", "address": "nsg-app"},
             ]},
             {"name": "sn-priv-workers", "cidr": "10.0.2.0/24", "tier": "app", "items": [
-                {"icon": "vm", "label": "Worker VM\n10.0.2.72\n8 OCPU / 64 GB", "address": "worker-vm"},
+                {"icon": "vm", "label": "Worker VM\n10.0.2.72\n8 OCPU / 64 GB", "address": "worker-vm",
+                 "nsgs": ["nsg-priv-workers"]},
                 {"icon": "block_storage", "label": "Block Volume\n300 GB", "address": "bv-worker"},
-                {"icon": "nsg", "label": "NSG\nnsg-priv-workers", "address": "nsg-workers"},
             ]},
             {"name": "sn-priv-data", "cidr": "10.0.3.0/24", "tier": "data", "items": [
-                {"icon": "autonomous_db", "label": "ADB prod\napp-db\n16 ECPU / 4 TB", "address": "adb"},
+                {"icon": "autonomous_db", "label": "ADB prod\napp-db\n16 ECPU / 4 TB", "address": "adb",
+                 "nsgs": ["nsg-priv-data (21 rules)"]},
                 {"icon": "nosql", "label": "Redis\n10.0.3.186", "address": "redis"},
                 {"icon": "big_data", "label": "OAC\napp-oac\n1 OLPU", "address": "oac"},
                 {"icon": "data_science", "label": "PAC\n10.0.3.99", "address": "pac"},
                 {"icon": "data_science", "label": "AIDP\napp-oracle\n-mcp-aidp", "address": "aidp"},
                 {"icon": "ai", "label": "GenAI\ncohere.embed\n-multilingual-v3", "address": "genai"},
                 {"icon": "vault", "label": "Vault\n+ Master Key\n+ 4 Secrets", "address": "vault"},
-                {"icon": "nsg", "label": "NSG\nnsg-priv-data\n(21 rules)", "address": "nsg-data"},
             ]},
         ],
         "services": [

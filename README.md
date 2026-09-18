@@ -37,7 +37,7 @@ Type `/drawio-architect` in any Claude Code session and the plugin generates a p
 
 ![OCI Architecture Diagram in draw.io](screenshots/diagram-overview.png)
 
-*Single-VCN topology with the on-premises panel, region-level DRG and its VCN attachment, subnets, gateways on the VCN border and the Oracle Services Network panel — rendered by draw.io from the reference layout example (`oci-drawio-architect/examples/generate_reference_layout.py`); every connector is routed automatically.*
+*Single-VCN topology with the on-premises panel, region-level DRG and its VCN attachment, subnets with NSG shields on the protected resources, gateways on the VCN border and the Oracle Services Network panel — rendered by draw.io from the reference layout example (`oci-drawio-architect/examples/generate_reference_layout.py`); every connector is routed automatically.*
 
 ![Diagram detail — data subnet](screenshots/diagram-detail.png)
 
@@ -82,7 +82,7 @@ Topology-aware placement: the layout recipe now follows how the team's diagram g
 - **Four connector kinds and a legend**: `data` (solid, open arrow), `control` (dashed, open arrow), `association` (dotted, no arrowhead) and `attachment` (thin solid, no arrowhead), plus `add_legend()` rows for all four.
 - **New validator rules** catch a DRG box parented inside a VCN and any leaf sitting inside a VCN/subnet it does not belong to, with tolerances so border-straddling gateways still pass.
 - **Model schema 2** (`drgs[]` with typed attachments, `services[].regional`, `gateways[].peer`) with automatic migration and a warning for schema-1 models.
-- **Route tables, security lists and NSGs are badges, not icons.** `subnet.route_table` / `subnet.security_lists` draw half-size badges on the subnet's top-right corner and `item.nsgs` a shield on the protected resource's icon (names in the tooltip); `parse_terraform.py` and `query_tenancy.py` fill the fields from the Terraform and topology attributes. The screenshots above and the reference sample (`OCI_Architecture.drawio`) predate the badges and still show their NSGs as captioned icons - hand-placed `nsg` icons stay valid; they are regenerated in a later release.
+- **Route tables, security lists and NSGs are badges, not icons.** `subnet.route_table` / `subnet.security_lists` draw half-size badges on the subnet's top-right corner and `item.nsgs` a shield on the protected resource's icon (names in the tooltip); `parse_terraform.py` and `query_tenancy.py` fill the fields from the Terraform and topology attributes. The reference sample (`OCI_Architecture.drawio`) and the screenshots above show the four NSGs as shields on the load balancer, the two VMs and the database; hand-placed `nsg` icons stay valid in existing scripts.
 
 ## What was new in 1.2.0
 
@@ -232,7 +232,7 @@ python3 oci-drawio-architect/examples/make_screenshots.py
 oci-drawio-architect/pack.sh /path/to/output
 ```
 
-Expect generated `.drawio` files to weigh roughly 7–13 KB per embedded icon (the three-page demo with 26 icons is about 300 KB; the reference sample with 31 icons about 280 KB). The reference sample itself is `OCI_Architecture.drawio` at the repository root.
+Expect generated `.drawio` files to weigh roughly 7–13 KB per embedded icon (the three-page demo with 26 icons is about 300 KB; the reference sample with 27 icons and 4 badges about 280 KB). The reference sample itself is `OCI_Architecture.drawio` at the repository root.
 
 ---
 
