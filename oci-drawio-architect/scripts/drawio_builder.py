@@ -12,10 +12,10 @@ What this module gives you
 * Oracle Redwood container styles (region, tenancy, compartment,
   availability_domain, fault_domain, vcn, subnet, services,
   oracle_services_network, onprem, other, metro_or_realm, third_party_cloud,
-  internet); ``hub`` is a deprecated alias of ``onprem``.
-* Layout helpers: ``place_icons()``, ``fit_to_children()``, ``fit_page()``,
-  ``add_title()``, ``add_legend()``, ``add_table()``, ``add_page()``,
-  ``append_pages()``, ``add_layer()``.
+  internet, drg); ``hub`` is a deprecated alias of ``onprem``.
+* Layout helpers: ``place_icons()``, ``add_box()``, ``fit_to_children()``,
+  ``fit_page()``, ``add_title()``, ``add_legend()``, ``add_table()``,
+  ``add_page()``, ``append_pages()``, ``add_layer()``.
 * Edges that route themselves: ``add_edge()`` picks the common-ancestor
   parent, docking sides and gutter waypoints from the actual geometry so
   connectors do not cross unrelated icons or labels.
@@ -1836,12 +1836,8 @@ class DrawioBuilder:
             cell_x, cell_y = x, y
             slot = (x, y, cell_w, cell_h)
 
-        role = ""
-        try:
-            if resolve_icon_path(icon_key).stem == DRG_ICON_STEM:
-                role = "ociRole=drg;"
-        except (KeyError, ValueError, FileNotFoundError):
-            role = ""
+        # _load_svg() above resolved the same key, so this cannot raise.
+        role = "ociRole=drg;" if resolve_icon_path(icon_key).stem == DRG_ICON_STEM else ""
         style = (
             "shape=image;verticalLabelPosition=bottom;verticalAlign=top;"
             f"imageAspect=1;aspect=fixed;{role}image={data_uri};"
