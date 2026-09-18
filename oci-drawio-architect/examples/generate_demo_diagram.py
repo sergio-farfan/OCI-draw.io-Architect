@@ -6,7 +6,9 @@ hybrid model - on-premises panel with a CPE, a region-level DRG with two VCN
 attachments and one IPSec attachment (drg_style "icon"), IGW / NAT on the hub
 VCN's bottom border, the Service Gateway on the spoke VCN's right border, an
 Oracle Services Network panel with the regional services, the four connector
-kinds (data, control, association, attachment) and the legend.
+kinds (data, control, association, attachment) and the legend. Route tables and
+security lists appear as badges on the subnets' top-right corners and NSGs as
+shield badges on the load balancer, the app VM and the database.
 Page 2 "DRG as a box": the same model with drg_style "box".
 Page 3 "Security": an NSG rule table (custom DrawioBuilder API).
 
@@ -36,19 +38,23 @@ DEMO_MODEL = {
         {"type": "ipsec", "target": "cpe", "address": "att-vpn", "label": "IPSec attachment"}]}],
     "vcns": [
         {"name": "vcn-hub", "cidr": "10.0.0.0/16", "subnets": [
-            {"name": "sn-public", "cidr": "10.0.1.0/24", "tier": "lb", "public": True, "items": [
-                {"icon": "load_balancer", "label": "Public LB", "address": "lb"},
+            {"name": "sn-public", "cidr": "10.0.1.0/24", "tier": "lb", "public": True, "route_table": "rt-public",
+             "security_lists": ["sl-public"], "items": [
+                {"icon": "load_balancer", "label": "Public LB", "address": "lb", "nsgs": ["nsg-lb"]},
                 {"icon": "waf", "label": "WAF", "address": "waf"}]},
             {"name": "sn-mgmt", "cidr": "10.0.2.0/24", "tier": "mgmt", "items": [
                 {"icon": "bastion", "label": "Bastion", "address": "bastion"}]}],
          "gateways": [{"icon": "internet_gateway", "type": "igw", "label": "Internet\nGateway", "address": "igw"},
                       {"icon": "nat_gateway", "type": "nat", "label": "NAT\nGateway", "address": "nat"}]},
         {"name": "vcn-spoke", "cidr": "10.1.0.0/16", "subnets": [
-            {"name": "sn-app", "cidr": "10.1.1.0/24", "tier": "app", "items": [
+            {"name": "sn-app", "cidr": "10.1.1.0/24", "tier": "app", "route_table": "rt-private",
+             "security_lists": ["sl-app"], "items": [
                 {"icon": "vm", "label": "App VM\n10.1.1.5", "address": "app",
-                 "metadata": {"ocid": "ocid1.instance.oc1..demo"}, "tooltip": "primary app node"}]},
+                 "metadata": {"ocid": "ocid1.instance.oc1..demo"}, "tooltip": "primary app node",
+                 "nsgs": ["nsg-app"]}]},
             {"name": "sn-data", "cidr": "10.1.2.0/24", "tier": "data", "items": [
-                {"icon": "autonomous_db", "label": "Autonomous\nDatabase", "address": "adb"}]}],
+                {"icon": "autonomous_db", "label": "Autonomous\nDatabase", "address": "adb",
+                 "nsgs": ["nsg-db"]}]}],
          "services": [{"icon": "logging", "label": "Logging", "address": "logs"},
                       {"icon": "vault", "label": "Vault", "address": "vault"},
                       {"icon": "buckets", "label": "Object Storage", "address": "buckets"}],
