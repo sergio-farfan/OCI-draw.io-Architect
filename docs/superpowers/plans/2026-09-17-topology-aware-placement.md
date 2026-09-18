@@ -2040,7 +2040,7 @@ git commit -m "feat(layout): region-level DRG column with attachment boxes, icon
 - Consumes: `build_diagram(..., drg_style=)` (Task 7); `write_diagram(model, out_path, strict=False, render_fmt=None, **opts)` (unchanged, forwards `drg_style`); `check_overlaps.main(argv) -> int`.
 - Produces: CLI `python3 oci_layout.py model.json -o out.drawio [--profile ...] [--legend] [--logo f] [--strict] [--render png|svg|pdf] [--drg-style auto|icon|box]`.
 
-- [ ] **Step 1: Write the CLI test (the first one fails; the second is a regression guard that already passes after Task 7)**
+- [x] **Step 1: Write the CLI test (the first one fails; the second is a regression guard that already passes after Task 7)**
 
 Append to `oci-drawio-architect/tests/test_oci_layout.py`:
 
@@ -2067,12 +2067,12 @@ class CliTests(unittest.TestCase):
             self.assertIn("Attachment (structural)", text)
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout.CliTests 2>&1 | tail -4`
 Expected: test_cli_drg_style_and_gate errors with `SystemExit: 2` from argparse (`unrecognized arguments: --drg-style box`); test_write_diagram_forwards_drg_style_and_legend passes.
 
-- [ ] **Step 3: Add the flag and update the docstring**
+- [x] **Step 3: Add the flag and update the docstring**
 
 In `main()` add after the `--render` argument:
 
@@ -2142,12 +2142,12 @@ Schema-1 models (DRG in hub.items or as a "drg" gateway) are migrated with a WAR
 
 and add `[--drg-style auto|icon|box]` to the CLI usage line.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout -v 2>&1 | tail -6 && cd .. && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3`
 Expected: PASS; suite `OK`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/oci_layout.py oci-drawio-architect/tests/test_oci_layout.py

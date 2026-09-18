@@ -2,7 +2,9 @@
 import contextlib
 import copy
 import io
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -391,6 +393,29 @@ class LegacyModelTests(unittest.TestCase):
         self.assertTrue(d.layout_info["warnings"])
         self.assertIn("WARNING: legacy model: hub item 'drg' moved to drgs[]", err.getvalue())
         self.assertEqual(errors_of(d), [])
+
+
+class CliTests(unittest.TestCase):
+    def test_cli_drg_style_and_gate(self):
+        import check_overlaps
+        with tempfile.TemporaryDirectory() as tmp:
+            mpath = Path(tmp) / "m.json"
+            out = Path(tmp) / "o.drawio"
+            mpath.write_text(json.dumps(HYBRID))
+            self.assertEqual(quiet(ol.main, [str(mpath), "-o", str(out), "--drg-style", "box"]), 0)
+            self.assertIn('id="drgbox-drg"', out.read_text(encoding="utf-8"))
+            self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
+            self.assertEqual(quiet(ol.main, [str(mpath), "-o", str(out)]), 0)
+            self.assertNotIn('id="drgbox-drg"', out.read_text(encoding="utf-8"))
+            self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
+
+    def test_write_diagram_forwards_drg_style_and_legend(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = quiet(ol.write_diagram, HYBRID, Path(tmp) / "h.drawio", drg_style="box", legend=True)
+            text = out.read_text(encoding="utf-8")
+            self.assertIn('id="drgbox-drg"', text)
+            self.assertIn("Attachment (structural)", text)
+
 
 if __name__ == "__main__":
     unittest.main()
