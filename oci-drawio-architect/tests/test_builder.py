@@ -1279,6 +1279,23 @@ class TestForeignContainment(TempDirMixin, unittest.TestCase):
                    label_fill=db.COLORS["region_fill"])
         self.assertEqual(only_errors(d.validate()), [])
 
+    def test_caption_spilling_out_of_a_short_parent_is_still_an_error(self):
+        """The glyph fits, the caption does not: the too-short-container defect."""
+        d = DrawioBuilder()
+        sn = d.add_group("sn-app", 0, 0, 200, 130, group_type="subnet", key="sn")
+        d.add_icon("App VM", "vm", 20, 50, parent=sn, key="vm")
+        errors = only_errors(d.validate())
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("extends outside its parent 'sn-app'", errors[0])
+        d.fit_to_children(sn)
+        self.assertEqual(only_errors(d.validate()), [])
+
+    def test_caption_of_a_straddling_icon_stays_exempt(self):
+        d = DrawioBuilder()
+        r, v = self._region_vcn(d)
+        d.add_icon("NAT\nGateway", "nat_gateway", 60, 400 - 40, parent=v, key="nat")
+        self.assertEqual(only_errors(d.validate()), [])
+
     def test_mostly_inside_icon_is_still_flagged(self):
         d = DrawioBuilder()
         r, v = self._region_vcn(d)
