@@ -49,6 +49,13 @@ REGIONAL_ICON_KEYS = frozenset({
     "health_checks", "waf",
 })
 
+# Terraform resource types that stay VCN-resident even though their icon key
+# is in REGIONAL_ICON_KEYS (spec section 6: "oci_dns_resolver is VCN-resident;
+# the dns icon alone is regional"). Checked before the icon-key lookup so a
+# resolver item (icon "dns", type "oci_dns_resolver") without an explicit
+# "regional" override is never misclassified into the OSN panel.
+_VCN_RESIDENT_TYPES = frozenset({"oci_dns_resolver"})
+
 
 def first_line(text) -> str:
     return str(text or "").split("\n")[0].strip()
@@ -86,6 +93,8 @@ def is_regional(item: dict) -> bool:
     flag = item.get("regional")
     if isinstance(flag, bool):
         return flag
+    if str(item.get("type") or "") in _VCN_RESIDENT_TYPES:
+        return False
     return str(item.get("icon") or "") in REGIONAL_ICON_KEYS
 
 
@@ -164,6 +173,19 @@ def migrate_legacy_model(model: dict) -> Tuple[dict, List[str]]:
                                    "label": f"VCN attachment\n{vname}"}]
             warnings.append(f"WARNING: model: DRG {drg['address']!r} has no attachments; assuming a VCN attachment "
                             f"to {vname!r}")
+    # Defensive check (spec section 5: "attachments[].address must be unique in
+    # the model"): a duplicate here would otherwise surface only as an opaque
+    # ValueError from the builder's duplicate-cell-key guard once laid out.
+    seen_addrs: set = set()
+    for drg in drgs:
+        for att in drg.get("attachments") or []:
+            addr = att.get("address")
+            if not addr:
+                continue
+            if addr in seen_addrs:
+                warnings.append(f"WARNING: model: attachments[].address duplicate: {addr!r}")
+            else:
+                seen_addrs.add(addr)
     if drgs or "drgs" in model:
         m["drgs"] = drgs
     return m, warnings
