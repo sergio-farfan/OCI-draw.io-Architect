@@ -721,6 +721,18 @@ class TestStyles(TempDirMixin, unittest.TestCase):
         self.assertEqual(tok["fontStyle"], "0")
         self.assertEqual(tok["container"], "1")
 
+    def test_edge_kind_survives_a_pinned_route(self):
+        """A07: kind styling is applied before routing, so pins do not drop it."""
+        d = DrawioBuilder()
+        a = d.add_icon("A", "vm", 0, 0)
+        b = d.add_icon("B", "vm", 400, 0)
+        eid = d.add_edge(a, b, "x", kind="control", exit_x=1, exit_y=0.5, entry_x=0, entry_y=0.5,
+                         waypoints=[(200, 40)])
+        t = tokens(cell(d.root, eid).get("style"))
+        self.assertEqual((t["dashed"], t["endArrow"]), ("1", "open"))
+        self.assertEqual(t["dashPattern"], db.STYLE_PROFILES["default"]["dash_pattern"])
+        self.assertIn("exitX", t)
+
 
 # ---------------------------------------------------------------------------
 # 6. Edge modes
