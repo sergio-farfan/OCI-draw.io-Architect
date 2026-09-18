@@ -1316,19 +1316,28 @@ def validate_registry(registry: dict, page: str = "", strict: bool = False,
         le = registry[lid]
         if lb.w <= 0 or lb.h <= 0:
             continue
-        owner = registry.get(le.get("owner")) if kinds.get(lid) == "text" else None
-        if owner is not None and _is_drg_icon(owner):
-            continue                      # the DRG message below covers its caption
+        owner_id = le.get("owner") if kinds.get(lid) == "text" else None
+        owner = registry.get(owner_id) if owner_id else None
+        # A DRG caption is exempt only from the VCN that also holds its glyph:
+        # that VCN already gets the DRG error below. A VCN the glyph merely
+        # straddles must still flag the caption.
+        drg_owner_box = boxes.get(owner_id) if (owner is not None and _is_drg_icon(owner)) else None
         is_drg = _is_drg_icon(le)
+        foreign = []
         for gid, gt in network_groups:
             gb = boxes[gid]
             if not gb.contains(lb, tol=FOREIGN_TOL):
+                continue
+            if drg_owner_box is not None and gt == "vcn" and gb.contains(drg_owner_box, tol=FOREIGN_TOL):
                 continue
             if is_drg and gt == "vcn":
                 errors.append(f"{prefix}ERROR: DRG '{_label_of(le)}' is inside VCN '{_label_of(registry[gid])}'")
                 continue
             if _is_ancestor(registry, gid, lid):
                 continue
+            foreign.append((gid, gb))
+        if foreign:                       # report the innermost container only
+            gid, gb = min(foreign, key=lambda pair: pair[1].w * pair[1].h)
             errors.append(
                 f"{prefix}ERROR: '{_label_of(le)}' [abs {lb!r}] lies inside '{_label_of(registry[gid])}' "
                 f"[abs {gb!r}] but is not one of its children")
