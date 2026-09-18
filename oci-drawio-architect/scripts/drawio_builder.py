@@ -645,6 +645,17 @@ STYLE_PROFILES = {
 }
 STYLE_PROFILES["sample"] = STYLE_PROFILES["v1.0"]
 
+# Connector semantics (team diagram guidelines + toolkit slides 10/20):
+# data = solid open arrow, control = dashed open arrow, association = dotted
+# no arrowhead, attachment = thin solid no arrowhead. ``width`` / ``dash_pattern``
+# None = take the profile value.
+EDGE_KIND_STYLES = {
+    "data":        dict(dashed=False, arrow="open", width=None, dash_pattern=None),
+    "control":     dict(dashed=True,  arrow="open", width=None, dash_pattern=None),
+    "association": dict(dashed=True,  arrow="none", width=None, dash_pattern="1 3"),
+    "attachment":  dict(dashed=False, arrow="none", width=1,    dash_pattern=None),
+}
+
 _CONTAINER_TAIL = "container=1;collapsible=0;expand=0;recursiveResize=0;"
 
 GROUP_TYPES = (
@@ -1788,17 +1799,21 @@ class DrawioBuilder:
         """Add a legend box explaining edge styles and container types.
 
         entries: list of ("edge", <style>, text) or ("group", <group_type>, text)
-        where <style> is "solid", "dashed", "accent" or "purple".
+        where <style> is one of the EDGE_KIND_STYLES names ("data", "control",
+        "association", "attachment") or a legacy alias ("solid", "dashed",
+        "accent", "purple", "dotted", "thin").
         """
         parent = self._check_parent(parent, "add_legend")
         if entries is None:
             entries = [
-                ("edge", "solid", "Data flow / network path"),
-                ("edge", "dashed", "Management, API or service traffic"),
+                ("edge", "data", "Data flow (protocol / port)"),
+                ("edge", "control", "Management / administrative traffic"),
+                ("edge", "association", "Association / dependency"),
+                ("edge", "attachment", "Attachment (structural)"),
                 ("group", "region", "Region / on-premises"),
                 ("group", "vcn", "VCN"),
                 ("group", "subnet", "Subnet"),
-                ("group", "services", "OCI services"),
+                ("group", "oracle_services_network", "Oracle Services Network"),
             ]
         row_h = 22
         h = 30 + row_h * len(entries) + 8
@@ -1807,9 +1822,16 @@ class DrawioBuilder:
         for i, (kind, spec, text) in enumerate(entries):
             ry = 30 + i * row_h
             if kind == "edge":
+                legacy = {"solid": "data", "dashed": "control", "accent": "data", "purple": "control",
+                          "dotted": "association", "thin": "attachment"}
+                kind_name = legacy.get(spec, spec)
+                if kind_name not in EDGE_KIND_STYLES:
+                    raise ValueError(f"add_legend: unknown edge style {spec!r}")
+                ks = EDGE_KIND_STYLES[kind_name]
                 color = {"accent": COLORS["edge_accent"], "purple": COLORS["edge_purple"]}.get(spec, COLORS["edge_color"])
-                dashed = spec in ("dashed", "purple")
-                style = self._edge_base_style(color, dashed, "", orthogonal=False)
+                arrow = "none" if spec == "dashed" and self.profile["dashed_arrow"] == "none" else ks["arrow"]
+                style = self._edge_base_style(color, ks["dashed"], "", orthogonal=False, arrow=arrow,
+                                              width=ks["width"], dash_pattern=ks["dash_pattern"])
                 eid = self._new_id()
                 cell = ET.SubElement(self.root, "mxCell", id=eid, value="", style=style,
                                      edge="1", parent=gid)
@@ -1832,23 +1854,26 @@ class DrawioBuilder:
         return gid
 
     # -- edges -----------------------------------------------------------------
-    def _arrow_fragment(self, dashed: bool, arrow=None) -> str:
+    def _arrow_fragment(self, dashed: bool, arrow=None, dash_pattern=None) -> str:
         if arrow is None:
             arrow = self.profile["dashed_arrow"] if dashed else "open"
         fill = "1" if arrow in ("block", "classic", "diamond", "oval") else "0"
         frag = f"endArrow={arrow};endFill={fill};"
         if dashed:
-            frag = "dashed=1;" + (f"dashPattern={self.profile['dash_pattern']};" if self.profile["dash_pattern"] else "") + frag
+            pattern = dash_pattern if dash_pattern is not None else self.profile["dash_pattern"]
+            frag = "dashed=1;" + (f"dashPattern={pattern};" if pattern else "") + frag
         else:
             frag = "dashed=0;" + frag
         return frag
 
-    def _edge_base_style(self, color, dashed, style_extra, orthogonal: bool, arrow=None) -> str:
+    def _edge_base_style(self, color, dashed, style_extra, orthogonal: bool, arrow=None,
+                         width=None, dash_pattern=None) -> str:
         ec = color or COLORS["edge_color"]
         p = self.profile
+        sw = p["edge_width"] if width is None else width
         core = (
-            f"html=1;strokeColor={ec};strokeWidth={_fmt_num(p['edge_width'])};"
-            f"{self._arrow_fragment(dashed, arrow)}"
+            f"html=1;strokeColor={ec};strokeWidth={_fmt_num(sw)};"
+            f"{self._arrow_fragment(dashed, arrow, dash_pattern)}"
             f"fontFamily={self.font};fontSize={_fmt_num(p['edge_font'])};"
             f"fontColor={COLORS['text_primary']};rounded={p['edge_rounded']};"
             f"jettySize=auto;orthogonalLoop=1;"
@@ -1860,7 +1885,7 @@ class DrawioBuilder:
     def add_edge(self, source, target, label="", parent=None, dashed=False, color=None,
                  style_extra="", exit_x=None, exit_y=None, entry_x=None, entry_y=None,
                  waypoints=None, orthogonal=None, route=None, label_pos=None, arrow=None,
-                 key=None, raw_html=False) -> str:
+                 key=None, raw_html=False, kind=None) -> str:
         """Connect two cells. Returns the edge id.
 
         Routing modes (``route``):
@@ -1880,7 +1905,19 @@ class DrawioBuilder:
         Waypoints are in the parent's coordinate space. ``label_pos`` (-1..1)
         places the label along the edge (0 = middle). Solid = data flow,
         dashed = management / user interaction.
+
+        kind: "data" | "control" | "association" | "attachment" applies
+        EDGE_KIND_STYLES (dashed / arrow / width / dash pattern); explicit
+        arrow= still wins.
         """
+        width = dash_pattern = None
+        if kind is not None:
+            spec = EDGE_KIND_STYLES.get(kind)
+            if spec is None:
+                raise ValueError(f"add_edge: unknown kind {kind!r}; choose from {sorted(EDGE_KIND_STYLES)}")
+            dashed = spec["dashed"]
+            arrow = spec["arrow"] if arrow is None else arrow
+            width, dash_pattern = spec["width"], spec["dash_pattern"]
         source, target = str(source), str(target)
         for end, ref in (("source", source), ("target", target)):
             entry = self._cells.get(ref)
@@ -1918,7 +1955,8 @@ class DrawioBuilder:
             ey = 1.0 if exit_y is None else exit_y
             nx = 0.5 if entry_x is None else entry_x
             ny = 0.0 if entry_y is None else entry_y
-            style = self._edge_base_style(color, dashed, style_extra, orthogonal=False, arrow=arrow)
+            style = self._edge_base_style(color, dashed, style_extra, orthogonal=False, arrow=arrow,
+                                          width=width, dash_pattern=dash_pattern)
             style += (f"exitX={_fmt_num(ex)};exitY={_fmt_num(ey)};exitDx=0;exitDy=0;"
                       f"entryX={_fmt_num(nx)};entryY={_fmt_num(ny)};entryDx=0;entryDy=0;")
         else:
@@ -1926,7 +1964,8 @@ class DrawioBuilder:
                 raise ValueError("exit_x and exit_y must be passed together")
             if (entry_x is None) != (entry_y is None):
                 raise ValueError("entry_x and entry_y must be passed together")
-            style = self._edge_base_style(color, dashed, style_extra, orthogonal=True, arrow=arrow)
+            style = self._edge_base_style(color, dashed, style_extra, orthogonal=True, arrow=arrow,
+                                          width=width, dash_pattern=dash_pattern)
             if exit_x is not None:
                 style += f"exitX={_fmt_num(exit_x)};exitY={_fmt_num(exit_y)};exitDx=0;exitDy=0;"
             if entry_x is not None:
@@ -2409,7 +2448,7 @@ def _is_ancestor_builder(cells, anc, cid) -> bool:
 
 __all__ = [
     "DrawioBuilder", "COLORS", "FONT_STACK", "ICON_MAP", "ICON_ALIASES", "GROUP_TYPES",
-    "STYLE_PROFILES", "ICON_W", "ICON_H", "GLYPH_W", "GLYPH_H", "LABEL_GAP", "LABEL_W",
+    "STYLE_PROFILES", "EDGE_KIND_STYLES", "ICON_W", "ICON_H", "GLYPH_W", "GLYPH_H", "LABEL_GAP", "LABEL_W",
     "LABEL_H", "ICON_FOOTPRINT_H", "PAD", "ROW1_Y", "COL_W", "ROW_H", "GAP",
     "add_icons_to_map", "set_icon_dir", "resolve_icon_path", "escape_label", "label_lines",
     "build_cell_registry", "find_container_overlaps", "validate_registry", "validate_file",
