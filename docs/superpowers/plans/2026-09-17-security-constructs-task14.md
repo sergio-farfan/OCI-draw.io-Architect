@@ -595,13 +595,14 @@ In `oci-drawio-architect/examples/generate_demo_diagram.py` (`DEMO_MODEL` from T
 - In that subnet replace `{"icon": "load_balancer", "label": "Public LB", "address": "lb"},` with `{"icon": "load_balancer", "label": "Public LB", "address": "lb", "nsgs": ["nsg-lb"]},`.
 - In the `vcn-spoke` subnet `sn-app`, replace `"tier": "app", "items": [` with `"tier": "app", "route_table": "rt-private", "security_lists": ["sl-app"], "items": [`.
 - In that subnet replace `"metadata": {"ocid": "ocid1.instance.oc1..demo"}, "tooltip": "primary app node"}]},` with `"metadata": {"ocid": "ocid1.instance.oc1..demo"}, "tooltip": "primary app node", "nsgs": ["nsg-app"]}]},`.
-- In the subnet `sn-data`, replace `{"icon": "autonomous_db", "label": "Autonomous\nDatabase", "address": "adb"}]},` with `{"icon": "autonomous_db", "label": "Autonomous\nDatabase", "address": "adb", "nsgs": ["nsg-db"]}]},`.
-- In the module docstring, after the sentence ending `the four connector kinds (data, control, association, attachment) and the legend.` add: `Route tables and security lists appear as badges on the subnets' top-right corners and NSGs as shield badges on the load balancer, the app VM and the database.`
+- In the subnet `sn-data`, replace `{"icon": "autonomous_db", "label": "Autonomous\nDatabase", "address": "adb"}]}],` with `{"icon": "autonomous_db", "label": "Autonomous\nDatabase", "address": "adb", "nsgs": ["nsg-db"]}]}],` - note the **four** closers `}]}],`: `sn-data` is the last subnet of `vcn-spoke`, so the item dict, the `items` list, the subnet dict and the `subnets` list all close on that line before the comma that leads into `"services"`. Do not drop the trailing `]` (that would fold `services` / `gateways` into the subnet dict).
+- In the module docstring, after the sentence that ends `kinds (data, control, association, attachment) and the legend.` add: `Route tables and security lists appear as badges on the subnets' top-right corners and NSGs as shield badges on the load balancer, the app VM and the database.` The sentence is hard-wrapped in Task 11's docstring (`... the four connector` / `kinds (data, control, association, attachment) and the legend.`), so search for the second line, not for the whole sentence.
 
 - [ ] **Step 9: Run the tests, the suite and the gates**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout.BadgeLayoutTests tests.test_oci_layout.DemoBadgeTests -v 2>&1 | tail -12 && cd .. && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3 && python3 oci-drawio-architect/examples/generate_demo_diagram.py /tmp/v13-badges-demo.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/v13-badges-demo.drawio && python3 oci-drawio-architect/examples/generate_reference_layout.py /tmp/v13-badges-ref.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/v13-badges-ref.drawio && SMOKE_SKIP_PNG=1 oci-drawio-architect/scripts/smoke_test.sh`
 Expected: 8 PASS; suite `OK`; both `check_overlaps.py` lines print `OK: no container overlaps or layout errors`; `Smoke test passed.`. The reference output is byte-for-byte the Task 11 output (its model has no badge fields). If the demo gate reports `overlaps '(unlabelled)'`, a badge covers a leaf other than its host: check that `_add_nsg_badge` passes `host=cid` (the icon id) and that `_add_subnet_badges` receives the subnet's final width (it must run after `fit_to_children` / `resize`).
+If instead the message pairs a **gateway caption** with `'(unlabelled)'`, it is the known clearance limitation in spec section 6: a side gateway's 105 px opaque caption starts 15 px left of its slot, so it overlaps a corner badge's x range by 4 px, and a subnet row whose top edge falls inside a side caption band (VCN-local `y` within 11 px of `SIDE_GW_Y0 + k * SIDE_GW_PITCH + ICON_H + LABEL_GAP`, i.e. `147 + 160k`) collides with it. That needs two or more right-border gateways plus a second subnet row or a stretched data-tier subnet; the demo and the fixtures do not hit it. Do **not** paper over it with a new validator tolerance or by moving the badge - record it and raise it as a separate task (spec section 12).
 
 - [ ] **Step 10: Commit**
 
@@ -622,7 +623,7 @@ git commit -m "feat(builder,layout): route table / security list corner badges a
 
 **Interfaces:**
 - Consumes: Task 14 (`_add_subnet_badges`, `_add_nsg_badge`, `add_badge`, ids `<subnet id>-rt` / `-sl` / `<host id>-nsg`); Task 9 `ModelBuilder` (`first_ref(res, attrs, rtype=None, rtypes=None)`, `all_refs(res, attrs, rtypes=None)`, `item_index`, `build()` order `_build_items -> _build_edges`), `new_subnet(name, address, cidr=None, public=None, tier=None)`, `_validate_item(errors, item, path, with_metadata, icon_keys)`, `validate_model`, `Res(address, rtype, name, attrs=None, refs=None)`; Task 10 `query_tenancy._REF_FIELDS`, `apply_relationships`, `normalise_entity`; Task 12 documentation text (anchors quoted below); Task 13 `EndToEndTests._gate(model, name)`.
-- Produces: `parse_terraform` constants `ROUTE_TABLE_TYPE = "oci_core_route_table"`, `SECURITY_LIST_TYPE = "oci_core_security_list"`, `NSG_TYPE = "oci_core_network_security_group"`, `NSG_ATTRS = ("nsg_ids", "network_security_group_ids")`, `VNIC_ATTACHMENT_TYPES = frozenset({"oci_core_vnic_attachment", "oci_core_vnic"})`; `badge_ref(name: str, address: str | None = None) -> dict` (`{"name", "address"}`); `new_subnet()` adds `"route_table": None, "security_lists": []`; `_validate_badge_refs(errors, value, path, single=False) -> None`; `ModelBuilder._badge_ref(res, default) -> dict`, `_nsg_refs(res) -> list[dict]`, `_build_vnic_nsgs() -> None`; items carry `nsgs` only when non-empty. `query_tenancy._REF_FIELDS` gains `security_list_ids`, `nsg_ids`, `network_security_group_ids`; VNIC -> host copies `nsg_ids`. Validation messages: `<path>.route_table: expected str, got int`, `<path>.security_lists[0].name: expected str, got NoneType`, `<path>.items[0].nsgs: expected list, got str`.
+- Produces: `parse_terraform` constants `ROUTE_TABLE_TYPE = "oci_core_route_table"`, `SECURITY_LIST_TYPE = "oci_core_security_list"`, `NSG_TYPE = "oci_core_network_security_group"`, `NSG_ATTRS = ("nsg_ids", "network_security_group_ids")`, `VNIC_ATTACHMENT_TYPES = frozenset({"oci_core_vnic_attachment", "oci_core_vnic"})`; `badge_ref(name: str, address: str | None = None) -> dict` (`{"name", "address"}`); `new_subnet()` adds `"route_table": None, "security_lists": []`; `_validate_badge_refs(errors, value, path, single=False) -> None`; `ModelBuilder._badge_ref(res, default) -> dict`, `_nsg_refs(res) -> list[dict]`, `_build_vnic_nsgs() -> None`; items carry `nsgs` only when non-empty. `query_tenancy._REF_FIELDS` gains `security_list_ids`, `nsg_ids`, `network_security_group_ids`; VNIC -> host copies `nsg_ids`. Validation messages: `<path>.route_table: expected str, got int`, `<path>.security_lists[0].name: expected str, got NoneType`, `<path>.items[0].nsgs: expected list, got str`. (Only single-type `_expect` calls read well: `_expect` formats the expected type as `getattr(types, "__name__", types)`, so the tuple call `_expect(errors, ref.get("address"), (str, type(None)), f"{rp}.address")` prints `expected (<class 'str'>, <class 'NoneType'>), got int`. That is the existing helper's behaviour, no test asserts it - do not "fix" `_expect`.)
 
 - [ ] **Step 1: Extend the fixtures**
 
@@ -843,7 +844,7 @@ Append to class `EndToEndTests` in `oci-drawio-architect/tests/test_oci_layout.p
 - [ ] **Step 4: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_parse_terraform.HclThreeTierTests tests.test_parse_terraform.HelperTests tests.test_query_tenancy.BundleModelTests tests.test_query_tenancy.HelperTests tests.test_oci_layout.EndToEndTests 2>&1 | tail -12`
-Expected: `test_subnet_security_constructs_are_badge_fields`, `test_security_constructs_become_badge_fields` and `test_validate_model_reports_bad_badge_fields` ERROR with `KeyError: 'route_table'`; `test_nsgs_are_item_badge_fields_never_workload_icons` with `KeyError: 'nsgs'`; `test_badge_fields_from_json_shaped_resources` with `KeyError: 'route_table'`; `test_security_reference_fields_are_normalised` with `KeyError: 'nsg_ids'`; `test_three_tier_and_tenancy_models_draw_badges` FAILS with `0 != 5`; `test_search_items_become_services_dead_and_helper_entities_are_dropped` already PASSES (the fixture now has NSG entities and the existing parser files them under `controls`). Everything else in those classes still passes.
+Expected: `test_subnet_security_constructs_are_badge_fields` and `test_security_constructs_become_badge_fields` ERROR with `KeyError: 'route_table'`; `test_nsgs_are_item_badge_fields_never_workload_icons` with `KeyError: 'nsgs'`; `test_badge_fields_from_json_shaped_resources` with `KeyError: 'route_table'` (the left operand is evaluated before `pt.badge_ref`); `test_security_reference_fields_are_normalised` with `KeyError: 'nsg_ids'`; `test_validate_model_reports_bad_badge_fields` **FAILS**, not errors - it only assigns the bad values (`sn["route_table"] = 5`), so `validate_model` returns `[]` and the first `assertIn` reports `'vcns[0].subnets[0].route_table: expected str, got int' not found in ''`; `test_three_tier_and_tenancy_models_draw_badges` FAILS with `0 != 5`; `test_search_items_become_services_dead_and_helper_entities_are_dropped` already PASSES (the fixture now has NSG entities and the existing parser files them under `controls`). Everything else in those classes still passes.
 
 - [ ] **Step 5: Implement the parser fields**
 
@@ -1024,23 +1025,14 @@ top-right corner and on the resource icon. ``controls`` still lists the resource
 
 In `oci-drawio-architect/scripts/query_tenancy.py`:
 
-1. In `_REF_FIELDS`, replace
+1. Locate the `_REF_FIELDS = (` tuple **by name** (do not search for its last line: Task 10 adds `("peer_id", "peer_id"),` to it without pinning the position, so the closing lines may already have changed) and add these three entries as the last lines before the closing `)`, keeping every entry Task 10 left in place:
 
 ```python
-    ("gateway_id", "gateway_id"), ("route_table_id", "route_table_id"), ("network_entity_id", "network_entity_id"),
-)
-```
-
-with
-
-```python
-    ("gateway_id", "gateway_id"), ("route_table_id", "route_table_id"), ("network_entity_id", "network_entity_id"),
     ("security_list_ids", "security_list_ids"), ("nsg_ids", "nsg_ids"),
     ("network_security_group_ids", "network_security_group_ids"),
-)
 ```
 
-(keep the `("peer_id", "peer_id"),` entry Task 10 added wherever it sits in the tuple).
+Each entry is `(source_key, target_key)`; `get()` tries the snake, kebab and camel spellings of the source key (`_variants()`), so `security_list_ids` also matches `security-list-ids` and `securityListIds` - no per-spelling entries are needed. Afterwards the tuple must contain the pre-existing entries (`subnet_id`, `subnet_ids`, `target_subnet_id`, `vcn_id`, `compartment_id`, `drg_id`, `cpe_id`, `gateway_id`, `route_table_id`, `network_entity_id`), Task 10's `peer_id` and the three above - verify with `python3 -c "import sys; sys.path.insert(0,'oci-drawio-architect/scripts'); import query_tenancy as q; print([a for a,_ in q._REF_FIELDS])"`.
 
 2. In `apply_relationships`, replace
 

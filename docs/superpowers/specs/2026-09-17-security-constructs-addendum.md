@@ -129,7 +129,9 @@ VCN: a (10.0.0.0/16)  (Sienna 2px dashed)
 +-----------------------------------------------------------------------------+
 ```
 
-Clearances that keep the validator clean without new tolerances: the 11 px overhang above the subnet lies inside the VCN's 50 px title band (`ROW1_Y`); the overhang to the right lies inside the VCN's right padding (`PAD` = 20, `VCN_SIDE_PAD` = 60 when a right-border gateway exists, which puts the Service Gateway slot 11 px away from the badge) or inside the 20 px `H_GAP` before the next subnet; a data-tier subnet's badge sits 29 px below the row above (`V_GAP` = 40). The NSG badge never leaves its slot, so `COL_W` = 130 keeps it 55 px from the next slot.
+Clearances that keep the validator clean without new tolerances: the 11 px overhang above the subnet lies inside the VCN's 50 px title band (`ROW1_Y`); the overhang to the right lies inside the VCN's right padding (`PAD` = 20, `VCN_SIDE_PAD` = 60 when a right-border gateway exists, which puts the Service Gateway **slot** 11 px right of the badge - and its 70 px glyph cell, the box the validator compares, 13 px right of it) or inside the 20 px `H_GAP` before the next subnet; a data-tier subnet's badge sits 29 px below the row above (`V_GAP` = 40). The NSG badge never leaves its slot, so `COL_W` = 130 keeps it 55 px from the next slot, and the caption band starting at `slot y + 97` is 75 px below the badge.
+
+Residual risk, accepted and recorded (not a new tolerance): a side gateway's caption is `LABEL_W` = 105 px wide and centred on its 75 px slot, so it starts 15 px **left** of the slot - 4 px inside the corner badge's x range. Only the vertical offset separates them: the caption of the gateway in side slot `k` occupies VCN-local `y` = `147 + 160k` to `192 + 160k` (`SIDE_GW_Y0 + k * SIDE_GW_PITCH + ICON_H + LABEL_GAP`, height `LABEL_H`), while a badge occupies its subnet's top edge +/- 11 px. Row 1 (`y` = 50) is clear of slot 0; a collision needs a second subnet row or a stretched data-tier subnet whose top edge falls in a caption band (`y` within 11 px of `147 + 160k`) **and** two or more right-border gateways, so `k >= 1`. The demo model, the reference sample and both fixtures are clear of it (the spoke VCN has a single right-border gateway). If a user model hits it the symptom is `ERROR: '<gateway label>' [abs ...] overlaps '(unlabelled)' [abs ...]`; the remedy is a layout change (side-gateway caption width or `VCN_SIDE_PAD`), which is out of scope here - see section 12.
 
 ## 7. Builder and validator changes (`scripts/drawio_builder.py`, `scripts/check_overlaps.py`)
 
@@ -193,6 +195,7 @@ Clearances that keep the validator clean without new tolerances: the 11 px overh
 - VCN-level badges (default route table / default security list of the VCN), DNS resolver or DHCP options badges.
 - Exadata backup-network NSGs (`backup_network_nsg_ids`), VLAN NSGs, NSGs on gateways, hub items, DRGs or attachment boxes.
 - Changing the icon set (no combined route-table/security-list glyph is added) and regenerating the reference sample or the README screenshots.
+- Re-tuning the side-gateway geometry (`VCN_SIDE_PAD`, side caption width) for the residual corner-badge / side-caption overlap described at the end of section 6: it needs two or more right-border gateways plus a second subnet row, no shipped model hits it, and the fix belongs to the gateway layout rather than to the badges.
 
 ## 13. Compatibility
 
