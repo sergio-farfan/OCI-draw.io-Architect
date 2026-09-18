@@ -20,8 +20,9 @@ What this module gives you
   parent, docking sides and gutter waypoints from the actual geometry so
   connectors do not cross unrelated icons or labels.
 * ``validate()`` / ``check_overlaps()`` - referential integrity, container
-  overlaps (any two containers, not just siblings), containment, icon/label
-  collisions, long labels and estimated edge crossings.
+  overlaps (any two containers, not just siblings), containment, foreign
+  containment (icons inside a VCN/subnet they do not belong to; DRG inside
+  a VCN), icon/label collisions, long labels and estimated edge crossings.
 * ``render()`` - PNG/SVG/PDF export through the draw.io desktop CLI when it
   is installed.
 
@@ -985,6 +986,41 @@ def _label_of(e: dict) -> str:
     return v[:60] if v else "(unlabelled)"
 
 
+# Validator tolerances (px). STRADDLE_TOL: an icon whose glyph centre lies on
+# its parent's border (gateway on the VCN edge) passes the containment check.
+# FOREIGN_TOL: a leaf sticking out of a VCN / subnet it does not belong to by
+# more than this is not "inside" it (a border-centred icon sticks out 35-37 px).
+STRADDLE_TOL = 4.0
+FOREIGN_TOL = ICON_W / 4
+_DRG_CAPTION_RE = re.compile(r"\bDRG\b|Dynamic Routing", re.I)
+
+
+def _centre_within(outer: "_Box", inner: "_Box", tol: float) -> bool:
+    return (outer.x - tol <= inner.cx <= outer.right + tol
+            and outer.y - tol <= inner.cy <= outer.bottom + tol)
+
+
+def _group_type_of(entry: dict) -> str:
+    """Container group type: the ``ociGroup`` token, else a Sienna-dashed heuristic."""
+    tok = _style_tokens(entry.get("style", ""))
+    gt = tok.get("ociGroup")
+    if gt:
+        return gt
+    if (tok.get("container") == "1" and tok.get("dashed") == "1"
+            and str(tok.get("strokeColor", "")).upper() == COLORS["vcn_stroke"].upper()
+            and tok.get("dashPattern") != "1 1"):
+        return "vcn" if tok.get("strokeWidth") == "2" else "subnet"
+    return ""
+
+
+def _is_drg_icon(entry: dict) -> bool:
+    if _kind(entry) != "icon":
+        return False
+    if _style_tokens(entry.get("style", "")).get("ociRole") == "drg":
+        return True
+    return bool(_DRG_CAPTION_RE.search(entry.get("caption") or ""))
+
+
 def _attach_captions(registry: dict, boxes: dict) -> None:
     """Name icon cells after the caption text cell sitting right below them."""
     texts = [(cid, e) for cid, e in registry.items()
@@ -1001,9 +1037,11 @@ def _attach_captions(registry: dict, boxes: dict) -> None:
             if tb.x - 1 <= ib.cx <= tb.right + 1 and -2 <= tb.y - ib.bottom <= 40:
                 gap = tb.y - ib.bottom
                 if best is None or gap < best[0]:
-                    best = (gap, te)
+                    best = (gap, tid, te)
         if best is not None:
-            e["caption"] = re.sub(r"\s+", " ", _html.unescape(_TAG_RE.sub(" ", best[1].get("value", "")))).strip()
+            _, tid, te = best
+            e["caption"] = re.sub(r"\s+", " ", _html.unescape(_TAG_RE.sub(" ", te.get("value", "")))).strip()
+            te["owner"] = cid
 
 
 def _seg_hits_box(a, b, box: _Box, tol=0.5) -> bool:
@@ -1114,7 +1152,9 @@ def validate_registry(registry: dict, page: str = "", strict: bool = False,
                     f"{prefix}OVERLAP: '{_label_of(registry[a])}' [abs {ba!r}] intersects "
                     f"'{_label_of(registry[b])}' [abs {bb!r}] ({where})")
 
-    # 3. containment: every vertex inside its parent container
+    # 3. containment: every vertex inside its parent container. Icons (and
+    #    their captions) may straddle the parent's border - gateways on the
+    #    VCN edge - as long as the glyph centre is on or inside the border.
     for cid, e in registry.items():
         if e.get("vertex") != "1" or cid in ("0", "1"):
             continue
@@ -1123,10 +1163,19 @@ def validate_registry(registry: dict, page: str = "", strict: bool = False,
             continue
         local = _Box(e["x"], e["y"], e["w"], e["h"])
         pbox = _Box(0, 0, registry[parent]["w"], registry[parent]["h"])
-        if not pbox.contains(local, tol=1.0):
-            errors.append(
-                f"{prefix}ERROR: '{_label_of(e)}' [{local!r}] extends outside its parent "
-                f"'{_label_of(registry[parent])}' [w={_fmt_num(pbox.w)},h={_fmt_num(pbox.h)}]")
+        if pbox.contains(local, tol=1.0):
+            continue
+        k = kinds.get(cid)
+        if k == "icon" and _centre_within(pbox, local, STRADDLE_TOL):
+            continue
+        owner = registry.get(e.get("owner")) if k == "text" else None
+        if owner is not None:
+            ob = _Box(owner["x"], owner["y"], owner["w"], owner["h"])
+            if pbox.contains(ob, tol=1.0) or _centre_within(pbox, ob, STRADDLE_TOL):
+                continue
+        errors.append(
+            f"{prefix}ERROR: '{_label_of(e)}' [{local!r}] extends outside its parent "
+            f"'{_label_of(registry[parent])}' [w={_fmt_num(pbox.w)},h={_fmt_num(pbox.h)}]")
 
     # 4. non-container vertex collisions (icons, captions, texts)
     leaves = [cid for cid, k in kinds.items() if k in ("icon", "text", "other")]
@@ -1180,6 +1229,33 @@ def validate_registry(registry: dict, page: str = "", strict: bool = False,
                    f"{_label_of(registry.get(e.get('target'), {}))}) is estimated to cross: "
                    + ", ".join(hit[:5]) + (" ..." if len(hit) > 5 else ""))
             (errors if strict else warnings).append(msg)
+
+    # 7. foreign containment: a leaf drawn inside a VCN / subnet it does not
+    #    belong to (the team's diagram guidelines: a box asserts location). A
+    #    DRG inside any VCN box is an error even when its parent chain is right.
+    network_groups = [(gid, _group_type_of(registry[gid])) for gid in containers]
+    network_groups = [(gid, gt) for gid, gt in network_groups if gt in ("vcn", "subnet")]
+    for lid in leaves:
+        lb = boxes[lid]
+        le = registry[lid]
+        if lb.w <= 0 or lb.h <= 0:
+            continue
+        owner = registry.get(le.get("owner")) if kinds.get(lid) == "text" else None
+        if owner is not None and _is_drg_icon(owner):
+            continue                      # the DRG message below covers its caption
+        is_drg = _is_drg_icon(le)
+        for gid, gt in network_groups:
+            gb = boxes[gid]
+            if not gb.contains(lb, tol=FOREIGN_TOL):
+                continue
+            if is_drg and gt == "vcn":
+                errors.append(f"{prefix}ERROR: DRG '{_label_of(le)}' is inside VCN '{_label_of(registry[gid])}'")
+                continue
+            if _is_ancestor(registry, gid, lid):
+                continue
+            errors.append(
+                f"{prefix}ERROR: '{_label_of(le)}' [abs {lb!r}] lies inside '{_label_of(registry[gid])}' "
+                f"[abs {gb!r}] but is not one of its children")
 
     if not any(k in ("group", "icon", "text") for k in kinds.values()):
         warnings.append(f"{prefix}WARNING: page has no containers, icons or text")
@@ -2430,8 +2506,11 @@ class DrawioBuilder:
         """Route pending edges and validate every page.
 
         Returns messages starting with 'ERROR:'/'OVERLAP:' (must fix) or
-        'WARNING:' (review). strict=True turns estimated edge crossings into
-        errors. Empty list = clean.
+        'WARNING:' (review). Errors cover references, container overlaps,
+        containment (icons may straddle their parent's border), foreign
+        containment (icons inside a VCN/subnet they do not belong to; DRG
+        inside a VCN) and leaf collisions. strict=True turns estimated edge
+        crossings into errors. Empty list = clean.
         """
         self.route_edges()
         errors, warnings = [], []
@@ -2491,6 +2570,7 @@ __all__ = [
     "DrawioBuilder", "COLORS", "FONT_STACK", "ICON_MAP", "ICON_ALIASES", "GROUP_TYPES",
     "STYLE_PROFILES", "EDGE_KIND_STYLES", "ICON_W", "ICON_H", "GLYPH_W", "GLYPH_H", "LABEL_GAP", "LABEL_W",
     "LABEL_H", "ICON_FOOTPRINT_H", "PAD", "ROW1_Y", "COL_W", "ROW_H", "GAP", "BOX_STYLE", "DRG_ICON_STEM",
+    "STRADDLE_TOL", "FOREIGN_TOL",
     "add_icons_to_map", "set_icon_dir", "resolve_icon_path", "escape_label", "label_lines",
     "build_cell_registry", "find_container_overlaps", "validate_registry", "validate_file",
     "find_drawio_binary", "render", "OCI_SVG_DIR",

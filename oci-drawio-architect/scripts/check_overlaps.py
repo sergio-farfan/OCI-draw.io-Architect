@@ -10,6 +10,7 @@ Checks (ERROR = exit 1):
   - cells whose parent id does not exist, edges whose source/target is missing
   - any two containers (not just siblings) whose boxes intersect
   - any shape extending outside its parent container
+  - icons, captions or boxes lying inside a VCN / subnet they do not belong to; a DRG inside any VCN
   - icons / captions / text cells overlapping each other
 Checks (WARNING = exit 0 unless --strict):
   - captions that need more lines than their box provides

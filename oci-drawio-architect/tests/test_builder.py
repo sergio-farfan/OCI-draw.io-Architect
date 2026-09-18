@@ -1225,6 +1225,114 @@ class TestValidation(TempDirMixin, unittest.TestCase):
         self.assertTrue(any(m.startswith("ERROR") and "Blocker" in m for m in strict), strict)
 
 
+class TestForeignContainment(TempDirMixin, unittest.TestCase):
+    def _region_vcn(self, d):
+        r = d.add_group("us-ashburn-1", 20, 75, 900, 600, group_type="region", key="region")
+        v = d.add_group("VCN: a (10.0.0.0/16)", 300, 40, 500, 400, parent=r, group_type="vcn", key="vcn-a")
+        return r, v
+
+    def test_region_parented_drg_inside_vcn_is_an_error(self):
+        d = DrawioBuilder()
+        r, v = self._region_vcn(d)
+        d.add_icon("DRG\ndrg-a", "drg", 400, 200, parent=r, key="drg")     # abs (420,275) inside the VCN
+        self.assertEqual(only_errors(d.validate()),
+                         ["ERROR: DRG 'DRG drg-a' is inside VCN 'VCN: a (10.0.0.0/16)'"])
+
+    def test_vcn_parented_drg_is_also_an_error(self):
+        d = DrawioBuilder()
+        r, v = self._region_vcn(d)
+        d.add_icon("DRG\ndrg-a", "drg", 100, 100, parent=v, key="drg")
+        self.assertEqual(only_errors(d.validate()),
+                         ["ERROR: DRG 'DRG drg-a' is inside VCN 'VCN: a (10.0.0.0/16)'"])
+
+    def test_region_parented_vm_inside_vcn_is_a_foreign_containment_error(self):
+        d = DrawioBuilder()
+        r, v = self._region_vcn(d)
+        d.add_icon("App VM", "vm", 400, 200, parent=r, key="vm")
+        errors = only_errors(d.validate())
+        self.assertEqual(len(errors), 2, errors)          # the icon and its caption
+        for e in errors:
+            self.assertIn("lies inside 'VCN: a (10.0.0.0/16)'", e)
+            self.assertIn("but is not one of its children", e)
+
+    def test_icon_inside_a_foreign_subnet_is_an_error(self):
+        d = DrawioBuilder()
+        r, v = self._region_vcn(d)
+        d.add_group("sn-app", 20, 50, 300, 200, parent=v, group_type="subnet", key="sn-app")
+        d.add_icon("Stray", "vm", 40, 60, parent=v, key="stray")            # in the VCN but inside sn-app's box
+        self.assertTrue(any("lies inside 'sn-app'" in e for e in only_errors(d.validate())))
+
+    def test_border_centred_gateway_is_clean_whichever_parent(self):
+        for parent_is_vcn in (False, True):
+            d = DrawioBuilder()
+            r, v = self._region_vcn(d)
+            if parent_is_vcn:
+                d.add_icon("Internet\nGateway", "internet_gateway", 20, 400 - 40, parent=v, key="igw")
+            else:
+                d.add_icon("Internet\nGateway", "internet_gateway", 320, 40 + 400 - 40, parent=r, key="igw")
+            self.assertEqual(only_errors(d.validate()), [], f"parent_is_vcn={parent_is_vcn}")
+
+    def test_side_border_gateway_is_clean(self):
+        d = DrawioBuilder()
+        r, v = self._region_vcn(d)
+        d.add_icon("Service\nGateway", "service_gateway", 300 + 500 - 38, 40 + 50, parent=r, key="sgw",
+                   label_fill=db.COLORS["region_fill"])
+        self.assertEqual(only_errors(d.validate()), [])
+
+    def test_mostly_inside_icon_is_still_flagged(self):
+        d = DrawioBuilder()
+        r, v = self._region_vcn(d)
+        d.add_icon("Almost in", "vm", 300 - 10, 200, parent=r, key="almost")  # sticks out 10 px < FOREIGN_TOL
+        self.assertTrue(any("lies inside" in e for e in only_errors(d.validate())))
+
+    def test_box_inside_foreign_vcn_is_an_error_and_outside_is_clean(self):
+        d = DrawioBuilder()
+        r, v = self._region_vcn(d)
+        d.add_box("VCN attachment", 350, 200, 100, 44, parent=r, key="bad")
+        self.assertTrue(any("'VCN attachment'" in e and "lies inside" in e for e in only_errors(d.validate())))
+        d2 = DrawioBuilder()
+        r2, v2 = self._region_vcn(d2)
+        d2.add_box("VCN attachment", 150, 200, 100, 44, parent=r2, key="good")
+        self.assertEqual(only_errors(d2.validate()), [])
+
+    def test_own_children_are_never_foreign(self):
+        d = DrawioBuilder()
+        r, v = self._region_vcn(d)
+        s = d.add_group("sn-app", 20, 50, 300, 200, parent=v, group_type="subnet")
+        d.add_icon("App VM", "vm", 20, 50, parent=s)
+        self.assertEqual(d.validate(), [])
+
+    def test_handwritten_file_uses_style_heuristics(self):
+        xml = """<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="test">
+  <diagram id="p1" name="Page-1">
+    <mxGraphModel>
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="r" value="us-ashburn-1" style="rounded=1;strokeColor=#9E9892;fillColor=#F5F4F2;container=1;" vertex="1" parent="1">
+          <mxGeometry x="20" y="75" width="900" height="600" as="geometry"/>
+        </mxCell>
+        <mxCell id="v" value="VCN: a" style="rounded=0;strokeWidth=2;dashed=1;strokeColor=#AE562C;fillColor=none;container=1;" vertex="1" parent="r">
+          <mxGeometry x="300" y="40" width="500" height="400" as="geometry"/>
+        </mxCell>
+        <mxCell id="drg" value="" style="shape=image;image=data:image/svg+xml,x;" vertex="1" parent="r">
+          <mxGeometry x="400" y="200" width="70" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="drg-l" value="DRG hub" style="text;html=1;align=center;" vertex="1" parent="r">
+          <mxGeometry x="382" y="275" width="105" height="45" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
+"""
+        path = self.tmp / "handwritten.drawio"
+        path.write_text(xml, encoding="utf-8")
+        errors, _, _, _ = db.validate_file(path)
+        self.assertEqual(errors, ["ERROR: DRG 'DRG hub' is inside VCN 'VCN: a'"])
+
+
 # ---------------------------------------------------------------------------
 # 9. Helpers
 # ---------------------------------------------------------------------------
