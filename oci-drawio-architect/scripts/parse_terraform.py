@@ -77,13 +77,16 @@ OCID in live-tenancy mode (see ``query_tenancy.py``).  Addresses are unique per
 model and meant to seed deterministic draw.io cell ids.  A DRG is reported once
 in ``drgs`` with one typed attachment per ``oci_core_drg_attachment`` (VCN),
 ``oci_core_ipsec`` (ipsec, target = the CPE), ``oci_core_virtual_circuit``
-(virtual_circuit) and ``oci_core_remote_peering_connection`` (rpc); a DRG without
-attachments in a single-VCN model gets an implicit ``<drg>@<vcn>`` attachment.
+(virtual_circuit; private circuits only - a ``PUBLIC`` circuit has no DRG) and
+``oci_core_remote_peering_connection`` (rpc); a DRG without attachments in a
+single-VCN model gets an implicit ``<drg>@<vcn>`` attachment.
 ``hub`` holds the on-premises side only (CPE, virtual circuit, RPC peer).  LPG
-pairs produce one ``Local Peering`` edge of kind ``attachment``; the layout draws
-the DRG attachment connectors itself.  ``edges[].inferred`` is ``false`` for
-edges backed by an explicit reference (LB backend -> instance, LPG peering) and
-``true`` for the tier heuristics (LB -> app compute, app compute -> database).
+pairs produce one ``Local Peering`` edge of kind ``attachment`` and both
+gateways carry ``peer`` even though only the requestor declares ``peer_id``; the
+layout draws the DRG attachment connectors itself.  ``edges[].inferred`` is
+``false`` for edges backed by an explicit reference (LB backend -> instance, LPG
+peering) and ``true`` for the tier heuristics (LB -> app compute, app compute ->
+database).
 Every ``icon`` value is a key of ``drawio_builder.ICON_ALIASES``; the local
 peering gateway uses ``remote_peering_gateway`` because no dedicated LPG glyph is
 bundled.
