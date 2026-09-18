@@ -2682,7 +2682,7 @@ git commit -m "feat(parser): schema 2 with drgs/attachments, on-premises hub, LP
 - Consumes: `parse_terraform.ModelBuilder` (Task 9) through `entities_to_resources` / `build_model` (unchanged signatures).
 - Produces: `_REF_FIELDS` includes `("peer_id", "peer_id")`; live-mode models have `drgs[]`, `hub` = on-premises items only.
 
-- [ ] **Step 1: Update the expectations (they fail now)**
+- [x] **Step 1: Update the expectations (they fail now)**
 
 In `oci-drawio-architect/tests/test_query_tenancy.py` replace `test_gateways_including_ocid_derived_type`, `test_hub` and the DRG lines of `test_edges` / `test_no_inferred_edges` / `test_classify_response_and_load_bundle_single_response`:
 
@@ -2729,21 +2729,21 @@ Add to `HelperTests`:
         self.assertEqual(norm["refs"]["peer_id"], ["ocid1.localpeeringgateway.oc1.eu-frankfurt-1.b"])
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_query_tenancy 2>&1 | tail -4`
 Expected: `test_peer_id_is_a_reference_field` FAILS with `KeyError: 'peer_id'`; the other updated tests already pass against the Task 9 parser (the fixture flows through `ModelBuilder`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `query_tenancy.py` add `("peer_id", "peer_id"),` to `_REF_FIELDS`. In the docstring replace "Additional edges come from ``ROUTES_TO`` relationships (subnet -> gateway)." with "Additional edges come from ``ROUTES_TO`` relationships (subnet -> gateway); DRGs and their attachments are reported in ``drgs[]`` (schema 2), the hub holds the on-premises side only."
 
-- [ ] **Step 4: Run the suite**
+- [x] **Step 4: Run the suite**
 
 Run: `python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3`
 Expected: `OK`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/query_tenancy.py oci-drawio-architect/tests/test_query_tenancy.py

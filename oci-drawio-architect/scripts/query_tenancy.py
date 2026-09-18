@@ -34,7 +34,8 @@ Output: the same MODEL schema as ``parse_terraform.py`` (``source.mode = "tenanc
 OCIDs are the item addresses.  Everything is delegated to
 ``parse_terraform.ModelBuilder`` after entities are converted to its resource
 representation, so placement and edge rules are identical to Terraform mode.
-Additional edges come from ``ROUTES_TO`` relationships (subnet -> gateway).
+Additional edges come from ``ROUTES_TO`` relationships (subnet -> gateway); DRGs and their
+attachments are reported in ``drgs[]`` (schema 2), the hub holds the on-premises side only.
 
 Privacy: stderr summaries never print more than the first 12 characters of an OCID.
 
@@ -166,6 +167,7 @@ _REF_FIELDS = (
     ("subnet_id", "subnet_id"), ("subnet_ids", "subnet_ids"), ("target_subnet_id", "target_subnet_id"),
     ("vcn_id", "vcn_id"), ("compartment_id", "compartment_id"), ("drg_id", "drg_id"), ("cpe_id", "cpe_id"),
     ("gateway_id", "gateway_id"), ("route_table_id", "route_table_id"), ("network_entity_id", "network_entity_id"),
+    ("peer_id", "peer_id"),
 )
 
 
