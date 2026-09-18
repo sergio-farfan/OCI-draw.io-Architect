@@ -148,8 +148,9 @@ unresolved parent id (#4).
 ## 10. Data URI size: there is no ~20 KB limit
 
 Measured on the bundled set: SVG files are 1.3-25 KB on disk and encode to **2.1-35.5 KB
-data URIs each** (median ~9 KB). The 31-icon reference sample is 276,659 bytes and a
-31-distinct-icon probe built with the builder was ~342 KB; a single-icon file is ~7 KB.
+data URIs each** (median ~9 KB). The reference sample (27 icons plus 4 badges) is
+279,871 bytes and a 31-distinct-icon probe built with the builder was ~342 KB; a
+single-icon file is ~7 KB.
 Both render fine (the probe was exported to PNG through the draw.io desktop CLI with every
 icon intact) - file size simply scales with icon count. Keep PNG
 logos small (the builder caps them at 300px wide) for file size and editor responsiveness,

@@ -522,6 +522,19 @@ class ExamplesTests(unittest.TestCase):
             out = quiet(ol.write_diagram, MODEL, Path(tmp) / "ref.drawio")
             self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
 
+    def test_reference_model_draws_its_nsgs_as_badges(self):
+        sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
+        from generate_reference_layout import MODEL
+        items = {i["address"]: i for s in MODEL["vcns"][0]["subnets"] for i in s["items"]}
+        self.assertEqual([a for a, i in items.items()
+                          if i["icon"] in ("nsg", "security_list", "route_table")], [])
+        self.assertEqual({a: i["nsgs"] for a, i in items.items() if i.get("nsgs")},
+                         {"lb": ["nsg-priv-lb"], "app-vm": ["nsg-priv-app"],
+                          "worker-vm": ["nsg-priv-workers"], "adb": ["nsg-priv-data (21 rules)"]})
+        d = quiet(ol.build_diagram, MODEL)
+        self.assertEqual(sorted(c for c, e in d._cells.items() if e.get("badge")),
+                         ["adb-nsg", "app-vm-nsg", "lb-nsg", "worker-vm-nsg"])
+
     def test_demo_builds_three_pages_and_passes_the_gate(self):
         import check_overlaps
         sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
