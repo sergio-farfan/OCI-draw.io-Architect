@@ -84,17 +84,26 @@ class BundleModelTests(unittest.TestCase):
 
     def test_gateways_including_ocid_derived_type(self):
         gws = {g["type"]: g for g in self.vcn["gateways"]}
-        self.assertEqual(set(gws), {"igw", "nat", "sgw", "drg"})
+        self.assertEqual(set(gws), {"igw", "nat", "sgw"})
         self.assertEqual(gws["nat"]["label"], "nat-shop")                        # entity without 'type' key
         self.assertTrue(gws["nat"]["address"].startswith("ocid1.natgateway."))
-        self.assertTrue(gws["drg"]["address"].startswith("ocid1.drgattachment."))
-        self.assertEqual(gws["drg"]["label"], "drg-shop")
+
+    def test_drg_attachments_from_topology(self):
+        drgs = self.model["drgs"]
+        self.assertEqual([(d["name"], d["address"][:9]) for d in drgs], [("drg-shop", "ocid1.drg")])
+        atts = drgs[0]["attachments"]
+        self.assertEqual([a["type"] for a in atts], ["vcn", "ipsec"])
+        self.assertTrue(atts[0]["address"].startswith("ocid1.drgattachment."))
+        self.assertEqual((atts[0]["label"], atts[0]["vcn"]), ("drg-att-shop", "vcn-shop"))
+        cpe = self.model["hub"]["items"][0]["address"]
+        self.assertEqual((atts[1]["label"], atts[1]["target"]), ("vpn-hq", cpe))
+        self.assertTrue(atts[1]["address"].startswith("ocid1.ipsecconnection."))
 
     def test_hub(self):
         hub = self.model["hub"]
         self.assertEqual(hub["name"], "On-premises")
-        self.assertEqual(hub["link_label"], "IPSec VPN")
-        self.assertEqual([(i["icon"], i["label"]) for i in hub["items"]], [("drg", "drg-shop"), ("cpe", "cpe-hq")])
+        self.assertIsNone(hub["link_label"])
+        self.assertEqual([(i["icon"], i["label"]) for i in hub["items"]], [("cpe", "cpe-hq")])
 
     def test_search_items_become_services_dead_and_helper_entities_are_dropped(self):
         svc = {i["type"]: i["label"] for i in self.vcn["services"]}
@@ -119,14 +128,11 @@ class BundleModelTests(unittest.TestCase):
         self.assertEqual((edges[(lb_sn, igw)]["label"], edges[(lb_sn, igw)]["kind"], edges[(lb_sn, igw)]["inferred"]),
                          ("0.0.0.0/0", "control", False))
         self.assertEqual(edges[(app_sn, nat)]["label"], "0.0.0.0/0")             # camelCase routeRuleDetails
-        cpe = self.model["hub"]["items"][1]["address"]
-        drg = self.model["hub"]["items"][0]["address"]
-        self.assertEqual(edges[(cpe, drg)]["label"], "IPSec VPN")
         lb = subnet(self.vcn, "sn-lb-public")["items"][0]["address"]
         self.assertTrue(edges[(lb, INSTANCE)]["inferred"])
         adb = subnet(self.vcn, "sn-database")["items"][0]["address"]
         self.assertEqual(edges[(INSTANCE, adb)]["label"], "1522")
-        self.assertEqual(len(edges), 5)
+        self.assertEqual(len(edges), 4)
 
     def test_vcn_filter(self):
         model = qt.build_model(self.bundle, COMP, VCN)
@@ -136,7 +142,7 @@ class BundleModelTests(unittest.TestCase):
     def test_no_inferred_edges(self):
         model = qt.build_model(self.bundle, COMP, None, None, False)
         self.assertTrue(all(not e["inferred"] for e in model["edges"]))
-        self.assertEqual(len(model["edges"]), 3)
+        self.assertEqual(len(model["edges"]), 2)
 
 
 class HelperTests(unittest.TestCase):
@@ -183,10 +189,10 @@ class HelperTests(unittest.TestCase):
             self.assertEqual(loaded["search"], [])
             model = qt.build_model(loaded, COMP)
             self.assertEqual(model["vcns"][0]["name"], "vcn-shop")
-            # CPE/IPSec live in networking-topology; the VCN topology alone yields a DRG-only hub
-            self.assertEqual(model["hub"]["name"], "drg-shop hub")
-            self.assertIsNone(model["hub"]["link_label"])
-            self.assertEqual([i["icon"] for i in model["hub"]["items"]], ["drg"])
+            # CPE/IPSec live in networking-topology; the VCN topology alone yields a DRG with its VCN attachment
+            self.assertIsNone(model["hub"])
+            self.assertEqual([d["name"] for d in model["drgs"]], ["drg-shop"])
+            self.assertEqual([a["type"] for a in model["drgs"][0]["attachments"]], ["vcn"])
             bad = Path(tmp) / "bad.json"
             bad.write_text("{}")
             with self.assertRaises(pt.InputError):
@@ -194,6 +200,11 @@ class HelperTests(unittest.TestCase):
             bad.write_text("not json")
             with self.assertRaises(pt.InputError):
                 qt.load_bundle(bad)
+
+    def test_peer_id_is_a_reference_field(self):
+        norm = qt.normalise_entity({"type": "LocalPeeringGateway", "id": "ocid1.localpeeringgateway.oc1.eu-frankfurt-1.a",
+                                    "peer-id": "ocid1.localpeeringgateway.oc1.eu-frankfurt-1.b"})
+        self.assertEqual(norm["refs"]["peer_id"], ["ocid1.localpeeringgateway.oc1.eu-frankfurt-1.b"])
 
     def test_every_entity_type_maps_to_a_known_resource_type(self):
         containers = {pt.VCN_TYPE, pt.SUBNET_TYPE, pt.COMPARTMENT_TYPE, pt.DRG_ATTACHMENT_TYPE}
