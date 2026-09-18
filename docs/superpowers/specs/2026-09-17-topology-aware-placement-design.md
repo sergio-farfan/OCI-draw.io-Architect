@@ -168,9 +168,11 @@ New constants in `oci_layout.py`:
 | Constant | Value | Meaning |
 |----------|-------|---------|
 | `DRG_GAP` | 45 | DRG column -> first VCN |
-| `ATT_W`, `ATT_H` | 100, 44 | attachment box |
+| `ATT_W`, `ATT_H` | 100, 44 | attachment box width, **minimum** height (see 7.4) |
 | `ATT_GAP` | 15 | DRG slot -> attachment boxes |
-| `ATT_PITCH` | 56 | vertical pitch of stacked boxes |
+| `ATT_PITCH` | 56 | vertical pitch of stacked `ATT_H` boxes |
+| `ATT_VGAP` | 12 | gap between stacked boxes (`ATT_PITCH - ATT_H`) |
+| `ATT_FONT_SIZE`, `ATT_TEXT_PAD` | 11, 4 | attachment-box text size and inset |
 | `DRG_CLUSTER_GAP` | 40 | between stacked DRG clusters |
 | `OSN_GAP` | 45 | last VCN -> OSN panel |
 | `OSN_LABEL` | `"Oracle Services Network"` | panel label |
@@ -200,10 +202,21 @@ left_w  = ATT_W + ATT_GAP  if on-prem / RPC attachments else 0
 right_w = ATT_W + ATT_GAP  if VCN attachments else 0
 col_w   = left_w + ICON_W + right_w
 DRG slot: x = col_x + left_w, y = cy - GW_STRADDLE            (glyph centre on cy)
-right boxes: x = col_x + left_w + ICON_W + ATT_GAP, block centred on cy, pitch ATT_PITCH
+right boxes: x = col_x + left_w + ICON_W + ATT_GAP, block centred on cy, gap ATT_VGAP
 left boxes:  x = col_x, same vertical rule
-cluster_h = max(ICON_FOOTPRINT_H, n_side_max * ATT_PITCH - (ATT_PITCH - ATT_H))
+box_h     = max(ATT_H, label_lines(text, ATT_W - 2 * ATT_TEXT_PAD, ATT_FONT_SIZE)
+                       * LABEL_LINE_H + 2 * ATT_TEXT_PAD)
+block_h   = sum(box_h) + ATT_VGAP * (n_side - 1)
+cluster_h = max(ICON_FOOTPRINT_H, left block_h, right block_h)
 ```
+
+Each box holds its own label: `ATT_H` is the minimum (a two-line label) and the box grows by
+whole lines from the text, so the stack pitch follows the real heights instead of a fixed
+`ATT_PITCH`. Box text is `attachment_label(att)` with zero-width break hints
+(`drawio_builder.wrap_hints()`) when one of its words is wider than the box - a parser-style
+display name such as `drg_attachment_vcn_prod_shared_services_hub` is one unbreakable word and
+would otherwise render as a single ~240 px line across the DRG glyph and the VCN border. The
+registry keeps the plain label, so edge endpoints and captions are unaffected.
 
 Several DRGs stack with `DRG_CLUSTER_GAP`; the stack is centred on the VCN stack centre. Box style wraps each cluster in a `drg` group (`DRG: <name>`), children offset by `PAD` / `ROW1_Y`, then `fit_to_children`. Connectors (kind `attachment`, key `<attachment address>-edge`): right box -> `vcn:<name>` container (no label), left box -> hub item (`Site-to-Site VPN` / `FastConnect` / `Remote Peering`). `loopback` attachments are skipped. Registry: `drg:<name>` and the DRG address resolve to the DRG icon; attachment addresses resolve to their boxes.
 
@@ -267,8 +280,14 @@ With `drg_style: box` the DRG icon and the boxes sit inside a dashed `DRG: <name
 - `add_legend`: edge entry styles `solid`, `dashed`, `accent`, `purple` plus `dotted`, `thin` and the kind names `data`, `control`, `association`, `attachment`; new default entries (four connector kinds, region, VCN, subnet, OSN).
 - `GROUP_TYPES` gains `drg`; style = toolkit "Other Group" look (rounded `arcSize=10`, Bark 1px dashed, no fill) with a **left-aligned** bold 11px label. Every container style carries an `ociGroup=<group_type>;` token so validators can tell VCNs and subnets apart in written files. `oracle_services_network` keeps its look; the recipe passes `label_position="left"`.
 - `add_icon(..., label_fill=None)`: caption `fillColor` (used for border-straddling gateways). DRG icons (resolved SVG stem `networking_dynamic_routing_gateway_drg`) carry an `ociRole=drg;` style token.
-- `add_box(label, x, y, w, h, parent="1", key=None, style_extra="", metadata=None, tooltip=None) -> str`: a labelled rounded rectangle (`rounded=1;arcSize=12;whiteSpace=wrap;html=1;strokeColor=<ivy>;fillColor=#FFFFFF;fontSize=11;align=center;verticalAlign=middle`), registered as kind `other` so it is a routing obstacle, a leaf in collision checks and a valid edge endpoint.
+- `add_box(label, x, y, w, h, parent="1", key=None, style_extra="", metadata=None, tooltip=None) -> str`: a labelled rounded rectangle (`rounded=1;arcSize=12;whiteSpace=wrap;html=1;strokeColor=<ivy>;fillColor=#FFFFFF;fontSize=11;align=center;verticalAlign=middle`), registered as kind `other` so it is a routing obstacle, a leaf in collision checks and a valid edge endpoint. `add_box()` does not size itself; the caller passes a height that fits the label (7.4).
 - Validator (`validate_registry`):
+  - rule 5 (long labels) covers kind `other` as well as captions: a wrapped label whose
+    estimated line count does not fit the cell height is `WARNING: label '<text>' needs ~N
+    lines at <fs>px in <w>px but its box is <h>px tall`. A caption still has to exceed
+    `MAX_LABEL_LINES`; a box does not, because a clipped box label is always a defect.
+    `label_lines()` measures a zero-width wrap hint as a space, so hinted and plain text are
+    estimated the same way.
   - rule 3 straddle tolerance: an icon passes containment when its box fits the parent (tol 1) **or** its centre lies within the parent box expanded by `STRADDLE_TOL = 4` px; a caption passes when its owner icon passes (`_attach_captions` now records `owner` on the caption entry).
   - new rule 7 "foreign containment": for every container X whose group type is `vcn` or `subnet` (token `ociGroup`, fallback heuristic: Sienna `#AE562C` dashed stroke without `dashPattern=1 1`) and every leaf L (icon, caption, text, other) whose ancestors do not include X: if `X.contains(L, tol=FOREIGN_TOL)` -> `ERROR: '<L>' [abs ...] lies inside '<X>' [abs ...] but is not one of its children`. When L is a DRG icon (token `ociRole=drg`, fallback caption matching `\bDRG\b|Dynamic Routing`) and X is a VCN the message is `ERROR: DRG '<label>' is inside VCN '<vcn label>'`; this fires for any VCN that contains the DRG box, including its own parent chain.
 - `__all__` exports `EDGE_KIND_STYLES`, `STRADDLE_TOL`, `FOREIGN_TOL`.
@@ -278,9 +297,9 @@ With `drg_style: box` the DRG icon and the boxes sit inside a dashed `DRG: <name
 `scripts/parse_terraform.py` (`SCHEMA_VERSION = 2`):
 - `EDGE_KINDS = ("data", "control", "association", "attachment")`; `GATEWAY_ICONS` drops `drg`; `REGIONAL_TYPES` (section 6) and `ATTACHMENT_TYPES`.
 - `new_model()` adds `"drgs": []` and `"drg_style": "auto"`; factories `new_drg(name, address, label) -> dict` and `new_attachment(atype, address, label, vcn=None, target=None) -> dict`.
-- `_build_drgs()`: one `drgs[]` entry per `oci_core_drg`; each `oci_core_drg_attachment` becomes a `vcn` attachment with its own display name; a DRG without attachments and a single VCN gets an implicit attachment (`<drg>@<vcn>`, label `VCN attachment <vcn>`); IPSec / virtual circuit / RPC resources referencing the DRG become `ipsec` / `virtual_circuit` / `rpc` attachments (address `<resource>@<drg>`, `target` = the on-prem hub item: CPE for IPSec when present, else the resource itself). No DRG item is appended to VCN gateways or hub items.
+- `_build_drgs()`: one `drgs[]` entry per `oci_core_drg`; each `oci_core_drg_attachment` becomes a `vcn` attachment with its own display name; a DRG without attachments and a single VCN gets an implicit attachment (`<drg>@<vcn>`, label `VCN attachment <vcn>`); IPSec / virtual circuit / RPC resources referencing the DRG become `ipsec` / `virtual_circuit` / `rpc` attachments (address `<resource>@<drg>`, `target` = the on-prem hub item: CPE for IPSec when present, else the resource itself). An unresolvable DRG reference falls back to the tenancy's only DRG for IPSec and RPC resources, which require `drg_id`; a virtual circuit with `type = "PUBLIC"` never becomes an attachment (public peering advertises prefixes to Oracle's public services and has no DRG), it stays an on-premises hub item with no connector. No DRG item is appended to VCN gateways or hub items.
 - `_build_hub()`: on-premises items only; name `On-premises` when a CPE / IPSec / VC exists, `Remote region` when only RPCs exist; `link_label` = `null`.
-- `_build_gateways()`: LPG gateways carry `peer` (resolved `peer_id`); `_build_edges()` emits one `Local Peering` attachment-kind edge per LPG pair (lower address first) and no longer emits CPE -> DRG edges (the layout draws attachment connectors from `drgs[]`).
+- `_build_gateways()`: LPG gateways carry `peer` (resolved `peer_id`), mirrored onto the acceptor of each pair - only the requestor declares `peer_id` in Terraform and in the API until the peering is accepted, and an LPG with `peer: None` would land on the VCN's bottom border instead of the border facing its peer; `_build_edges()` emits one `Local Peering` attachment-kind edge per LPG pair (lower address first) and no longer emits CPE -> DRG edges (the layout draws attachment connectors from `drgs[]`).
 - `_build_items()`: services get `regional = rtype in REGIONAL_TYPES`.
 - `model_addresses()` yields DRG and attachment addresses; `select_vcn()` drops VCN attachments of removed VCNs; `validate_model()` checks `drgs`, `attachments`, `peer`, `regional`, `drg_style`; `summarise()` reports DRGs and attachments.
 
@@ -328,4 +347,8 @@ With `drg_style: box` the DRG icon and the boxes sit inside a dashed `DRG: <name
 
 ## 14. Open questions
 
-None blocking. Two choices recorded for transparency: (1) VCN columns stay side by side (Oracle stacks VCNs vertically in slide 31; connectors from the DRG column to the second and later VCNs route around the first through the region gutters - acceptable for <= 3 VCNs, which is the documented split threshold); (2) the OSN panel keeps the Rose look per D6 with a provenance note rather than adopting the slide-19 Neutral 3 spec.
+None blocking. Three choices recorded for transparency:
+
+1. VCN columns stay side by side (Oracle stacks VCNs vertically in slide 31; connectors from the DRG column to the second and later VCNs route around the first through the region gutters - acceptable for <= 3 VCNs, which is the documented split threshold).
+2. The OSN panel keeps the Rose look per D6 with a provenance note rather than adopting the slide-19 Neutral 3 spec.
+3. **The on-premises panel stays nested inside the region box.** Oracle's toolkit draws On-Premises, Internet and 3rd Party Cloud as sibling *location* boxes outside the OCI Region, with the Site-to-Site VPN / FastConnect label in the gap between the two locations. This spec places the on-premises panel at region-local `HUB_X = 15` (section 7.2), so it is a child of the region container and the `Site-to-Site VPN` / `IPSec VPN` label sits inside the region box. The deviation is deliberate for v1.3.0: the column order (on-premises -> DRG -> VCNs -> OSN) is what makes the DRG column, the attachment boxes and the hub-side gutter (`_hub_gutter`) line up in one coordinate space, and a sibling location box would have to be laid out and sized against the region after `fit_to_children(region)`. Sibling location boxes - an On-Premises / 3rd Party Cloud panel outside the region, together with the Internet location box already listed in section 13 - are a roadmap item, not a defect of this release; `add_group()` already supports the `onprem`, `third_party_cloud` and `internet` group types they need.

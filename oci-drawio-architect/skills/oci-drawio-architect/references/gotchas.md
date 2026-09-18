@@ -274,3 +274,17 @@ Oracle Services Network panel) and `gateways[].peer` (LPG pairing). `build_diagr
 renders, but prints `WARNING: legacy model: ...` to stderr and to
 `builder.layout_info["warnings"]`. Move the DRG into `drgs[]` (and add explicit attachments)
 to silence the warning and get the region-level placement of #19.
+
+## 21. Long display names in a fixed-width box: wrap hints, then grow the box
+
+`whiteSpace=wrap` only breaks a label where the renderer sees a break opportunity - a space or
+a hyphen. A parser-style display name such as `drg_attachment_vcn_prod_shared_services_hub` is
+one unbreakable word, so a 100 px attachment box renders it as a single ~240 px line straight
+across the DRG glyph, the connector and the VCN border. Two steps fix it, both applied by the
+recipe: `drawio_builder.wrap_hints()` inserts a zero-width space (`WRAP_HINT`) after `_`, `-`
+and `.` so the text can wrap (dots between digits are left alone, so CIDRs keep their line),
+and the box height grows to `label_lines(text, w - 8, 11) * LABEL_LINE_H + 8` (minimum
+`ATT_H`), with the stack pitch following the real heights. `label_lines()` measures a wrap
+hint as a space, so the estimate matches what the browser does. Validator rule 5 now covers
+`add_box()` cells too: any wrapped label taller than its box is a `WARNING: label '...' needs
+~N lines ...` - a caption still has to exceed three lines to be reported, a box does not.

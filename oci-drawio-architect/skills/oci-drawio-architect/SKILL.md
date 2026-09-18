@@ -12,13 +12,13 @@ Diagrams are data: a MODEL dict laid out by `scripts/oci_layout.py` on top of `s
 1. Title (`add_title`): bold `<Subject> - Architecture`, italic second line `<Region label> (<region>) - Compartment: <compartment>`; with a tenancy the first line is `<tenancy> - <Subject> - Architecture`. Optional logo top-right (148x39).
 2. Region: solid Neutral-3 border, Neutral-1 fill, label = bare region id (`us-ashburn-1`) bold, top-left. Only title, notes and legend sit outside it.
 3. On-premises panel (`onprem`): left of the DRG column, 180 px wide, vertically centred on the VCN stack, label `On-premises` (or the hub network name), one icon per row (pitch 200): CPE, FastConnect virtual circuit, RPC peer. Never the DRG.
-4. DRG column (`drgs[]`): region-level DRG icon between the on-premises panel and the VCN columns, centred on the VCN stack; one rounded attachment box (100x44, Ivy border) per attachment beside it - VCN attachments on the side facing the VCNs, IPSec / FastConnect / RPC attachments on the side facing the on-premises panel - each linked to its target by an arrowhead-less `attachment` connector (`Site-to-Site VPN`, `FastConnect`, `Remote Peering`). `drg_style` `icon` (default) or `box` (dashed `DRG: <name>` group); `auto` picks `box` above 4 attachments.
+4. DRG column (`drgs[]`): region-level DRG icon between the on-premises panel and the VCN columns, centred on the VCN stack; one rounded attachment box (100 px wide, 44 px tall minimum, Ivy border; taller when the display name needs more lines, which also widens the stacking pitch) per attachment beside it - VCN attachments on the side facing the VCNs, IPSec / FastConnect / RPC attachments on the side facing the on-premises panel - each linked to its target by an arrowhead-less `attachment` connector (`Site-to-Site VPN`, `FastConnect`, `Remote Peering`). `drg_style` `icon` (default) or `box` (dashed `DRG: <name>` group); `auto` picks `box` above 4 attachments.
 5. VCN: label `VCN: <name> (<cidr>)`, Sienna dashed 2 px. Several VCNs are columns left to right, 45 px apart.
 6. Subnet: label `<name> (<cidr>)` (+ ` - public` when `public`), Sienna dashed 1 px. Row 1 holds lb -> app -> compute -> mgmt -> other subnets in traffic order, 2 icon columns each, wrapping to a new row past 1000 px; data-tier subnets are stretched under the rows (up to 5 columns).
 7. Icon order inside a subnet: primary resource (LB, VM, DB) -> attached resources (block volume, certificate, WAF) -> NSG last.
 8. Caption convention: `Role\nidentifier\nsize` - at most 3 lines of about 16 characters at 11 px, centred under a 75x95 slot; every glyph is fitted to 70x70 so all icons look the same size.
 9. OCI Services panel (`services`): inside the VCN, right of row 1, only for VCN-resident services without a subnet. Regional services (Logging, Logging Analytics, Monitoring / Alarms, Notifications, Events, Connector Hub, IAM / Identity, Vault / KMS, Certificates, Object Storage, OCIR, AI services, Data Safe, Data Science, Analytics, Streaming, Queue, APM, DevOps, DNS zones, WAF policies; full list `oci_topology.REGIONAL_ICON_KEYS`) go to ONE region-level `Oracle Services Network` panel right of the VCN columns, height matched to the tallest VCN, fed by an `attachment` connector from the Service Gateway. `"regional": false` on an item keeps it in the VCN panel.
-10. Gateways straddle the VCN border (glyph centre on the line, caption with an opaque region-fill background, parent = region): IGW and NAT on the bottom border (pitch 180), the Service Gateway on the right border facing the OSN panel, LPGs on the border facing their peer VCN (`peer` = peer LPG address or VCN name; unknown peer -> bottom) linked by a `Local Peering` attachment connector.
+10. Gateways straddle the VCN border (glyph centre on the line, caption with an opaque region-fill background, parent = region): IGW and NAT on the bottom border (pitch 180), the Service Gateway on the right border facing the OSN panel, LPGs on the border facing their peer VCN (`peer` = peer LPG address or VCN name, set on both sides of a pair; unknown peer -> bottom) linked by a `Local Peering` attachment connector.
 11. Edges: `data` solid Bark open arrow (label = protocol / port); `control` dashed Bark open arrow (management / administrative); `association` dotted, no arrowhead (dependency, configuration relationship); `attachment` thin solid, no arrowhead (structural: DRG attachments, LPG pairs, SGW -> OSN); `analytics` solid Sienna and `datalake` dashed purple remain. Routed automatically through the gutters.
 12. No legend by default (`legend=True` only on request or with 3+ edge kinds); `notes` text appears right of the title only when set.
 13. Page = content + 20 px margin rounded up to 10 (`fit_page`), white background, `default` style profile, Oracle Sans font stack.
@@ -82,8 +82,8 @@ Order of operations: migrate legacy model -> classify topology -> title -> regio
 | `PANEL_GAP` / `GW_PITCH` | 40 / 180 | `SUBNET_EXTRA_W` / `SUBNET_BOTTOM_PAD` | 50 / 28 |
 | `HUB_X` / `HUB_W` / `HUB_GAP` | 15 / 180 / 45 | `HUB_ICON_Y0` / `HUB_PITCH` | 70 / 200 |
 | `VCN_COLUMN_GAP` | 45 | `MAX_ROW_W` | 1000 |
-| `DRG_GAP` | 45 | `ATT_W` x `ATT_H` | 100 x 44 |
-| `ATT_GAP` / `ATT_PITCH` | 15 / 56 | `DRG_CLUSTER_GAP` | 40 |
+| `DRG_GAP` | 45 | `ATT_W` x `ATT_H` (min) | 100 x 44 |
+| `ATT_GAP` / `ATT_PITCH` / `ATT_VGAP` | 15 / 56 / 12 | `DRG_CLUSTER_GAP` | 40 |
 | `OSN_GAP` | 45 | `GW_STRADDLE` / `GW_SIDE_DX` | 40 / 38 |
 | `SIDE_GW_Y0` / `LEFT_GW_Y0` / `SIDE_GW_PITCH` | 50 / 50 / 160 | `VCN_BOTTOM_PAD_GW` / `VCN_SIDE_PAD` / `SIDE_INSET` | 60 / 60 / 40 |
 | `VCN_COLUMN_GAP_GW` | 110 | | |
@@ -101,9 +101,9 @@ Order of operations: migrate legacy model -> classify topology -> title -> regio
 | `oci_core_internet_gateway` / `_nat_gateway` / `_service_gateway` | `internet_gateway` / `nat_gateway` / `service_gateway` | `gateways` |
 | `oci_core_drg` | `drg` | `drgs[]` |
 | `oci_core_drg_attachment` | (box) | `drgs[].attachments` (`type: vcn`) |
-| `oci_core_local_peering_gateway` | `rpg` | `gateways` (`type: lpg`, `peer`) |
+| `oci_core_local_peering_gateway` | `rpg` | `gateways` (`type: lpg`, `peer` on both sides of the pair) |
 | `oci_core_remote_peering_connection` | `rpg` | `hub.items` + `drgs[].attachments` (`type: rpc`) |
-| `oci_core_cpe` / `oci_core_ipsec` / `oci_core_virtual_circuit` | `cpe` / (attachment `ipsec`) / `cpe` | `hub.items` / `drgs[].attachments` / `hub.items` + attachment `virtual_circuit` |
+| `oci_core_cpe` / `oci_core_ipsec` / `oci_core_virtual_circuit` | `cpe` / (attachment `ipsec`) / `cpe` | `hub.items` / `drgs[].attachments` / `hub.items` + attachment `virtual_circuit` (private circuits only: a `PUBLIC` circuit peers with Oracle public services and gets no DRG attachment) |
 | `oci_network_firewall_network_firewall` | `firewall` | subnet (hub VCN) |
 | `oci_core_network_security_group` | `nsg` | last item of its subnet |
 | `oci_core_security_list` / `oci_core_route_table` | `security_list` / `route_table` | omit (or `add_table` on page 2) |

@@ -298,6 +298,10 @@ rounded=1;arcSize=12;whiteSpace=wrap;html=1;strokeWidth=1;strokeColor=#759C6C;fi
 Rounded white box, Ivy (`#759C6C`, OCI logical component border) 1px stroke, centred 11px Bark
 label. Provenance: project, modelled on the A-Team hub-and-spoke reference figure's attachment
 markers; used for DRG attachment boxes (`drg_style="box"` groups them under a `drg` container).
+`add_box()` does not size itself: pass a height that fits the label
+(`label_lines(text, w - 8, 11) * LABEL_LINE_H + 8`, what the recipe's `ATT_H` minimum grows
+to) and run long identifiers through `wrap_hints()` first, or the validator reports
+`WARNING: label '...' needs ~N lines ... but its box is Hpx tall`.
 
 ### `add_legend()` default entries
 ```
