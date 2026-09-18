@@ -1,6 +1,6 @@
-# Oracle draw.io Template Styles (v1.2.0)
+# Oracle draw.io Template Styles (v1.3.0)
 
-Every value below was read back from `scripts/drawio_builder.py` 1.2.0 with Python
+Every value below was read back from `scripts/drawio_builder.py` 1.3.0 with Python
 probes (`DrawioBuilder(style_profile=...)._group_styles[...]`, a test diagram written
 to `/tmp` and inspected). `{FONT_STACK}` in a style string stands for the value of
 `drawio_builder.FONT_STACK` (see section 8); everything else is literal.
@@ -30,7 +30,7 @@ Facts established from the official sources that drive the profiles:
 - **Connectors** are 1pt, `rounded=0`, `endArrow=open` (also on the dashed user-interaction lines), label ~10.5px (8pt) with a **white label box**.
 - **Oracle Sans for all diagram text**, with Arial/Calibri as sanctioned fallbacks. Georgia titles (v1.0/v1.1) were a project convention and are no longer emitted.
 - The v1.1.0 `services` style (`#9E9892`, 2px dashed) was byte-for-byte Oracle's **"Metro Area or Realm"** grouping; it is now exposed as `group_type="metro_or_realm"`. `services` now uses the charcoal 1px dashed style that matches both the sample's services panel and the official logical **"Other Group"** stroke (there is no official "services panel").
-- **Oracle Services Network** per the PPTX: Rose 1pt dashed, Air fill, centred label (the v24.2 `.drawio` uses a different Sienna 2pt variant; the plugin follows the PPTX).
+- **Oracle Services Network**: Rose 1px dashed border, Air fill (PPTX slide 19 "Optional" grouping spec; slide 19's Oracle Services Network spec is Neutral 3 2pt dashed with a Bark label and the v24.2 `.drawio` uses Sienna 2px dashed). The recipe labels it "Oracle Services Network" left-aligned (`label_position="left"`).
 - Rounded-corner radii differ between the two official sources: **AD arcSize 8 / FD arcSize 7** in `OCI Library.xml`, **1 / 3** in the physical templates. `official` uses the library values, `default`/`v1.0` the template values.
 
 ## 2. Palette (`drawio_builder.COLORS`)
@@ -89,93 +89,100 @@ identical in all three.
 
 `GROUP_TYPES` = `region, tenancy, availability_domain, fault_domain, compartment, vcn,
 subnet, services, oracle_services_network, onprem, hub, other, metro_or_realm,
-third_party_cloud, internet` (`hub` is a deprecated alias whose style is identical to
+third_party_cloud, internet, drg` (`hub` is a deprecated alias whose style is identical to
 `onprem`). Strings below are the **default** profile.
 
 Every style starts with `whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;`
-and ends with `container=1;collapsible=0;expand=0;recursiveResize=0;`:
+and ends with `ociGroup=<type>;container=1;collapsible=0;expand=0;recursiveResize=0;`:
 
 - `container=1` marks the cell as a container for draw.io (drop target, group behaviour) **and** is the token `check_overlaps.py` / `validate_file()` use to classify a rectangle as a container. Nesting itself is done by the `parent` attribute.
 - `collapsible=0;expand=0` hide the collapse/expand handle.
 - `recursiveResize=0` stops draw.io from scaling the children when a user resizes the container in the editor, so a resized subnet does not distort its icons.
+- `ociGroup=<type>` (immediately before `container=1`) records the `group_type` on the cell itself, so `validate_file()` (and any hand-written `.drawio`) can recognise VCNs, subnets, DRGs etc. without relying on style-heuristics.
 
 ### region
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=1;strokeWidth=1;fillColor=#F5F4F2;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=left;spacingLeft=5;spacingRight=5;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=1;strokeWidth=1;fillColor=#F5F4F2;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=left;spacingLeft=5;spacingRight=5;ociGroup=region;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
 Solid Neutral 3 border, Neutral 1 fill, barely rounded, bold left-aligned Bark label (official physical template).
 
 ### onprem (and deprecated alias `hub`)
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=1;strokeWidth=1;fillColor=#F5F4F2;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=left;spacingLeft=5;spacingRight=5;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=1;strokeWidth=1;fillColor=#F5F4F2;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=left;spacingLeft=5;spacingRight=5;ociGroup=onprem;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
 Identical to `region`: on-premises / hub networks are location groups in the toolkit.
 
 ### third_party_cloud, internet
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=1;strokeWidth=1;fillColor=#F5F4F2;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=center;spacingRight=5;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=1;strokeWidth=1;fillColor=#F5F4F2;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=center;spacingRight=5;ociGroup=<third_party_cloud|internet>;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
-The location style with a centred label (logical-swatch alignment) for external clouds and the public internet.
+The location style with a centred label (logical-swatch alignment) for external clouds and the public internet; identical except for the `ociGroup` token.
 
 ### tenancy
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#9E9892;fontSize=12;fontStyle=0;fontColor=#312D2A;align=left;spacingLeft=5;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#9E9892;fontSize=12;fontStyle=0;fontColor=#312D2A;align=left;spacingLeft=5;ociGroup=tenancy;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
 Dashed Neutral 3 border, no fill, square corners, **regular-weight** (`fontStyle=0`) label - the only non-bold container, per the PPTX and the library.
 
 ### availability_domain
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=1;strokeWidth=1;fillColor=#DFDCD8;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=center;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=1;strokeWidth=1;fillColor=#DFDCD8;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=center;ociGroup=availability_domain;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
 Solid Neutral 3 border, Neutral 2 fill, centred label. `arcSize` is the profile's `arc_ad`.
 
 ### fault_domain
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=3;strokeWidth=1;fillColor=#FCFBFA;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=center;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=3;strokeWidth=1;fillColor=#FCFBFA;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=center;ociGroup=fault_domain;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
 Solid Neutral 3 border, Air fill, centred label; nests inside `availability_domain`. `arcSize` is `arc_fd`.
 
 ### compartment
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;dashPattern=1 1;fillColor=none;strokeColor=#AE562C;fontSize=12;fontStyle=1;fontColor=#312D2A;align=left;spacingLeft=5;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;dashPattern=1 1;fillColor=none;strokeColor=#AE562C;fontSize=12;fontStyle=1;fontColor=#312D2A;align=left;spacingLeft=5;ociGroup=compartment;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
 Dotted (`dashPattern=1 1`) Sienna border, no fill, **left-aligned Bark** label (official). Unlike VCN/subnet the label does not take the border colour.
 
 ### vcn
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=2;dashed=1;fillColor=none;strokeColor=#AE562C;labelBackgroundColor=none;fontSize=12;fontStyle=1;fontColor=#AE562C;align=left;spacingLeft=5;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=2;dashed=1;fillColor=none;strokeColor=#AE562C;labelBackgroundColor=none;fontSize=12;fontStyle=1;fontColor=#AE562C;align=left;spacingLeft=5;ociGroup=vcn;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
 2px dashed Sienna border, Sienna label. `fontSize` is `vcn_font` (13 in `v1.0`).
 
 ### subnet
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#AE562C;fontSize=11;fontStyle=1;fontColor=#AE562C;align=left;spacingLeft=5;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#AE562C;fontSize=11;fontStyle=1;fontColor=#AE562C;align=left;spacingLeft=5;ociGroup=subnet;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
 Like `vcn` with a 1px border. `fontSize` is `subnet_font` (11 sample / 12 official).
 
 ### services
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#312D2A;fontSize=11;fontStyle=1;fontColor=#312D2A;align=left;spacingLeft=5;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#312D2A;fontSize=11;fontStyle=1;fontColor=#312D2A;align=left;spacingLeft=5;ociGroup=services;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
 Charcoal (Bark) 1px dashed panel for "OCI Services" - the sample's panel and the official "Other Group" stroke. Fixed 11px label in every profile. **Changed in v1.2.0**: the old grey 2px look is now `metro_or_realm`.
 
 ### metro_or_realm
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=2;dashed=1;fillColor=none;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=left;spacingLeft=5;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=2;dashed=1;fillColor=none;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=left;spacingLeft=5;ociGroup=metro_or_realm;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
 Oracle's "Metro Area or Realm" grouping: 2px dashed Neutral 3, no fill (official). This is what v1.1.0 emitted for `services`.
 
 ### oracle_services_network
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;fillColor=#FCFBFA;strokeColor=#A36472;fontSize=12;fontStyle=1;fontColor=#A36472;align=center;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;fillColor=#FCFBFA;strokeColor=#A36472;fontSize=12;fontStyle=1;fontColor=#A36472;align=center;ociGroup=oracle_services_network;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
 Rose 1px dashed border, Air fill, centred Rose label (official PPTX spec).
 
 ### other
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=10;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#312D2A;fontSize=11;fontStyle=1;fontColor=#312D2A;align=center;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=10;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#312D2A;fontSize=11;fontStyle=1;fontColor=#312D2A;align=center;ociGroup=other;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
 The official logical "Other Group": rounded (`arcSize=10`) Bark 1px dashed, centred 11px label. Also the frame `add_legend()` draws (with `label_position="left"`).
+
+### drg
+```
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=10;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#312D2A;fontSize=11;fontStyle=1;fontColor=#312D2A;align=left;spacingLeft=5;ociGroup=drg;container=1;collapsible=0;expand=0;recursiveResize=0;
+```
+The official logical "Other Group" look with a left-aligned label; project convention for `DRG: <name>` boxes (`drg_style="box"`).
 
 ### How `official` and `v1.0` differ from `default`
 
@@ -205,6 +212,7 @@ Image cell style (identical in all profiles):
 ```
 shape=image;verticalLabelPosition=bottom;verticalAlign=top;imageAspect=1;aspect=fixed;image=data:image/svg+xml,<url-encoded svg>;
 ```
+The DRG glyph (`resolve_icon_path(icon_key).stem == "networking_dynamic_routing_gateway_drg"`) gets an extra `ociRole=drg;` token right before `image=`, so `check_overlaps.py` can flag a DRG box inside a VCN even in a hand-written file without relying on the caption text.
 
 Default sizing (no `w`/`h`): the glyph is scaled by `min(70/native_w, 70/native_h)` and
 centred inside the 70x70 glyph box at the top of the slot:
@@ -226,6 +234,7 @@ text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=top;white
 - width `LABEL_W=105` (explicit-size icons: `max(105, cell_w + 30)`), centred on the slot: `x = slot_x - 15` for the default slot; `y = slot_y + 95 + 2`.
 - height `max(45, lines*14 + 4)`: 45px for 1-2 lines, 46 for 3, 60 for 4, 74 for 5 (the caption grows ~14px per extra line). `lines` is estimated by `label_lines()` at about 16 characters per line.
 - overrides: `label_w`, `label_h`, `font_size`; `key="lb"` names the cells `lb` and `lb-label`.
+- `label_fill=<hex>` replaces the caption's `fillColor=none` with an opaque colour (e.g. `COLORS["region_fill"]`) so the text stays legible where a border-straddling gateway's caption crosses a dashed VCN or region line.
 - `footprint(cid)` returns slot + caption; `place_icons()` returns the bounding box of all footprints so `fit_to_children()` includes captions.
 
 ## 6. Edge styles (`add_edge()`)
@@ -269,6 +278,42 @@ Semantics: **solid** = data flow / network path; **dashed** = management, API or
 interaction. Connectors are Bark by default; `edge_accent` / `edge_purple` are project
 extensions. `parent` defaults to the common ancestor of source and target.
 
+### `EDGE_KIND_STYLES` (`add_edge(kind=...)`)
+
+| kind | dashed | dashPattern | endArrow | strokeWidth | Meaning |
+|------|--------|-------------|----------|-------------|---------|
+| `data` | no | profile default | `open` | profile default (1.5 / 1) | traffic: protocol / port |
+| `control` | yes | profile default | `open` | profile default (1.5 / 1) | management / administrative |
+| `association` | yes | `1 3` | `none` | profile default (1.5 / 1) | dependency, configuration relationship |
+| `attachment` | no | profile default | `none` | 1 (fixed) | structural: DRG attachments, LPG pairs, SGW -> OSN |
+
+`analytics` and `datalake` are not `kind`s (no `EDGE_KIND_STYLES` entry); they are still reached
+via `color=COLORS["edge_accent"]` (solid Sienna) / `color=COLORS["edge_purple"], dashed=True`
+(dashed purple). Explicit `arrow=` always overrides the `kind`'s arrowhead.
+
+### `add_box()` (`BOX_STYLE`)
+```
+rounded=1;arcSize=12;whiteSpace=wrap;html=1;strokeWidth=1;strokeColor=#759C6C;fillColor=#FFFFFF;fontFamily={FONT_STACK};fontSize=11;fontColor=#312D2A;align=center;verticalAlign=middle;
+```
+Rounded white box, Ivy (`#759C6C`, OCI logical component border) 1px stroke, centred 11px Bark
+label. Provenance: project, modelled on the A-Team hub-and-spoke reference figure's attachment
+markers; used for DRG attachment boxes (`drg_style="box"` groups them under a `drg` container).
+
+### `add_legend()` default entries
+```
+("edge", "data", "Data flow (protocol / port)")
+("edge", "control", "Management / administrative traffic")
+("edge", "association", "Association / dependency")
+("edge", "attachment", "Attachment (structural)")
+("group", "region", "Region / on-premises")
+("group", "vcn", "VCN")
+("group", "subnet", "Subnet")
+("group", "oracle_services_network", "Oracle Services Network")
+```
+Legacy edge-style aliases still accepted by `entries=`: `solid` -> `data`, `dashed` -> `control`,
+`accent` -> `data` (Sienna swatch), `purple` -> `control` (purple swatch), `dotted` -> `association`,
+`thin` -> `attachment`.
+
 ## 7. Text, title, table and legend styles
 
 `add_text()` (raw HTML by default, `font_size=10`, `align="left"`, `vertical_align="middle"`):
@@ -296,13 +341,15 @@ cells add `background:#F5F4F2;`, an optional bold title `<div>` sits above the t
 `add_legend()` - an `other` container 230px wide, `30 + 22*entries + 8` high, with
 `label_position="left"`:
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=10;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#312D2A;fontSize=11;fontStyle=1;fontColor=#312D2A;align=left;container=1;collapsible=0;expand=0;recursiveResize=0;spacingLeft=5;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=10;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#312D2A;fontSize=11;fontStyle=1;fontColor=#312D2A;align=left;ociGroup=other;container=1;collapsible=0;expand=0;recursiveResize=0;spacingLeft=5;
 ```
-Each row is either a 40px sample edge (the non-orthogonal base style with the profile's
-solid/dashed fragment, drawn between `sourcePoint`/`targetPoint`) or a 36x16 swatch carrying
-the group style minus `container/collapsible/expand/recursiveResize`, followed by a 10px
-`add_text`. Default entries: solid "Data flow / network path", dashed "Management, API or
-service traffic", swatches for region, vcn, subnet, services.
+Each row is either a 40px sample edge (`EDGE_KIND_STYLES[kind]`'s dashed/arrow/width/dashPattern
+applied to the non-orthogonal base style, drawn between `sourcePoint`/`targetPoint`) or a 36x16
+swatch carrying the group style minus `container/collapsible/expand/recursiveResize`, followed
+by a 10px `add_text`. Default entries (see section 6): `data` "Data flow (protocol / port)",
+`control` "Management / administrative traffic", `association` "Association / dependency",
+`attachment` "Attachment (structural)", swatches for `region`, `vcn`, `subnet`,
+`oracle_services_network`.
 
 ## 8. Fonts
 

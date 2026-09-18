@@ -1,7 +1,7 @@
-# draw.io + OCI Icons - Gotchas & Workarounds (v1.2.0)
+# draw.io + OCI Icons - Gotchas & Workarounds (v1.3.0)
 
-18 verified pitfalls. Every claim below was reproduced against `scripts/drawio_builder.py`
-1.2.0 (error texts are quoted verbatim). Items marked *migration* matter when updating a
+20 verified pitfalls. Every claim below was reproduced against `scripts/drawio_builder.py`
+1.3.0 (error texts are quoted verbatim). Items marked *migration* matter when updating a
 v1.0/v1.1 script.
 
 ## 1. URL-encode SVG data URIs - `;base64,` breaks the style tokenizer
@@ -84,7 +84,7 @@ and exits 1.
 
 ## 5. Cross-container edges: parent = common ancestor, waypoints in the parent's space
 
-When source and target sit in different containers (DRG in the hub, LB in a subnet) the
+When source and target sit in different containers (DRG at region level, LB in a subnet) the
 edge's `parent` must be an ancestor of both; `add_edge()` picks the **common ancestor**
 automatically when `parent` is omitted (e.g. the region for hub -> subnet, the VCN for
 subnet -> subnet, the subnet for two icons in the same subnet). Waypoints - yours or the
@@ -169,6 +169,17 @@ not because of a hard limit.
 - `WARNING: caption '...' needs ~5 lines at 11px in 105px but its box is 45px tall` - long
   captions are warnings, and only when the box is too short: `add_icon()` grows the caption
   by ~14px per line, so this fires for fixed `label_h=` captions and hand-written files.
+- `ERROR: DRG 'hub-drg' is inside VCN 'Spoke-VCN-D'` - a DRG icon (recognised by `ociRole=drg`
+  or a caption matching `DRG`) whose box lies inside a `vcn` container; DRGs are region-level
+  only (gotcha #19).
+- `ERROR: 'sn-app' [abs [...]] lies inside 'Spoke-VCN-B' [abs [...]] but is not one of its
+  children` - a leaf or container overlaps a VCN/subnet it is not parented to (the foreign-
+  containment check, distinct from the sibling `OVERLAP` above).
+
+Two tolerances keep border-straddling shapes from false-positiving: `STRADDLE_TOL = 4.0` px
+lets an icon whose glyph centre sits exactly on its parent's border (gateways on the VCN edge)
+still count as "inside"; `FOREIGN_TOL = ICON_W / 4 = 18.75` px lets a leaf overlap a VCN/subnet
+it does not belong to by a hair before the foreign-containment `ERROR` above fires.
 
 `check_overlaps()` returns only the blocking messages (OVERLAP/ERROR); `validate()` returns
 errors followed by warnings. Derive row positions from computed bottoms
@@ -240,3 +251,26 @@ to `add_icon()` switches to explicit sizing: the image cell sits at exactly `(x,
 slot *is* the cell, and the caption widens to `max(105, w + 30)` - so grids built with
 `COL_W=130` may collide (see #11). Only do this for deliberately wide shapes; otherwise let
 the slot geometry do the work.
+
+## 19. DRG placement: region level only, attachments beside it
+
+A DRG icon parented inside a VCN box asserts that the DRG belongs to that VCN, which is wrong
+- a DRG is a region-level resource that several VCNs attach to. The recipe (`oci_layout.py`)
+therefore always parents the DRG icon (and, in `drg_style="box"`, the group around it) to the
+region, never to a `vcn` container, and represents each attachment as its own box beside it.
+The validator enforces this even in hand-written files: it recognises a DRG by the
+`ociRole=drg;` style token (set automatically on the `networking_dynamic_routing_gateway_drg`
+glyph) or, failing that, a caption containing the word `DRG` or `Dynamic Routing`
+(case-insensitive), and raises `ERROR: DRG '...' is inside VCN '...'` (see #11) when that
+icon's box lies inside any `vcn` container. Fix: `parent=region_id`, not `parent=vcn_id`.
+
+## 20. *migration* - schema 2: `drgs[]`, `regional`, `peer`; legacy models are migrated with warnings
+
+Schema 1 modelled a DRG as a `hub.items` entry (or a `"drg"` gateway) with no attachment
+detail; schema 2 moves it to `model.drgs[]` with a typed `attachments[]` list (`vcn`, `ipsec`,
+`virtual_circuit`, `rpc`, `loopback`), adds `services[].regional` (VCN-resident vs. the
+Oracle Services Network panel) and `gateways[].peer` (LPG pairing). `build_diagram()` /
+`write_diagram()` call `oci_topology.migrate_legacy_model()` first, so a schema-1 model still
+renders, but prints `WARNING: legacy model: ...` to stderr and to
+`builder.layout_info["warnings"]`. Move the DRG into `drgs[]` (and add explicit attachments)
+to silence the warning and get the region-level placement of #19.

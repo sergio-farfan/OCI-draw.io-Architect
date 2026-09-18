@@ -2,7 +2,18 @@
 
 Generate production-quality draw.io diagrams for Oracle Cloud Infrastructure architectures using Python, embedded SVG icons, and Oracle template styles.
 
-## What's new in 1.2.0
+## What's new in 1.3.0
+
+Topology-aware placement: the layout recipe now follows how the team's diagram guidelines and Oracle's own reference architectures draw connectivity infrastructure (full list in [CHANGELOG.md](CHANGELOG.md)):
+
+- **The DRG is a region-level element.** It sits between the on-premises panel and the VCN columns with one rounded attachment box per attachment beside it (VCN, IPSec, FastConnect, remote peering); `drg_style` `icon` (default) or `box` groups the boxes under a dashed `DRG: <name>` frame.
+- **Gateways sit on the VCN border**, not in a bottom row: IGW and NAT straddle the bottom, the Service Gateway the right border facing the services panel, LPGs the border facing their peer VCN.
+- **Regional services get their own Oracle Services Network panel**, right of the VCN columns, fed by the Service Gateway; VCN-resident services without a subnet stay in the VCN.
+- **Four connector kinds and a legend**: `data` (solid, open arrow), `control` (dashed, open arrow), `association` (dotted, no arrowhead) and `attachment` (thin solid, no arrowhead), plus `add_legend()` rows for all four.
+- **New validator rules** catch a DRG box parented inside a VCN and any leaf sitting inside a VCN/subnet it does not belong to, with tolerances so border-straddling gateways still pass.
+- **Model schema 2** (`drgs[]` with typed attachments, `services[].regional`, `gateways[].peer`) with automatic migration and a warning for schema-1 models.
+
+## What was new in 1.2.0
 
 Driven by the full code review and output-quality audit of 1.1.0. Highlights (full list in [CHANGELOG.md](CHANGELOG.md)):
 
@@ -19,7 +30,7 @@ Driven by the full code review and output-quality audit of 1.1.0. Highlights (fu
 ## Installation
 
 ```bash
-tar -xzf oci-drawio-architect-v1.2.0.tar.gz
+tar -xzf oci-drawio-architect-v1.3.0.tar.gz
 ./oci-drawio-architect/install.sh
 ```
 
@@ -36,7 +47,7 @@ Then, inside Claude Code: `/plugin marketplace add ~/.claude/plugins/marketplace
 Interactive workflow:
 1. **Settings** - load `.claude/oci-drawio-architect.local.md` or auto-detect (tenancy, region, VCNs, compartments, logos)
 2. **Input** - Terraform path, VCN name, or free-form description
-3. **Model** - normalize the input into the diagram model (VCNs, subnets, services, gateways, hub, edges)
+3. **Model** - normalize the input into the diagram model (VCNs, subnets, services with their regional / VCN-resident class, gateways, DRGs with attachments, on-premises side, edges)
 4. **Generate** - write `generate_<name>_drawio.py` on top of `DrawioBuilder` / `oci_layout`
 5. **Run** - execute it to produce the `.drawio`
 6. **Validate + render** - `scripts/check_overlaps.py` must exit 0; `scripts/render_drawio.py` exports a PNG when draw.io desktop is installed
@@ -107,10 +118,10 @@ All types share one model schema (see `scripts/oci_layout.py`) and the page is s
 
 | Type | Best For | Layout |
 |------|----------|--------|
-| Single-VCN Topology | Application stacks (single VCN) | Region > optional hub panel + one VCN column: subnet rows in traffic order, data tier, OCI Services panel, gateway row |
-| Hub-and-Spoke Network | Network overview with DRG | Hub / on-prem panel left, spoke VCN columns, DRG edges through the gutters |
+| Single-VCN Topology | Application stacks (single VCN) | Region > optional on-premises panel + DRG column + one VCN column: subnet rows in traffic order, data tier, gateways on the VCN border, Oracle Services Network panel |
+| Hub-and-Spoke Network | Network overview with DRG | On-premises panel (CPE), region-level DRG with one attachment box per spoke, spoke VCN columns, OSN panel; attachment connectors without arrowheads |
 | Service Inventory | Compartment-level resource view | Compartment / services panels via `place_icons()` + `fit_to_children()`, rule lists via `add_table()` |
-| Multi-VCN Overview | VCN interconnections via DRG | Several VCN columns, regional OCI Services panel, auto-parented cross-VCN edges |
+| Multi-VCN Overview | VCN interconnections via DRG | Several VCN columns, LPG pairs on facing borders, OSN panel, cross-VCN edges |
 
 ## Prerequisites
 
@@ -126,7 +137,7 @@ OCI SVG icons (159 files, 12 categories, about 1.4 MB) are bundled in `icons/`; 
 ```
 oci-drawio-architect/
 ├── .claude-plugin/
-│   └── plugin.json                    # Plugin manifest (version 1.2.0)
+│   └── plugin.json                    # Plugin manifest (version 1.3.0)
 ├── commands/
 │   └── drawio-architect.md            # /drawio-architect slash command
 ├── skills/
@@ -138,24 +149,28 @@ oci-drawio-architect/
 │           ├── gotchas.md             # Known pitfalls and workarounds
 │           └── templates/             # physical_example_*.svg composites (docs only)
 ├── scripts/
-│   ├── drawio_builder.py              # DrawioBuilder (v1.2.0): icons, styles, routing, validation
+│   ├── drawio_builder.py              # DrawioBuilder (v1.3.0): icons, styles, routing, validation
 │   ├── oci_layout.py                  # Model dict/JSON -> .drawio layout recipe (CLI + API)
 │   ├── check_overlaps.py              # Validator CLI: --strict, --quiet; exit 0/1/2
 │   ├── render_drawio.py               # PNG/SVG/PDF export via draw.io desktop; exit 0/1/3
 │   ├── detect_settings.py             # Settings probe: Terraform, ~/.oci/config, OCI CLI
 │   ├── parse_terraform.py             # HCL dir / plan JSON / state JSON -> model (--vcn, --out)
 │   ├── query_tenancy.py               # Experimental: live tenancy -> model via OCI CLI
+│   ├── oci_topology.py                # Topology classification, legacy-model migration, DRG-style choice
 │   ├── build_icon_catalog.py          # Regenerate / --check references/icon-catalog.md
 │   └── smoke_test.sh                  # Demo -> overlap gate -> PNG (if draw.io present)
 ├── examples/
-│   ├── generate_demo_diagram.py       # Two-page demo: every container type, edge modes, legend, table
+│   ├── generate_demo_diagram.py       # Three-page demo: every container type, both DRG styles, edge kinds, legend, table
 │   ├── generate_reference_layout.py   # Rebuilds the reference sample from a MODEL dict
 │   └── make_screenshots.py            # Regenerates the README screenshots from the reference example
 ├── tests/
 │   ├── test_builder.py                # DrawioBuilder: styles, routing, validation, helpers
+│   ├── test_oci_layout.py             # Layout recipe: DRG column, border gateways, OSN panel, edge kinds
+│   ├── test_oci_topology.py           # classify_topology, migrate_legacy_model, is_regional, choose_drg_style
 │   ├── test_detect_settings.py        # Settings probe over tests/fixtures/detect/*
 │   ├── test_icons.py                  # SVG integrity, viewBox, aliases, ICON_MAP
 │   └── fixtures/
+│       └── terraform/hub_spoke/       # Two VCNs, one DRG with four attachments, an LPG pair, a regional log group
 ├── icons/                             # 159 OCI SVG icons in 12 category dirs + NOTICE
 ├── LICENSE                            # MIT (plugin code)
 ├── install.sh                         # Installer / --uninstall
@@ -172,9 +187,9 @@ scripts/smoke_test.sh                          # demo -> check_overlaps -> PNG (
 python3 examples/generate_reference_layout.py out.drawio --render
 python3 scripts/parse_terraform.py <tf_dir> [--vcn NAME] [--plan-json F | --state-json F] --out model.json
 python3 scripts/check_overlaps.py --strict out.drawio
-python3 scripts/oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo f] [--render png]
+python3 scripts/oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo f] [--render png] [--drg-style auto|icon|box]
 python3 scripts/build_icon_catalog.py --check   # after touching icons/
-./pack.sh [/output/dir]                         # oci-drawio-architect-v1.2.0.tar.gz + SHA256
+./pack.sh [/output/dir]                         # oci-drawio-architect-v1.3.0.tar.gz + SHA256
 ```
 
 Generated files weigh roughly 7-9 KB per embedded icon (demo: 8 icons, ~77 KB; reference sample: 31 icons, ~280 KB).

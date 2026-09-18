@@ -2,7 +2,7 @@
 
 **A Claude Code plugin that generates production-quality draw.io architecture diagrams for Oracle Cloud Infrastructure (OCI) — from Terraform configurations or free-form descriptions.**
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/tag/v1.2.0)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/tag/v1.3.0)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
@@ -11,7 +11,7 @@
 ---
 
 **Author:** Sergio Farfan · sergio.farfan@gmail.com
-**Version:** 1.2.0 · [Download archive](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.2.0/oci-drawio-architect-v1.2.0.tar.gz) · [Changelog](oci-drawio-architect/CHANGELOG.md)
+**Version:** 1.3.0 · [Download archive](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.3.0/oci-drawio-architect-v1.3.0.tar.gz) · [Changelog](oci-drawio-architect/CHANGELOG.md)
 
 ---
 
@@ -37,11 +37,11 @@ Type `/drawio-architect` in any Claude Code session and the plugin generates a p
 
 ![OCI Architecture Diagram in draw.io](screenshots/diagram-overview.png)
 
-*Single-VCN topology with Hub Network, subnets, OCI service icons, and Oracle color palette — rendered by draw.io from the reference layout example (`oci-drawio-architect/examples/generate_reference_layout.py`); every connector is routed automatically.*
+*Single-VCN topology with the on-premises panel, region-level DRG and its VCN attachment, subnets, gateways on the VCN border and the Oracle Services Network panel — rendered by draw.io from the reference layout example (`oci-drawio-architect/examples/generate_reference_layout.py`); every connector is routed automatically.*
 
 ![Diagram detail — data subnet](screenshots/diagram-detail.png)
 
-*Detail view: data subnet with ADB, Redis, OAC, PAC, AIDP, GenAI, Vault, NSG and the gateway row — uniform icon sizes, captions under every icon, connectors kept in the gutters.*
+*Detail view: data subnet, NAT gateway on the bottom border and Service Gateway on the right border — uniform icon sizes, captions under every icon, connectors kept in the gutters.*
 
 ---
 
@@ -53,7 +53,7 @@ The plugin accepts three input types: a Terraform directory (HCL or `terraform s
 
 1. **Settings** — on first run, auto-detects tenancy, region, VCNs, compartments and logos from Terraform configs, `~/.oci/config` and the OCI CLI, and saves them to `.claude/oci-drawio-architect.local.md`
 2. **Input** — asks what to diagram: Terraform directory path, VCN name, or free-form description
-3. **Model** — normalizes the input into the diagram model (VCNs, subnets, services, gateways, hub, DRG topology, edges)
+3. **Model** — normalizes the input into the diagram model (VCNs, subnets, services with their regional / VCN-resident class, gateways, DRGs with attachments, on-premises side, edges)
 4. **Generate** — writes a `generate_<name>_drawio.py` script that imports the plugin's `DrawioBuilder` / `oci_layout` directly from the plugin (`sys.path.insert(0, "<plugin>/scripts")`) — nothing is copied into your project
 5. **Run** — executes the script to produce the `.drawio` file
 6. **Validate + render** — gates on `scripts/check_overlaps.py` (exit 0 required) and, when draw.io desktop is available, exports a PNG with `scripts/render_drawio.py` for a visual check
@@ -65,14 +65,25 @@ All four types share the same model and layout recipe; the page is sized from th
 
 | Type | Best For | Layout |
 |------|----------|--------|
-| Single-VCN Topology | Application stacks | Region > optional hub panel + one VCN column: subnet rows in traffic order (LB → app → compute → mgmt), data tier, OCI Services panel, gateway row |
-| Hub-and-Spoke Network | Network overview with DRG | Hub / on-premises panel on the left (CPE, DRG, firewall), spoke VCN columns to the right, DRG edges routed through the gutters |
+| Single-VCN Topology | Application stacks | Region > optional on-premises panel + DRG column + one VCN column: subnet rows in traffic order, data tier, gateways on the VCN border, Oracle Services Network panel |
+| Hub-and-Spoke Network | Network overview with DRG | On-premises panel (CPE), region-level DRG with one attachment box per spoke, spoke VCN columns, OSN panel; attachment connectors without arrowheads |
 | Service Inventory | Compartment-level resource view | Compartment and services panels built with `place_icons()` / `fit_to_children()`; NSG or route rules as `add_table()` pages |
-| Multi-VCN Overview | VCN interconnections via DRG | Several VCN columns, a regional OCI Services panel, cross-VCN edges parented to the common ancestor automatically |
+| Multi-VCN Overview | VCN interconnections via DRG | Several VCN columns, LPG pairs on facing borders, OSN panel, cross-VCN edges |
 
 ---
 
-## What's new in 1.2.0
+## What's new in 1.3.0
+
+Topology-aware placement: the layout recipe now follows how the team's diagram guidelines and Oracle's own reference architectures draw connectivity infrastructure (see the [changelog](oci-drawio-architect/CHANGELOG.md) for the complete list):
+
+- **The DRG is a region-level element.** It sits between the on-premises panel and the VCN columns with one rounded attachment box per attachment beside it (VCN, IPSec, FastConnect, remote peering); `drg_style` `icon` (default) or `box` groups the boxes under a dashed `DRG: <name>` frame.
+- **Gateways sit on the VCN border**, not in a bottom row: IGW and NAT straddle the bottom, the Service Gateway the right border facing the services panel, LPGs the border facing their peer VCN.
+- **Regional services get their own Oracle Services Network panel**, right of the VCN columns, fed by the Service Gateway; VCN-resident services without a subnet stay in the VCN.
+- **Four connector kinds and a legend**: `data` (solid, open arrow), `control` (dashed, open arrow), `association` (dotted, no arrowhead) and `attachment` (thin solid, no arrowhead), plus `add_legend()` rows for all four.
+- **New validator rules** catch a DRG box parented inside a VCN and any leaf sitting inside a VCN/subnet it does not belong to, with tolerances so border-straddling gateways still pass.
+- **Model schema 2** (`drgs[]` with typed attachments, `services[].regional`, `gateways[].peer`) with automatic migration and a warning for schema-1 models.
+
+## What was new in 1.2.0
 
 Driven by a full code review and output-quality audit of 1.1.0 (see the [changelog](oci-drawio-architect/CHANGELOG.md) for the complete list):
 
@@ -105,7 +116,7 @@ The plugin bundles 159 OCI SVG icons (12 categories, about 1.4 MB); no external 
 ### One-line install
 
 ```bash
-curl -fsSL https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.2.0/oci-drawio-architect-v1.2.0.tar.gz | tar -xz && ./oci-drawio-architect/install.sh
+curl -fsSL https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.3.0/oci-drawio-architect-v1.3.0.tar.gz | tar -xz && ./oci-drawio-architect/install.sh
 ```
 
 This will:
