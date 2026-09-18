@@ -101,6 +101,17 @@ class ClassifyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ot.choose_drg_style("fancy", 1)
 
+    def test_has_onprem_follows_the_cpe_ipsec_virtual_circuit_rule(self):
+        """A34: spec 7.1 - only a CPE, an IPSec endpoint or a virtual circuit is on-premises."""
+        hub = {"name": "Hub", "items": [{"icon": "firewall", "label": "Corp FW", "address": "fw"}]}
+        t = ot.classify_topology({"vcns": [vcn("a"), vcn("b")], "hub": hub,
+                                  "drgs": [drg(attachments=[{"vcn": "a"}, {"vcn": "b"}])]})
+        self.assertEqual((t["kind"], t["has_onprem"]), ("hub_spoke", False))
+        hub["items"].append({"icon": "cpe", "label": "CPE", "address": "cpe"})
+        t = ot.classify_topology({"vcns": [vcn("a"), vcn("b")], "hub": hub,
+                                  "drgs": [drg(attachments=[{"vcn": "a"}, {"vcn": "b"}])]})
+        self.assertEqual((t["kind"], t["has_onprem"]), ("hybrid", True))
+
 
 class RegionalTests(unittest.TestCase):
     def test_table_and_override(self):
@@ -232,6 +243,18 @@ class MigrationTests(unittest.TestCase):
                 {"name": "spoke", "address": "spoke", "label": "DRG\nspoke", "attachments": []}]
         self.assertIs(ot._match_drg(drgs, {"label": "spoke"}), drgs[1])
         self.assertIsNone(ot._match_drg(drgs, {"label": "neither"}))
+
+    def test_two_identical_hub_drg_items_are_indexed_by_identity(self):
+        """A35: items.index() matched by value, so the second DRG reused the first one's neighbours."""
+        item = {"icon": "drg", "label": "DRG", "address": "drg"}
+        model = {"vcns": [vcn("a")], "hub": {"name": "Hub", "link_label": "IPSec VPN", "items": [
+            dict(item), {"icon": "cpe", "label": "CPE", "address": "cpe"},
+            dict(item), {"icon": "cpe", "label": "CPE 2", "address": "cpe2"}]}}
+        m, warnings = ot.migrate_legacy_model(model)
+        self.assertEqual([d["address"] for d in m["drgs"]], ["drg", "drg"])
+        pairs = {(e["source"], e["target"]) for e in m["edges"]}
+        self.assertIn(("cpe", "drg"), pairs)
+        self.assertIn(("cpe2", "drg"), pairs)
 
 
 if __name__ == "__main__":

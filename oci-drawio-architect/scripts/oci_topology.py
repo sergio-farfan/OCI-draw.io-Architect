@@ -19,6 +19,12 @@ from typing import Dict, List, Optional, Tuple
 TOPOLOGY_KINDS = ("single_vcn", "multi_vcn", "vcn_with_drg", "hub_spoke", "hybrid")
 ATTACHMENT_TYPES = ("vcn", "ipsec", "virtual_circuit", "rpc", "loopback")
 ONPREM_ATTACHMENT_TYPES = ("ipsec", "virtual_circuit")
+# Spec 7.1: a hub is on-premises when it holds a CPE, an IPSec endpoint or a
+# virtual circuit. Any other item (an RPC peer, a firewall, a generic box) does
+# not by itself make the topology hybrid.
+ONPREM_ITEM_TYPES = frozenset({"oci_core_cpe", "oci_core_ipsec", "oci_core_virtual_circuit",
+                               "cpe", "ipsec", "virtual_circuit"})
+ONPREM_ICON_KEYS = frozenset({"cpe", "customer_premises_equipment", "fastconnect", "vpn"})
 ATTACHMENT_LINK_LABELS: Dict[str, str] = {"vcn": "", "ipsec": "Site-to-Site VPN",
                                           "virtual_circuit": "FastConnect", "rpc": "Remote Peering",
                                           "loopback": ""}
@@ -103,6 +109,12 @@ def is_rpc_item(item: dict) -> bool:
     return str(item.get("type") or "") == RPC_TYPE or str(item.get("icon") or "") in RPC_ICON_KEYS
 
 
+def is_onprem_item(item: dict) -> bool:
+    """Spec 7.1: a CPE, an IPSec endpoint or a virtual circuit in the hub panel."""
+    return (str(item.get("type") or "").lower() in ONPREM_ITEM_TYPES
+            or str(item.get("icon") or "").lower() in ONPREM_ICON_KEYS)
+
+
 def is_regional(item: dict) -> bool:
     flag = item.get("regional")
     if isinstance(flag, bool):
@@ -159,7 +171,7 @@ def migrate_legacy_model(model: dict) -> Tuple[dict, List[str]]:
             existing = {(str(e.get("source")), str(e.get("target"))) for e in (m.get("edges") or [])}
             for it in moved:
                 addr = str(it.get("address") or "drg")
-                idx = items.index(it)
+                idx = next(i for i, x in enumerate(items) if x is it)
                 for nb in (items[idx - 1] if idx > 0 else None, items[idx + 1] if idx + 1 < len(items) else None):
                     if nb is None or is_drg_item(nb) or link is None or not nb.get("address"):
                         continue
@@ -227,7 +239,8 @@ def classify_topology(model: dict) -> dict:
     hub_items = list((model.get("hub") or {}).get("items") or [])
     rpc_items = [it for it in hub_items if is_rpc_item(it)]
     has_rpc = bool(rpc_items) or any(attachment_type(a) == "rpc" for a in atts)
-    has_onprem = len(rpc_items) < len(hub_items) or any(attachment_type(a) in ONPREM_ATTACHMENT_TYPES for a in atts)
+    has_onprem = (any(is_onprem_item(it) for it in hub_items)
+                  or any(attachment_type(a) in ONPREM_ATTACHMENT_TYPES for a in atts))
     has_lpg = any(str(g.get("type") or "").lower() == "lpg" for v in vcns for g in (v.get("gateways") or []))
     n_vcn_att = sum(1 for a in atts if attachment_type(a) == "vcn")
     if not drgs:
@@ -245,7 +258,8 @@ def classify_topology(model: dict) -> dict:
 __all__ = [
     "TOPOLOGY_KINDS", "ATTACHMENT_TYPES", "ONPREM_ATTACHMENT_TYPES", "ATTACHMENT_LINK_LABELS",
     "DRG_ICON_KEYS", "RPC_ICON_KEYS", "DRG_BOX_THRESHOLD", "REGIONAL_ICON_KEYS",
+    "ONPREM_ITEM_TYPES", "ONPREM_ICON_KEYS",
     "first_line", "attachment_type", "attachment_label", "attachment_link_label",
-    "is_drg_item", "is_rpc_item", "is_regional", "choose_drg_style",
+    "is_drg_item", "is_rpc_item", "is_onprem_item", "is_regional", "choose_drg_style",
     "migrate_legacy_model", "classify_topology",
 ]
