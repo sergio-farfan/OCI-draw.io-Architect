@@ -176,6 +176,7 @@ Delete the file to re-detect.
 | `ERROR: '...' lies inside '...' but is not one of its children` | The icon's box overlaps a VCN / subnet it does not belong to; move it or make it a child of that container |
 | `WARNING: legacy model: ...` | The model still uses schema 1; move the DRG into `drgs[]` |
 | `WARNING: caption ... needs ~N lines` | Rewrite the caption as Role / identifier / size, 3 lines max |
+| `WARNING: title ... its badges leave` | Widen the subnet (the recipe does this automatically) or shorten the subnet name / CIDR label |
 | `WARNING: edge ... is estimated to cross` | Check the PNG; reorder items or change tier; custom: `route="direct"` or `label_pos` |
 | `WARNING: content ... exceeds the page` | Call `fit_page()` last (custom layouts) |
 | checker exit 2 | File missing, not XML, or the checker was moved away from `drawio_builder.py` |

@@ -89,7 +89,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from drawio_builder import (  # noqa: E402
-    BADGE_GAP, BADGE_SIZE, CHAR_W_RATIO, COL_W, COLORS, GAP, ICON_FOOTPRINT_H, ICON_W,
+    BADGE_GAP, BADGE_RESERVE, BADGE_SIZE, CHAR_W_RATIO, COL_W, COLORS, GAP, ICON_FOOTPRINT_H, ICON_W,
     LABEL_FONT_SIZE, LABEL_LINE_H, PAD, ROW1_Y, ROW_H, DrawioBuilder, edge_label_extent,
     escape_label, label_lines, render, wrap_hints,
 )
@@ -110,6 +110,7 @@ V_GAP = 40            # between subnet rows
 PANEL_GAP = 40        # between row 1 and the services panel
 GW_PITCH = 180        # gateway icon pitch
 SUBNET_EXTRA_W = 50   # 2 cols -> 310 wide like the sample
+SUBNET_TITLE_PAD = 10  # spacingLeft + right inset of a container title
 SUBNET_BOTTOM_PAD = 28
 HUB_X = 15
 HUB_W = 180
@@ -405,10 +406,19 @@ def _icon_items(d: DrawioBuilder, parent, items, cols, x0=PAD, y0=ROW1_Y, reg=No
     return ids, bbox
 
 
+def _subnet_min_w(subnet: dict, d: DrawioBuilder) -> int:
+    """Minimum subnet width so a badged subnet's title does not run under its corner badges."""
+    if not (_badge_refs(subnet.get("route_table")) or _badge_refs(subnet.get("security_lists"))):
+        return 0
+    tw, _ = edge_label_extent(_subnet_label(subnet), d.profile["subnet_font"])
+    return int(math.ceil((tw + SUBNET_TITLE_PAD + BADGE_RESERVE) / 10.0) * 10)
+
+
 def _layout_subnet(d: DrawioBuilder, vcn_id, subnet, x, y, max_cols, reg, min_w=None):
     items = subnet.get("items") or []
     rows, cols = _grid(len(items), max_cols)
-    prov_w = cols * COL_W + SUBNET_EXTRA_W
+    min_w = max(min_w or 0, _subnet_min_w(subnet, d))
+    prov_w = max(cols * COL_W + SUBNET_EXTRA_W, min_w)
     prov_h = ROW1_Y + (rows - 1) * ROW_H + ICON_FOOTPRINT_H + SUBNET_BOTTOM_PAD
     sid = d.add_group(_subnet_label(subnet), x, y, prov_w, prov_h, parent=vcn_id,
                       group_type="subnet",
@@ -450,7 +460,7 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
     for s in row_subnets:
         n = len(s.get("items") or [])
         _, cols = _grid(n, 2)
-        est_w = cols * COL_W + SUBNET_EXTRA_W
+        est_w = max(cols * COL_W + SUBNET_EXTRA_W, _subnet_min_w(s, d))
         if cur and cur_w + H_GAP + est_w > max_row_w:
             rows.append(cur)
             cur, cur_w = [], 0.0

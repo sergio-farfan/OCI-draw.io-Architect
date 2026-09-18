@@ -1534,6 +1534,16 @@ class TestBadges(TempDirMixin, unittest.TestCase):
         self.assertIn(rt, obstacles)
         self.assertNotIn(nsg, obstacles)
 
+    def test_badged_container_title_running_under_the_badges_warns(self):
+        """A27: a container title must fit in the width its corner badges leave."""
+        d = DrawioBuilder()
+        s = d.add_group("sn-shared-services-management (10.0.240.0/24)", 0, 0, 180, 200,
+                        group_type="subnet", key="sn")
+        d.add_badge("route_table", 180, 0, parent=s, host=s, key="sn-rt")
+        msgs = [m for m in d.validate() if "its badges leave" in m]
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertIn("sn-shared-services-management", msgs[0])
+
     def test_add_badge_rejects_bad_input_and_constants_are_exported(self):
         d = DrawioBuilder()
         with self.assertRaises(ValueError):

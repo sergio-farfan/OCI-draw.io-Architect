@@ -1079,6 +1079,10 @@ def _is_drg_icon(entry: dict) -> bool:
 # security lists) or laid over the top-right of a host icon's slot (NSG).
 BADGE_SIZE = 22
 BADGE_GAP = 4
+# Title width a badged container must leave free. Conservative: the badges
+# straddle the border, so the real intrusion is only
+# BADGE_SIZE / 2 + BADGE_SIZE + BADGE_GAP = 37 px.
+BADGE_RESERVE = 2 * (BADGE_SIZE + BADGE_GAP)
 
 
 def _badge_host(entry: dict):
@@ -1288,6 +1292,26 @@ def validate_registry(registry: dict, page: str = "", strict: bool = False,
         warnings.append(
             f"{prefix}WARNING: {what} '{_label_of(e)}' needs ~{n} lines at {_fmt_num(fs)}px in "
             f"{_fmt_num(e['w'])}px but its box is {_fmt_num(e['h'])}px tall")
+
+    # 5b. a badged container's own title: the corner badges eat BADGE_RESERVE of
+    #     the title line, and a container title is not a cell rule 5 can see.
+    badged_hosts = {_badge_host(e) for e in registry.values() if _badge_host(e)}
+    for cid in containers:
+        e = registry[cid]
+        if cid not in badged_hosts or not e.get("value"):
+            continue
+        tok = _style_tokens(e["style"])
+        try:
+            fs = float(tok.get("fontSize", LABEL_FONT_SIZE))
+        except ValueError:
+            fs = LABEL_FONT_SIZE
+        avail = e["w"] - BADGE_RESERVE - 4
+        n = label_lines(e["value"], avail, fs) if avail > 0 else 99
+        if n <= 1:
+            continue
+        warnings.append(
+            f"{prefix}WARNING: title '{_label_of(e)}' needs ~{n} lines at {_fmt_num(fs)}px in "
+            f"the {_fmt_num(max(avail, 0))}px its badges leave")
 
     # 6. estimated edge crossings through icons/captions that are not endpoints
     obstacles = {cid: boxes[cid] for cid in leaves if boxes[cid].w > 0}
@@ -2757,7 +2781,7 @@ __all__ = [
     "DrawioBuilder", "COLORS", "FONT_STACK", "ICON_MAP", "ICON_ALIASES", "GROUP_TYPES",
     "STYLE_PROFILES", "EDGE_KIND_STYLES", "ICON_W", "ICON_H", "GLYPH_W", "GLYPH_H", "LABEL_GAP", "LABEL_W",
     "LABEL_H", "LABEL_FONT_SIZE", "LABEL_LINE_H", "WRAP_HINT", "CHAR_W_RATIO", "ICON_FOOTPRINT_H",
-    "BADGE_SIZE", "BADGE_GAP",
+    "BADGE_SIZE", "BADGE_GAP", "BADGE_RESERVE",
     "PAD", "ROW1_Y",
     "COL_W", "ROW_H", "GAP", "BOX_STYLE", "DRG_ICON_STEM",
     "STRADDLE_TOL", "FOREIGN_TOL",

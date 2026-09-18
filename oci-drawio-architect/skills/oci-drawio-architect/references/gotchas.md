@@ -170,6 +170,11 @@ not because of a hard limit.
 - `WARNING: caption '...' needs ~5 lines at 11px in 105px but its box is 45px tall` - long
   captions are warnings, and only when the box is too short: `add_icon()` grows the caption
   by ~14px per line, so this fires for fixed `label_h=` captions and hand-written files.
+- `WARNING: title 'sn-shared-services-management (10.0.240.0/24)' needs ~2 lines at 11px in
+  the 124px its badges leave` - a container carrying corner badges (route table / security
+  list) whose own title runs under them: the badges reserve `BADGE_RESERVE = 52` px of the
+  title line. The recipe widens a badged subnet automatically (`_subnet_min_w`); a
+  hand-written container has to be widened or its title shortened.
 - `ERROR: DRG 'hub-drg' is inside VCN 'Spoke-VCN-D'` - a DRG icon (recognised by `ociRole=drg`
   or a caption matching `DRG`) whose box lies inside a `vcn` container; DRGs are region-level
   only (gotcha #19).
