@@ -229,7 +229,7 @@ class OsnPanelTests(unittest.TestCase):
             services=[svc("logging", "log"), svc("buckets", "bkt"), svc("file_storage", "fss")])]}
         d = quiet(ol.build_diagram, model)
         vx, vy, vw, vh = d.abs_bbox("vcn-a")
-        ox, oy, ow, oh = d.abs_bbox("osn")
+        ox, oy, _ow, oh = d.abs_bbox("osn")
         self.assertEqual(d._cells["osn"]["group_type"], "oracle_services_network")
         self.assertEqual(d._cells["osn"]["parent"], "region")
         self.assertEqual(style_of(d, "osn")["align"], "left")
@@ -289,6 +289,18 @@ class OsnPanelTests(unittest.TestCase):
         d = quiet(ol.build_diagram, MODEL_GW)
         self.assertNotIn("osn", d._cells)
         self.assertEqual([e for e in d._cells.values() if e["kind"] == "edge" and e.get("target") == "osn"], [])
+
+    def test_regional_services_from_two_vcns_share_one_osn_panel(self):
+        """Spec D6: ONE Oracle Services Network panel, whichever VCN declared the service."""
+        model = {"subject": "two", "region": "us-ashburn-1", "vcns": [
+            simple_vcn("a", services=[svc("logging", "log-a")]),
+            simple_vcn("b", services=[svc("buckets", "bkt-b")])]}
+        d = quiet(ol.build_diagram, model)
+        self.assertEqual(d._cells["log-a"]["parent"], "osn")
+        self.assertEqual(d._cells["bkt-b"]["parent"], "osn")
+        panels = [c for c, e in d._cells.items() if e.get("group_type") == "oracle_services_network"]
+        self.assertEqual(panels, ["osn"])
+        self.assertEqual(errors_of(d), [])
 
 
 HYBRID = {
