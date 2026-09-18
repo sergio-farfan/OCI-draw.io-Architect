@@ -378,8 +378,8 @@ def _add_nsg_badge(d: DrawioBuilder, parent, cid: str, item: dict, reg=None):
     nsgs = _badge_refs(item.get("nsgs"))
     if not nsgs:
         return None
-    sx, sy, _sw, _sh = d.bbox(cid)
-    bid = d.add_badge("nsg", sx + ICON_W - BADGE_SIZE / 2, sy + BADGE_SIZE / 2, parent=parent, host=cid,
+    sx, sy, sw, _sh = d.bbox(cid)
+    bid = d.add_badge("nsg", sx + sw - BADGE_SIZE / 2, sy + BADGE_SIZE / 2, parent=parent, host=cid,
                       key=f"{cid}-nsg", tooltip=_badge_tooltip("NSG", nsgs),
                       metadata={"nsgs": ", ".join(r["name"] for r in nsgs)})
     _register_badge(reg, nsgs, bid)

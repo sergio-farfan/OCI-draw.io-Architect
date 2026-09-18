@@ -755,5 +755,16 @@ class DemoBadgeTests(unittest.TestCase):
             self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
 
 
+class NsgBadgeTests(unittest.TestCase):
+    def test_nsg_badge_follows_a_custom_host_slot_width(self):
+        """A01: the shield sits on the host slot's top-right corner, whatever its width."""
+        d = db.DrawioBuilder()
+        r = d.add_group("R", 0, 0, 600, 400, group_type="region", key="region")
+        cid = d.add_icon("App", "vm", 40, 60, parent=r, w=120, key="app")
+        bid = ol._add_nsg_badge(d, r, cid, {"nsgs": ["nsg-app"]})
+        sx, sy, sw, _sh = d.bbox(cid)
+        bx, by, bw, bh = d.bbox(bid)
+        self.assertEqual((bx + bw / 2, by + bh / 2), (sx + sw - db.BADGE_SIZE / 2, sy + db.BADGE_SIZE / 2))
+
 if __name__ == "__main__":
     unittest.main()
