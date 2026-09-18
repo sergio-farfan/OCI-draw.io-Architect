@@ -163,6 +163,8 @@ LABEL_W = 105
 LABEL_H = 45
 LABEL_FONT_SIZE = 11
 LABEL_LINE_H = 14
+WRAP_HINT = "​"   # zero-width space: a break opportunity inside a long identifier
+CHAR_W_RATIO = 0.56    # estimated mean glyph width as a fraction of the font size
 ICON_FOOTPRINT_H = ICON_H + LABEL_GAP + LABEL_H   # 142
 MAX_LABEL_LINES = 3
 
@@ -809,17 +811,48 @@ def edge_label_extent(text, font_size: float = 12.0) -> tuple:
     """
     lines = _BR_RE.split(str(text or ""))
     longest = max((len(_html.unescape(_TAG_RE.sub("", l))) for l in lines), default=1)
-    return (longest * font_size * 0.56 + 8, max(1, len(lines)) * (font_size + 3))
+    return (longest * font_size * CHAR_W_RATIO + 8, max(1, len(lines)) * (font_size + 3))
+
+
+def wrap_hints(text) -> str:
+    """Add zero-width break opportunities after ``_``, ``-`` and ``.``.
+
+    Parser-style display names (``drg_attachment_vcn_prod_shared_services_hub``)
+    have no break point a browser honours, so a fixed-width box renders them as
+    one long line straight across whatever sits beside it. A zero-width space
+    costs no pixels and lets such a label wrap inside its own box; the plain
+    text stays in the model, the cell registry and the tooltips. Dots between
+    digits (CIDRs, IP addresses, shape names) keep their line.
+    """
+    text = str(text or "")
+    out = []
+    for i, ch in enumerate(text):
+        out.append(ch)
+        if ch not in "_-.":
+            continue
+        nxt = text[i + 1] if i + 1 < len(text) else ""
+        if not nxt or nxt.isspace() or nxt in "_-." or nxt == WRAP_HINT:
+            continue
+        if ch == "." and i and text[i - 1].isdigit() and nxt.isdigit():
+            continue
+        out.append(WRAP_HINT)
+    return "".join(out)
 
 
 def label_lines(text: str, width_px: float, font_size: float = LABEL_FONT_SIZE) -> int:
-    """Estimate how many lines an HTML/plain label needs at a given width."""
+    """Estimate how many lines an HTML/plain label needs at a given width.
+
+    A zero-width space (``WRAP_HINT``) is a break opportunity with no width, so
+    it is measured as a plain space: labels that carry wrap hints (long
+    identifiers with no natural break points) are estimated the way a browser
+    lays them out, not as one unbreakable word.
+    """
     if not text:
         return 1
-    cw = max(1.0, font_size * 0.56)
+    cw = max(1.0, font_size * CHAR_W_RATIO)
     max_chars = max(1, int(width_px / cw))
     total = 0
-    for para in _BR_RE.split(text):
+    for para in _BR_RE.split(text.replace(WRAP_HINT, " ")):
         para = _html.unescape(_TAG_RE.sub("", para)).strip()
         if not para:
             total += 1
@@ -1207,22 +1240,27 @@ def validate_registry(registry: dict, page: str = "", strict: bool = False,
                     f"{prefix}ERROR: '{_label_of(registry[a])}' [abs {ba!r}] overlaps "
                     f"'{_label_of(registry[b])}' [abs {bb!r}]")
 
-    # 5. long captions
+    # 5. labels that do not fit their cell: icon captions (over max_label_lines)
+    #    and labelled boxes / markers (kind "other") of any line count, whose
+    #    text is clipped or spills over the border when the box is too short.
     for cid, e in registry.items():
-        if kinds.get(cid) != "text":
+        kind = kinds.get(cid)
+        if kind not in ("text", "other"):
             continue
         tok = _style_tokens(e["style"])
-        if tok.get("whiteSpace") != "wrap" or e["w"] <= 0:
+        if tok.get("whiteSpace") != "wrap" or e["w"] <= 0 or not e["value"]:
             continue
         try:
             fs = float(tok.get("fontSize", LABEL_FONT_SIZE))
         except ValueError:
             fs = LABEL_FONT_SIZE
         n = label_lines(e["value"], e["w"] - 4, fs)
-        if n > max_label_lines and e["h"] < n * fs * 1.25:
-            warnings.append(
-                f"{prefix}WARNING: caption '{_label_of(e)}' needs ~{n} lines at {_fmt_num(fs)}px in "
-                f"{_fmt_num(e['w'])}px but its box is {_fmt_num(e['h'])}px tall")
+        if e["h"] >= n * fs * 1.25 or (kind == "text" and n <= max_label_lines):
+            continue
+        what = "caption" if kind == "text" else "label"
+        warnings.append(
+            f"{prefix}WARNING: {what} '{_label_of(e)}' needs ~{n} lines at {_fmt_num(fs)}px in "
+            f"{_fmt_num(e['w'])}px but its box is {_fmt_num(e['h'])}px tall")
 
     # 6. estimated edge crossings through icons/captions that are not endpoints
     obstacles = {cid: boxes[cid] for cid in leaves if boxes[cid].w > 0}
@@ -2646,10 +2684,12 @@ def _is_ancestor_builder(cells, anc, cid) -> bool:
 __all__ = [
     "DrawioBuilder", "COLORS", "FONT_STACK", "ICON_MAP", "ICON_ALIASES", "GROUP_TYPES",
     "STYLE_PROFILES", "EDGE_KIND_STYLES", "ICON_W", "ICON_H", "GLYPH_W", "GLYPH_H", "LABEL_GAP", "LABEL_W",
-    "LABEL_H", "ICON_FOOTPRINT_H", "PAD", "ROW1_Y", "COL_W", "ROW_H", "GAP", "BOX_STYLE", "DRG_ICON_STEM",
+    "LABEL_H", "LABEL_FONT_SIZE", "LABEL_LINE_H", "WRAP_HINT", "CHAR_W_RATIO", "ICON_FOOTPRINT_H",
+    "PAD", "ROW1_Y",
+    "COL_W", "ROW_H", "GAP", "BOX_STYLE", "DRG_ICON_STEM",
     "STRADDLE_TOL", "FOREIGN_TOL",
     "add_icons_to_map", "set_icon_dir", "resolve_icon_path", "escape_label", "label_lines",
-    "edge_label_extent",
+    "wrap_hints", "edge_label_extent",
     "build_cell_registry", "find_container_overlaps", "validate_registry", "validate_file",
     "find_drawio_binary", "render", "OCI_SVG_DIR",
 ]

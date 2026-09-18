@@ -8,10 +8,10 @@ generated diagram has the same structure as the reference sample:
     Region (solid, label top-left)
       +-- On-premises panel (left, vertically centred on the VCN stack): CPE, virtual circuit, RPC peer
       +-- DRG column (region level, centred on the VCN stack): DRG icon with one attachment
-      |   box per attachment beside it (VCN attachments facing the VCNs, on-prem / RPC
-      |   attachments facing the on-premises panel, whose gutter widens to fit the
-      |   Site-to-Site VPN / FastConnect / Remote Peering label on the line); drg_style
-      |   "box" wraps them in a dashed group
+      |   box per attachment beside it, each grown to hold its own display name (VCN
+      |   attachments facing the VCNs, on-prem / RPC attachments facing the on-premises
+      |   panel, whose gutter widens to fit the Site-to-Site VPN / FastConnect /
+      |   Remote Peering label on the line); drg_style "box" wraps them in a dashed group
       +-- VCN column(s)
       |     +-- row 1: lb -> app -> compute -> mgmt subnets (traffic order, 2 icon columns)
       |     +-- OCI Services panel (right of row 1) only for VCN-resident services without a subnet
@@ -80,8 +80,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from drawio_builder import (  # noqa: E402
-    COL_W, COLORS, GAP, ICON_FOOTPRINT_H, ICON_W, PAD, ROW1_Y, ROW_H, DrawioBuilder,
-    edge_label_extent, escape_label, render,
+    CHAR_W_RATIO, COL_W, COLORS, GAP, ICON_FOOTPRINT_H, ICON_W, LABEL_FONT_SIZE, LABEL_LINE_H, PAD,
+    ROW1_Y, ROW_H, DrawioBuilder, edge_label_extent, escape_label, label_lines, render, wrap_hints,
 )
 from oci_topology import (  # noqa: E402
     attachment_label, attachment_link_label, attachment_type, choose_drg_style, classify_topology,
@@ -132,9 +132,12 @@ OSN_LABEL = "Oracle Services Network"
 
 DRG_GAP = 45                     # DRG column -> first VCN column
 ATT_W = 100                      # attachment box
-ATT_H = 44
+ATT_H = 44                       # minimum height (a two-line label); grown to fit longer text
 ATT_GAP = 15                     # DRG slot -> attachment boxes
-ATT_PITCH = 56                   # vertical pitch of stacked attachment boxes
+ATT_PITCH = 56                   # vertical pitch of stacked ATT_H boxes
+ATT_VGAP = ATT_PITCH - ATT_H     # gap between stacked attachment boxes, whatever their height
+ATT_FONT_SIZE = LABEL_FONT_SIZE  # BOX_STYLE font size (label_lines / height estimate)
+ATT_TEXT_PAD = 4                 # text inset each side of an attachment box
 DRG_CLUSTER_GAP = 40             # between stacked DRG clusters
 
 # model edge kind -> builder kind (+ colour). analytics / datalake are project
@@ -455,6 +458,33 @@ def _drg_style_for(drg: dict, requested: str) -> str:
     return choose_drg_style(requested, len(_drg_attachments(drg)))
 
 
+def _att_box_text(att: dict) -> str:
+    """Box text of one attachment: zero-width break hints only when a word cannot fit.
+
+    A parser-style display name is one unbreakable word (underscores are no
+    break opportunity), so without hints it renders as a single line straight
+    across the DRG glyph and the VCN border. Labels whose words already fit the
+    box are left exactly as the model spells them.
+    """
+    text = attachment_label(att)
+    max_chars = max(1, int((ATT_W - 2 * ATT_TEXT_PAD) / (ATT_FONT_SIZE * CHAR_W_RATIO)))
+    if any(len(word) > max_chars for line in text.split("\n") for word in line.split()):
+        return wrap_hints(text)
+    return text
+
+
+def _att_box_h(text: str) -> int:
+    """Height an attachment box needs for its text (ATT_H when it fits in two lines)."""
+    lines = label_lines(text, ATT_W - 2 * ATT_TEXT_PAD, ATT_FONT_SIZE)
+    return max(ATT_H, lines * LABEL_LINE_H + 2 * ATT_TEXT_PAD)
+
+
+def _att_block(atts: list) -> tuple:
+    """(heights, block height) of a stack of attachment boxes, ATT_VGAP apart."""
+    heights = [_att_box_h(_att_box_text(a)) for a in atts]
+    return heights, (sum(heights) + ATT_VGAP * (len(heights) - 1) if heights else 0)
+
+
 def _drg_cluster_geometry(drg: dict, style: str) -> dict:
     """Sizes of one DRG cluster: icon slot + attachment boxes (right = VCNs, left = on-prem / RPC)."""
     atts = _drg_attachments(drg)
@@ -462,16 +492,18 @@ def _drg_cluster_geometry(drg: dict, style: str) -> dict:
     left = [a for a in atts if attachment_type(a) != "vcn"]
     left_w = ATT_W + ATT_GAP if left else 0
     right_w = ATT_W + ATT_GAP if right else 0
-    n = max(len(left), len(right))
-    boxes_h = n * ATT_PITCH - (ATT_PITCH - ATT_H) if n else 0
-    body_h = max(ICON_FOOTPRINT_H, boxes_h)
+    left_h, left_block = _att_block(left)
+    right_h, right_block = _att_block(right)
+    body_h = max(ICON_FOOTPRINT_H, left_block, right_block)
     inner_w = left_w + ICON_W + right_w
     cluster_h = body_h
     if style == "box":
         inner_w += 2 * PAD
         cluster_h += ROW1_Y + PAD
     return {"left": left, "right": right, "left_w": left_w, "inner_w": inner_w,
-            "body_h": body_h, "cluster_h": cluster_h}
+            "body_h": body_h, "cluster_h": cluster_h,
+            "heights": {"left": left_h, "right": right_h},
+            "blocks": {"left": left_block, "right": right_block}}
 
 
 def _hub_gutter(drgs, edge_font: float) -> int:
@@ -530,14 +562,15 @@ def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_
             if not atts:
                 continue
             bx = slot_x + ICON_W + ATT_GAP if side == "right" else x0
-            block_h = len(atts) * ATT_PITCH - (ATT_PITCH - ATT_H)
-            by = int(round(cy - block_h / 2))
+            by = int(round(cy - g["blocks"][side] / 2))
             for i, att in enumerate(atts):
                 akey = str(att["address"]) if att.get("address") else None
-                text = attachment_label(att)
-                bid = d.add_box(text, bx, by + i * ATT_PITCH, ATT_W, ATT_H, parent=parent, key=akey,
+                text = _att_box_text(att)
+                box_h = g["heights"][side][i]
+                bid = d.add_box(text, bx, by, ATT_W, box_h, parent=parent, key=akey,
                                 metadata=att.get("metadata"), tooltip=att.get("tooltip"))
-                reg.add_item({"address": att.get("address"), "label": text}, bid)
+                by += box_h + ATT_VGAP
+                reg.add_item({"address": att.get("address"), "label": attachment_label(att)}, bid)
                 pending.append({"source": bid,
                                 "vcn": att.get("vcn") if side == "right" else None,
                                 "target": att.get("target") if side == "left" else None,
