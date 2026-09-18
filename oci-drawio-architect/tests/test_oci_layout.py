@@ -130,6 +130,15 @@ class GatewayPlacementTests(unittest.TestCase):
         self.assertEqual(len(edges), 1)
         self.assertEqual(edges[0]["source"], "app-a")
 
+    def test_a_gateway_keeps_its_link(self):
+        """A18: _place_edge_gateway must copy 'link' like _icon_items does."""
+        model = {"subject": "link", "region": "us-ashburn-1", "vcns": [simple_vcn(
+            "a", gateways=[gw("igw", "internet_gateway", "Internet\nGateway", "igw",
+                              link="https://docs.oracle.com/iaas/")])]}
+        with tempfile.TemporaryDirectory() as tmp:
+            out = quiet(ol.write_diagram, model, Path(tmp) / "link.drawio")
+            self.assertIn('link="https://docs.oracle.com/iaas/"', out.read_text(encoding="utf-8"))
+
 
 class LpgSideTests(unittest.TestCase):
     def _model(self, peer_a="lpg-b", peer_b="lpg-a"):
