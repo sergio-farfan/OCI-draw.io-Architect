@@ -1077,9 +1077,20 @@ class TestTopologyCells(TempDirMixin, unittest.TestCase):
     def test_add_box_metadata_and_style_extra(self):
         d = DrawioBuilder()
         bid = d.add_box("x", 0, 0, 80, 30, metadata={"ocid": "ocid1.drgattachment.oc1..x"},
-                        style_extra="fontStyle=2;")
-        self.assertEqual(wrapper(d.root, bid).tag, "object")
-        self.assertEqual(tokens(cell(d.root, bid).get("style"))["fontStyle"], "2")
+                        style_extra="fontSize=9;")                  # a token BOX_STYLE already sets
+        obj = wrapper(d.root, bid)
+        self.assertEqual(obj.tag, "object")
+        self.assertEqual(obj.get("ocid"), "ocid1.drgattachment.oc1..x")
+        self.assertEqual(tokens(cell(d.root, bid).get("style"))["fontSize"], "9")   # style_extra overrides
+
+    def test_add_box_rejects_bad_geometry_and_an_unknown_parent(self):
+        d = DrawioBuilder()
+        with self.assertRaises(ValueError):
+            d.add_box("x", 0, 0, 0, 30)
+        with self.assertRaises(ValueError):
+            d.add_box("x", 0, 0, 80, 0)
+        with self.assertRaises(ValueError):
+            d.add_box("x", 0, 0, 80, 30, parent="nope")
 
     def test_caption_fill_option(self):
         d = DrawioBuilder()
