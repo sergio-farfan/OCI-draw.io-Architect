@@ -780,6 +780,20 @@ class NsgBadgeTests(unittest.TestCase):
         edge = [e for e in d._cells.values() if e["kind"] == "edge" and e.get("source") == "vm-one"][0]
         self.assertEqual(edge["target"], "subnet-sn-one-rt")   # _slug() turns ':' into '-'
 
+    def test_the_winning_shared_badge_follows_tier_order_not_list_order(self):
+        """A26: "first drawn" is the layout's tier order, not the model's subnet list order."""
+        rt = {"name": "rt-shared", "address": "rt-shared"}
+        model = {"subject": "shared", "region": "us-ashburn-1", "vcns": [{
+            "name": "a", "cidr": "10.0.0.0/16", "services": [], "gateways": [], "subnets": [
+                {"name": "sn-two", "cidr": "10.0.2.0/24", "tier": "mgmt", "route_table": rt,
+                 "items": [{"icon": "vm", "label": "Two", "address": "vm-two"}]},
+                {"name": "sn-one", "cidr": "10.0.1.0/24", "tier": "app", "route_table": rt,
+                 "items": [{"icon": "vm", "label": "One", "address": "vm-one"}]}]}],
+            "edges": [{"source": "vm-one", "target": "rt-shared", "label": "", "kind": "association"}]}
+        d = quiet(ol.build_diagram, model)
+        edge = [e for e in d._cells.values() if e["kind"] == "edge" and e.get("source") == "vm-one"][0]
+        self.assertEqual(edge["target"], "subnet-sn-one-rt")   # app row is laid out before mgmt
+
     def test_a_badged_subnet_reserves_title_width_for_its_badges(self):
         """A27: the recipe never emits a subnet whose title runs under its corner badges."""
         long_name = "sn-shared-services-management"
