@@ -67,7 +67,7 @@ Rules:
 5. Escape nothing yourself: labels are plain text, `\n` becomes `<br>`.
 6. DRGs: never inside `hub.items` or `vcn.gateways`; `drgs[].attachments[].type` in `vcn | ipsec | virtual_circuit | rpc | loopback`, `vcn` = VCN name, `target` = hub item address. Schema-1 models are migrated with a `WARNING: legacy model:` line - move the DRG to `drgs` to silence it.
 7. Edge endpoints also accept `drg:<name>`, a DRG address, an attachment address and `osn`.
-8. Security constructs: `subnet.route_table` (str or `{"name", "address"}`), `subnet.security_lists` and `item.nsgs` (lists of the same forms) draw badges; never add `route_table`, `security_list` or `nsg` items to a subnet. An entry with an `address` can be an edge endpoint (`{"source": "rt-private", "target": "sgw"}`); when several subnets or items share one address, the **first** badge drawn (document order) is the one edges resolve to.
+8. Security constructs: `subnet.route_table` (str or `{"name", "address"}`), `subnet.security_lists` and `item.nsgs` (lists of the same forms) draw badges; never add `route_table`, `security_list` or `nsg` items to a subnet. An entry with an `address` can be an edge endpoint (`{"source": "rt-private", "target": "sgw"}`); when several subnets or items share one address, the **first** badge drawn is the one edges resolve to - for subnets that is the layout's tier order (lb, app, compute, mgmt, other, then data), not the model's list order.
 
 ## 3. Layout recipe (`build_diagram`)
 
