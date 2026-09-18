@@ -161,7 +161,7 @@ _SCALAR_FIELDS = (
     ("fault_domain", "fault_domain"), ("prohibit_public_ip_on_vnic", "prohibit_public_ip_on_vnic"),
     ("is_private", "is_private"), ("db_workload", "db_workload"), ("lifecycle_state", "lifecycle_state"),
     ("ip_address", "ip_address"), ("mysql_version", "mysql_version"), ("kubernetes_version", "kubernetes_version"),
-    ("port", "port"),
+    ("port", "port"), ("type", "type"),               # virtual circuit PUBLIC / PRIVATE (no DRG when PUBLIC)
 )
 _REF_FIELDS = (
     ("subnet_id", "subnet_id"), ("subnet_ids", "subnet_ids"), ("target_subnet_id", "target_subnet_id"),

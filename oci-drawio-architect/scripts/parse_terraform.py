@@ -1240,6 +1240,7 @@ class ModelBuilder:
             self.subnet_vcn[r.address] = vcn["address"]
 
     def _build_gateways(self) -> None:
+        lpgs: Dict[str, dict] = {}
         for r in self.resources:
             gtype = GATEWAY_TYPES.get(r.rtype)
             if gtype is None:
@@ -1252,7 +1253,25 @@ class ModelBuilder:
             if gtype == "lpg":
                 peer = self.first_ref(r, ("peer_id",), "oci_core_local_peering_gateway")
                 gw["peer"] = peer.address if peer is not None else None
+                lpgs[r.address] = gw
             vcn["gateways"].append(gw)
+        self._mirror_lpg_peers(lpgs)
+
+    @staticmethod
+    def _mirror_lpg_peers(lpgs: Dict[str, dict]) -> None:
+        """Give the acceptor LPG of a pair the peer its requestor declares.
+
+        Local peering is symmetric, but only one side carries ``peer_id`` - in
+        Terraform by convention and in the OCI API until the peering request is
+        accepted. Without the mirror the acceptor has ``peer: None``, so the
+        layout puts it on the VCN's bottom border instead of the border facing
+        its peer and the ``Local Peering`` connector runs along the peer VCN's
+        side border.
+        """
+        for address, gw in lpgs.items():
+            acceptor = lpgs.get(str(gw.get("peer") or ""))
+            if acceptor is not None and not acceptor.get("peer"):
+                acceptor["peer"] = address
 
     def _build_drgs(self) -> None:
         drgs = [r for r in self.resources if r.rtype == DRG_TYPE]
@@ -1304,7 +1323,17 @@ class ModelBuilder:
                              "items": self.hub_items, "link_label": None}
 
     def _build_drg_links(self) -> None:
-        """IPSec / FastConnect / RPC resources referencing a DRG become typed attachments."""
+        """IPSec / FastConnect / RPC resources referencing a DRG become typed attachments.
+
+        An IPSec connection and a remote peering connection always name a DRG
+        (``drg_id`` is required), so an unresolvable reference may fall back to
+        the tenancy's only DRG. A **public** virtual circuit peers with Oracle's
+        public services and has no DRG at all (the provider docs: "Private
+        virtual circuits require a dynamic routing gateway (DRG) ID, while
+        public virtual circuits allow customers to advertise specific public IP
+        prefixes"), so it never becomes an attachment - it stays an
+        on-premises item with no connector to the DRG.
+        """
         hub_addresses = {h["address"] for h in self.hub_items}
         for r in self.resources:
             if r.rtype == "oci_core_ipsec":
@@ -1312,6 +1341,8 @@ class ModelBuilder:
                 atype, attrs, target, default = ("ipsec", ("drg_id",),
                                                 cpe.address if cpe is not None else r.address, "IPSec VPN")
             elif r.rtype == "oci_core_virtual_circuit":
+                if str(r.attrs.get("type") or "").strip().upper() == "PUBLIC":
+                    continue
                 atype, attrs, target, default = "virtual_circuit", ("gateway_id",), r.address, "FastConnect"
             elif r.rtype == "oci_core_remote_peering_connection":
                 atype, attrs, target, default = "rpc", ("drg_id",), r.address, "Remote peering"
