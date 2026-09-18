@@ -1169,6 +1169,13 @@ def _json_region(doc: dict) -> Optional[str]:
 # Model builder (shared by HCL and JSON modes)
 # ---------------------------------------------------------------------------
 
+def _with_regional(item: dict) -> dict:
+    """Schema 2: every ``model['services']`` entry carries the ``regional`` flag."""
+    if isinstance(item, dict):
+        item.setdefault("regional", is_regional_type(str(item.get("type") or "")))
+    return item
+
+
 class ModelBuilder:
     """Turn a list of ``Res`` into the MODEL dict."""
 
@@ -1643,8 +1650,8 @@ class ModelBuilder:
             for ph in placeholders:
                 self.model["vcns"].remove(ph)
                 for sn in ph["subnets"]:
-                    self.model["services"].extend(sn["items"])
-                self.model["services"].extend(ph["services"])
+                    self.model["services"].extend(_with_regional(it) for it in sn["items"])
+                self.model["services"].extend(_with_regional(it) for it in ph["services"])
             keep = set(model_addresses(self.model))
             self.model["edges"] = [e for e in self.model["edges"] if e["source"] in keep and e["target"] in keep]
 

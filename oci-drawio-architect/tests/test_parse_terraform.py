@@ -783,6 +783,20 @@ class HelperTests(unittest.TestCase):
         model["vcns"] = 7
         self.assertTrue(any(p.startswith("vcns: expected list") for p in pt.validate_model(model)))
 
+    def test_merged_placeholder_items_carry_the_regional_flag(self):
+        """A38: every model['services'] entry carries the flag the docs promise."""
+        model = pt.parse_terraform_dir(FIXTURES / "tfvars_map")
+        flags = {i["address"]: i.get("regional") for i in model["services"]}
+        self.assertEqual(flags, {"oci_bastion_bastion.ops": False})
+
+    def test_is_regional_type_covers_the_prefix_tuple(self):
+        """A40: a typo in REGIONAL_TYPE_PREFIXES must fail a test."""
+        self.assertEqual(pt.REGIONAL_TYPE_PREFIXES, ("oci_ai_", "oci_generative_ai_"))
+        self.assertTrue(pt.is_regional_type("oci_ai_anomaly_detection_project"))
+        self.assertTrue(pt.is_regional_type("oci_generative_ai_dedicated_ai_cluster"))
+        self.assertTrue(pt.is_regional_type("oci_logging_log_group"))
+        self.assertFalse(pt.is_regional_type("oci_core_instance"))
+
     def test_model_is_empty(self):
         self.assertTrue(pt.model_is_empty(pt.new_model()))
         self.assertFalse(pt.model_is_empty(pt.parse_terraform_dir(FIXTURES / "three_tier")))
