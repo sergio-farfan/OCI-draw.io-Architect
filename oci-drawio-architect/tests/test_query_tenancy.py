@@ -110,7 +110,7 @@ class BundleModelTests(unittest.TestCase):
         self.assertEqual(svc, {"oci_objectstorage_bucket": "shop-assets", "oci_kms_vault": "vault-shop",
                                "oci_streaming_stream": "orders"})
         ctl = {i["type"] for i in self.vcn["controls"]}
-        self.assertEqual(ctl, {"oci_core_route_table", "oci_core_security_list"})
+        self.assertEqual(ctl, {"oci_core_route_table", "oci_core_security_list", "oci_core_network_security_group"})
         dump = json.dumps(self.model)
         self.assertNotIn("old-server", dump)                                     # TERMINATED
         self.assertNotIn("custom-image", dump)                                   # unmapped resource-type
@@ -143,6 +143,18 @@ class BundleModelTests(unittest.TestCase):
         model = qt.build_model(self.bundle, COMP, None, None, False)
         self.assertTrue(all(not e["inferred"] for e in model["edges"]))
         self.assertEqual(len(model["edges"]), 2)
+
+    def test_security_constructs_become_badge_fields(self):
+        lb_sn = subnet(self.vcn, "sn-lb-public")
+        self.assertEqual(lb_sn["route_table"]["name"], "rt-public")
+        self.assertTrue(lb_sn["route_table"]["address"].startswith("ocid1.routetable."))
+        self.assertEqual([s["name"] for s in lb_sn["security_lists"]], ["sl-app"])
+        self.assertEqual([n["name"] for n in lb_sn["items"][0]["nsgs"]], ["nsg-lb"])          # networkSecurityGroupIds
+        app = subnet(self.vcn, "sn-app")
+        self.assertIsNone(app["route_table"])
+        self.assertEqual([n["name"] for n in app["items"][0]["nsgs"]], ["nsg-app"])           # via the VNIC's nsgIds
+        self.assertNotIn("nsgs", subnet(self.vcn, "sn-database")["items"][0])
+        self.assertNotIn("ocid1.vnic.", json.dumps(self.model))
 
 
 class HelperTests(unittest.TestCase):
@@ -205,6 +217,17 @@ class HelperTests(unittest.TestCase):
         norm = qt.normalise_entity({"type": "LocalPeeringGateway", "id": "ocid1.localpeeringgateway.oc1.eu-frankfurt-1.a",
                                     "peer-id": "ocid1.localpeeringgateway.oc1.eu-frankfurt-1.b"})
         self.assertEqual(norm["refs"]["peer_id"], ["ocid1.localpeeringgateway.oc1.eu-frankfurt-1.b"])
+
+    def test_security_reference_fields_are_normalised(self):
+        norm = qt.normalise_entity({"type": "Vnic", "id": "ocid1.vnic.oc1.eu-frankfurt-1.a",
+                                    "nsg-ids": ["ocid1.networksecuritygroup.oc1.eu-frankfurt-1.n"]})
+        self.assertEqual(norm["refs"]["nsg_ids"], ["ocid1.networksecuritygroup.oc1.eu-frankfurt-1.n"])
+        norm = qt.normalise_entity({"type": "Subnet", "id": "ocid1.subnet.oc1.eu-frankfurt-1.s",
+                                    "securityListIds": ["ocid1.securitylist.oc1.eu-frankfurt-1.l"]})
+        self.assertEqual(norm["refs"]["security_list_ids"], ["ocid1.securitylist.oc1.eu-frankfurt-1.l"])
+        norm = qt.normalise_entity({"type": "LoadBalancer", "id": "ocid1.loadbalancer.oc1.eu-frankfurt-1.b",
+                                    "network-security-group-ids": ["ocid1.networksecuritygroup.oc1.eu-frankfurt-1.n"]})
+        self.assertEqual(norm["refs"]["network_security_group_ids"], ["ocid1.networksecuritygroup.oc1.eu-frankfurt-1.n"])
 
     def test_every_entity_type_maps_to_a_known_resource_type(self):
         containers = {pt.VCN_TYPE, pt.SUBNET_TYPE, pt.COMPARTMENT_TYPE, pt.DRG_ATTACHMENT_TYPE}

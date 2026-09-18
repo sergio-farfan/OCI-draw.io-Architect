@@ -47,7 +47,9 @@ MODEL schema (``SCHEMA_VERSION = 2``)
             {
               "name": str, "address": str, "cidr": str | null, "public": bool,
               "tier": "lb"|"app"|"compute"|"mgmt"|"data"|"other",
-              "items": [ ITEM ]
+              "items": [ ITEM ],
+              "route_table": {"name": str, "address": str} | null,
+              "security_lists": [{"name": str, "address": str}]
             }
           ],
           "services": [ ITEM ],       # VCN-scoped / same-compartment resources outside any subnet,
@@ -68,7 +70,8 @@ MODEL schema (``SCHEMA_VERSION = 2``)
       ]
     }
 
-    ITEM = {"icon": str, "label": str, "type": str, "address": str | null, "metadata": {...}}
+    ITEM = {"icon": str, "label": str, "type": str, "address": str | null, "metadata": {...},
+            "nsgs": [{"name": str, "address": str}]}   # "nsgs" only when non-empty
 
 ``address`` is the Terraform resource address (base address ``TYPE.NAME`` in HCL
 mode because ``count``/``for_each`` cannot be expanded statically; the full
@@ -80,6 +83,14 @@ in ``drgs`` with one typed attachment per ``oci_core_drg_attachment`` (VCN),
 (virtual_circuit; private circuits only - a ``PUBLIC`` circuit has no DRG) and
 ``oci_core_remote_peering_connection`` (rpc); a DRG without attachments in a
 single-VCN model gets an implicit ``<drg>@<vcn>`` attachment.
+
+Route tables, security lists and NSGs are never subnet items. A subnet's ``route_table_id`` and
+``security_list_ids`` become ``route_table`` / ``security_lists`` badge references; an item's
+``nsg_ids`` / ``network_security_group_ids`` (instances via ``create_vnic_details``, load balancers,
+network load balancers, DB systems) and the ``nsg_ids`` of ``oci_core_vnic_attachment`` resources
+attached to an instance become the item's ``nsgs``. The layout draws them as badges on the subnet's
+top-right corner and on the resource icon. ``controls`` still lists the resources themselves.
+
 ``hub`` holds the on-premises side only (CPE, virtual circuit, RPC peer).  LPG
 pairs produce one ``Local Peering`` edge of kind ``attachment`` and both
 gateways carry ``peer`` even though only the requestor declares ``peer_id``; the
@@ -230,6 +241,13 @@ HUB_TYPES: Dict[str, Optional[str]] = {
     "oci_core_remote_peering_connection": None,
 }
 CONTROL_TYPES = frozenset({"oci_core_network_security_group", "oci_core_security_list", "oci_core_route_table"})
+# Security constructs drawn as badges by the layout (subnet corner: route table + security
+# lists; resource icon: NSGs) instead of workload icons. ``controls`` keeps the inventory.
+ROUTE_TABLE_TYPE = "oci_core_route_table"
+SECURITY_LIST_TYPE = "oci_core_security_list"
+NSG_TYPE = "oci_core_network_security_group"
+NSG_ATTRS = ("nsg_ids", "network_security_group_ids")
+VNIC_ATTACHMENT_TYPES = frozenset({"oci_core_vnic_attachment", "oci_core_vnic"})
 LB_TYPES = frozenset({"oci_load_balancer_load_balancer", "oci_load_balancer",
                       "oci_network_load_balancer_network_load_balancer"})
 LB_BACKEND_TYPES = frozenset({"oci_load_balancer_backend", "oci_network_load_balancer_backend"})
@@ -300,7 +318,7 @@ def new_subnet(name: str, address: str, cidr: Optional[str] = None, public: Opti
                tier: Optional[str] = None) -> dict:
     return {"name": name, "address": address, "cidr": cidr,
             "public": infer_public(name) if public is None else bool(public),
-            "tier": tier or infer_tier(name), "items": []}
+            "tier": tier or infer_tier(name), "items": [], "route_table": None, "security_lists": []}
 
 
 def new_item(icon: str, label: str, rtype: str, address: Optional[str], metadata: Optional[dict] = None) -> dict:
@@ -309,6 +327,11 @@ def new_item(icon: str, label: str, rtype: str, address: Optional[str], metadata
 
 def new_gateway(gtype: str, label: str, address: Optional[str]) -> dict:
     return {"icon": GATEWAY_ICONS[gtype], "type": gtype, "label": label, "address": address}
+
+
+def badge_ref(name: str, address: Optional[str] = None) -> dict:
+    """A route table / security list / NSG reference drawn as a badge: ``{"name", "address"}``."""
+    return {"name": name, "address": address}
 
 
 def new_hub_item(icon: str, label: str, rtype: str, address: Optional[str]) -> dict:
@@ -384,6 +407,25 @@ def _expect(errors: List[str], value, types, path: str) -> bool:
     return True
 
 
+def _validate_badge_refs(errors: List[str], value, path: str, single: bool = False) -> None:
+    """``route_table`` (single) / ``security_lists`` / ``nsgs``: str or {name, address} entries."""
+    if value is None:
+        return
+    if single:
+        refs = [value]
+    elif not _expect(errors, value, list, path):
+        return
+    else:
+        refs = value
+    for i, ref in enumerate(refs):
+        rp = path if single else f"{path}[{i}]"
+        if isinstance(ref, dict):
+            _expect(errors, ref.get("name"), str, f"{rp}.name")
+            _expect(errors, ref.get("address"), (str, type(None)), f"{rp}.address")
+        else:
+            _expect(errors, ref, str, rp)
+
+
 def _validate_item(errors: List[str], item, path: str, with_metadata: bool, icon_keys) -> None:
     if not _expect(errors, item, dict, path):
         return
@@ -397,6 +439,8 @@ def _validate_item(errors: List[str], item, path: str, with_metadata: bool, icon
         _expect(errors, item["regional"], bool, f"{path}.regional")
     if icon_keys is not None and isinstance(item.get("icon"), str) and item["icon"] not in icon_keys:
         errors.append(f"{path}.icon: unknown icon key {item['icon']!r}")
+    if "nsgs" in item:
+        _validate_badge_refs(errors, item["nsgs"], f"{path}.nsgs")
 
 
 def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str]:
@@ -473,6 +517,9 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
                     _expect(errors, sn.get("public"), bool, f"{sp}.public")
                     if sn.get("tier") not in TIERS:
                         errors.append(f"{sp}.tier: {sn.get('tier')!r} not in {TIERS}")
+                    _validate_badge_refs(errors, sn.get("route_table"), f"{sp}.route_table", single=True)
+                    if "security_lists" in sn:
+                        _validate_badge_refs(errors, sn["security_lists"], f"{sp}.security_lists")
                     if _expect(errors, sn.get("items"), list, f"{sp}.items"):
                         for ii, item in enumerate(sn["items"]):
                             _validate_item(errors, item, f"{sp}.items[{ii}]", True, keys)
@@ -1238,6 +1285,11 @@ class ModelBuilder:
                                 public=infer_public(name, prohibit), tier=infer_tier(name))
             if not isinstance(r.attrs.get("display_name"), str):
                 subnet["_unresolved"] = True
+            rt = self.first_ref(r, ("route_table_id",), ROUTE_TABLE_TYPE)
+            if rt is not None:
+                subnet["route_table"] = self._badge_ref(rt, "Route table")
+            subnet["security_lists"] = [self._badge_ref(sl, "Security list") for sl in
+                                        self.all_refs(r, ("security_list_ids",), frozenset({SECURITY_LIST_TYPE}))]
             vcn["subnets"].append(subnet)
             self.subnet_by_addr[r.address] = subnet
             self.subnet_vcn[r.address] = vcn["address"]
@@ -1378,6 +1430,12 @@ class ModelBuilder:
                     if k in r.attrs and isinstance(r.attrs[k], (str, int, float, bool))}
         return new_item(icon, label, r.rtype, r.address, metadata)
 
+    def _badge_ref(self, res: Res, default: str) -> dict:
+        return badge_ref(res.label(default), res.address)
+
+    def _nsg_refs(self, res: Res) -> List[dict]:
+        return [self._badge_ref(n, "NSG") for n in self.all_refs(res, NSG_ATTRS, frozenset({NSG_TYPE}))]
+
     def _skip_as_item(self, r: Res) -> bool:
         return (r.rtype in (VCN_TYPE, SUBNET_TYPE, COMPARTMENT_TYPE, DRG_TYPE, DRG_ATTACHMENT_TYPE)
                 or r.rtype in GATEWAY_TYPES or r.rtype in HUB_TYPES or r.rtype in LB_CHILD_TYPES)
@@ -1399,6 +1457,9 @@ class ModelBuilder:
             item = self._item_for(r)
             if item is None:
                 continue
+            nsgs = self._nsg_refs(r)
+            if nsgs:
+                item["nsgs"] = nsgs
             subnet = self.first_ref(r, SUBNET_ATTRS, SUBNET_TYPE)
             if subnet is not None and subnet.address in self.subnet_by_addr:
                 self.subnet_by_addr[subnet.address]["items"].append(item)
@@ -1417,6 +1478,21 @@ class ModelBuilder:
             else:
                 self.model["services"].append(item)
                 self._register(item, r, "", None)
+
+    def _build_vnic_nsgs(self) -> None:
+        """Secondary VNICs (``oci_core_vnic_attachment``) add their NSGs to the attached instance's badge."""
+        for r in self.resources:
+            if r.rtype not in VNIC_ATTACHMENT_TYPES:
+                continue
+            inst = self.first_ref(r, ("instance_id",), "oci_core_instance")
+            if inst is None or inst.address not in self.item_index:
+                continue
+            item = self.item_index[inst.address]
+            have = {n["address"] for n in item.get("nsgs") or []}
+            for ref in self._nsg_refs(r):
+                if ref["address"] not in have:
+                    item.setdefault("nsgs", []).append(ref)
+                    have.add(ref["address"])
 
     def _register(self, item: dict, r: Res, vcn_addr: str, subnet_addr: Optional[str]) -> None:
         self.item_place[item["address"]] = (vcn_addr, subnet_addr)
@@ -1592,6 +1668,7 @@ class ModelBuilder:
         self._build_hub()
         self._build_drg_links()
         self._build_items()
+        self._build_vnic_nsgs()
         self._build_edges()
         self._merge_loose()
         self._finish()

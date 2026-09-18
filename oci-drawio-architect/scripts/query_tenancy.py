@@ -36,6 +36,10 @@ OCIDs are the item addresses.  Everything is delegated to
 representation, so placement and edge rules are identical to Terraform mode.
 Additional edges come from ``ROUTES_TO`` relationships (subnet -> gateway); DRGs and their
 attachments are reported in ``drgs[]`` (schema 2), the hub holds the on-premises side only.
+Subnet ``routeTableId`` / ``securityListIds`` and VNIC / load balancer ``nsgIds`` /
+``networkSecurityGroupIds`` become the badge fields ``route_table``, ``security_lists`` and ``nsgs``
+(NSGs of a resource whose VNIC the topology does not return are only captured when the resource
+entity itself carries the field).
 
 Privacy: stderr summaries never print more than the first 12 characters of an OCID.
 
@@ -168,6 +172,8 @@ _REF_FIELDS = (
     ("vcn_id", "vcn_id"), ("compartment_id", "compartment_id"), ("drg_id", "drg_id"), ("cpe_id", "cpe_id"),
     ("gateway_id", "gateway_id"), ("route_table_id", "route_table_id"), ("network_entity_id", "network_entity_id"),
     ("peer_id", "peer_id"),
+    ("security_list_ids", "security_list_ids"), ("nsg_ids", "nsg_ids"),
+    ("network_security_group_ids", "network_security_group_ids"),
 )
 
 
@@ -390,8 +396,10 @@ def apply_relationships(ents: Dict[str, dict], rels: List[dict]) -> List[dict]:
         if rtype in ("CONTAINS", "ASSOCIATED_WITH"):
             pairs = ((id1, k1, id2, k2), (id2, k2, id1, k1))
             for a, ka, b, kb in pairs:
-                if ka == "vnic" and kb not in HELPER_KINDS and "subnet_id" in ents[a]["refs"]:
-                    ents[b]["refs"].setdefault("subnet_id", list(ents[a]["refs"]["subnet_id"]))
+                if ka == "vnic" and kb not in HELPER_KINDS:
+                    for field in ("subnet_id", "nsg_ids"):      # the VNIC places its host and carries its NSGs
+                        if field in ents[a]["refs"]:
+                            ents[b]["refs"].setdefault(field, list(ents[a]["refs"][field]))
                 if ka == "vcn" and kb == "drg" and (b, a) not in attached:
                     attached.add((b, a))
                     synthetic.append({"id": f"{b}@{a}", "kind": "drgattachment", "attrs": {},

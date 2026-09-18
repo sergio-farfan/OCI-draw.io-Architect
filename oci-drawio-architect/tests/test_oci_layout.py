@@ -612,6 +612,18 @@ class EndToEndTests(unittest.TestCase):
         model = qt.build_model(bundle, "ocid1.compartment.oc1..aaaaaaaashopprod000001")
         self._gate(model, "tenancy.drawio")
 
+    def test_three_tier_and_tenancy_models_draw_badges(self):
+        import parse_terraform as pt
+        import query_tenancy as qt
+        model = pt.parse_terraform_dir(self.FIXTURES / "terraform" / "three_tier")
+        text = self._gate(model, "three_tier_badges.drawio")
+        self.assertEqual(text.count("ociRole=badge"), 5)          # rt + sl on sn-lb-public, NSG on lb, instance, adb
+        self.assertIn('id="subnet-sn-lb-public-rt"', text)
+        self.assertIn('id="oci_core_instance.app-nsg"', text)
+        bundle = qt.load_bundle(self.FIXTURES / "tenancy" / "topology_bundle.json")
+        text = self._gate(qt.build_model(bundle, "ocid1.compartment.oc1..aaaaaaaashopprod000001"), "tenancy_badges.drawio")
+        self.assertEqual(text.count("ociRole=badge"), 4)          # rt + sl on sn-lb-public, NSG on the LB and the instance
+
 
 BADGED = {
     "subject": "badges", "region": "us-ashburn-1",

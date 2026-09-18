@@ -167,6 +167,29 @@ class HclThreeTierTests(unittest.TestCase):
                                     "oci_core_network_security_group"})
         self.assertEqual(ctl["oci_core_network_security_group"]["icon"], "nsg")
 
+    def test_subnet_security_constructs_are_badge_fields(self):
+        lb = find_subnet(self.vcn, "sn-lb-public")
+        self.assertEqual(lb["route_table"], {"name": "rt-public", "address": "oci_core_route_table.public"})
+        self.assertEqual(lb["security_lists"], [{"name": "sl-app", "address": "oci_core_security_list.app"}])
+        app = find_subnet(self.vcn, "sn-app")
+        self.assertIsNone(app["route_table"])
+        self.assertEqual(app["security_lists"], [])
+
+    def test_nsgs_are_item_badge_fields_never_workload_icons(self):
+        lb = find_subnet(self.vcn, "sn-lb-public")["items"][0]
+        self.assertEqual(lb["nsgs"], [{"name": "nsg-lb", "address": "oci_core_network_security_group.lb"}])
+        inst = find_subnet(self.vcn, "sn-app")["items"][0]
+        # create_vnic_details.nsg_ids plus the secondary oci_core_vnic_attachment (nsg-app deduplicated)
+        self.assertEqual([n["name"] for n in inst["nsgs"]], ["nsg-app", "nsg-mgmt"])
+        adb = find_subnet(self.vcn, "sn-database")["items"][0]
+        self.assertEqual([n["address"] for n in adb["nsgs"]], ["oci_core_network_security_group.app"])
+        for sn in self.vcn["subnets"]:
+            for item in sn["items"]:
+                self.assertNotIn(item["icon"], ("nsg", "security_list", "route_table"))
+        self.assertNotIn("oci_core_vnic_attachment", json.dumps(self.model))       # placement helper, not an item
+        self.assertEqual({i["type"] for i in self.vcn["controls"]},
+                         {"oci_core_route_table", "oci_core_security_list", "oci_core_network_security_group"})
+
     def test_edges(self):
         edges = {(e["source"], e["target"]): e for e in self.model["edges"]}
         self.assertNotIn(("oci_core_cpe.onprem", "oci_core_drg.drg"), edges)   # drawn from drgs[] by the layout
@@ -644,6 +667,42 @@ class HelperTests(unittest.TestCase):
     def test_model_is_empty(self):
         self.assertTrue(pt.model_is_empty(pt.new_model()))
         self.assertFalse(pt.model_is_empty(pt.parse_terraform_dir(FIXTURES / "three_tier")))
+
+    def test_badge_fields_from_json_shaped_resources(self):
+        res = [pt.Res("oci_core_vcn.v", "oci_core_vcn", "v", {"display_name": "v"}),
+               pt.Res("oci_core_subnet.s", "oci_core_subnet", "s", {"display_name": "sn-app", "cidr": "10.0.1.0/24"},
+                      {"vcn_id": ["oci_core_vcn.v"], "route_table_id": ["oci_core_route_table.rt"],
+                       "security_list_ids": ["oci_core_security_list.a", "oci_core_security_list.b"]}),
+               pt.Res("oci_core_route_table.rt", "oci_core_route_table", "rt", {"display_name": "rt-x"},
+                      {"vcn_id": ["oci_core_vcn.v"]}),
+               pt.Res("oci_core_security_list.a", "oci_core_security_list", "a", {"display_name": "sl-a"},
+                      {"vcn_id": ["oci_core_vcn.v"]}),
+               pt.Res("oci_core_security_list.b", "oci_core_security_list", "b", {}, {"vcn_id": ["oci_core_vcn.v"]}),
+               pt.Res("oci_core_network_security_group.n", "oci_core_network_security_group", "n",
+                      {"display_name": "nsg-x"}, {"vcn_id": ["oci_core_vcn.v"]}),
+               pt.Res("oci_network_load_balancer_network_load_balancer.nlb",
+                      "oci_network_load_balancer_network_load_balancer", "nlb", {"display_name": "nlb"},
+                      {"subnet_id": ["oci_core_subnet.s"], "network_security_group_ids": ["oci_core_network_security_group.n"]}),
+               pt.Res("oci_database_db_system.dbs", "oci_database_db_system", "dbs", {"display_name": "dbs"},
+                      {"subnet_id": ["oci_core_subnet.s"], "nsg_ids": ["oci_core_network_security_group.n"]})]
+        model = pt.ModelBuilder(res, "x").build()
+        sn = model["vcns"][0]["subnets"][0]
+        self.assertEqual(sn["route_table"], pt.badge_ref("rt-x", "oci_core_route_table.rt"))
+        self.assertEqual([s["name"] for s in sn["security_lists"]], ["sl-a", "b"])       # no display_name -> resource name
+        self.assertEqual([(i["address"].rsplit(".", 1)[-1], [n["name"] for n in i["nsgs"]]) for i in sn["items"]],
+                         [("nlb", ["nsg-x"]), ("dbs", ["nsg-x"])])
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+
+    def test_validate_model_reports_bad_badge_fields(self):
+        model = pt.parse_terraform_dir(FIXTURES / "three_tier")
+        sn = model["vcns"][0]["subnets"][0]
+        sn["route_table"] = 5
+        sn["security_lists"] = [{"address": "x"}]
+        sn["items"][0]["nsgs"] = "nsg"
+        joined = "\n".join(pt.validate_model(model))
+        self.assertIn("vcns[0].subnets[0].route_table: expected str, got int", joined)
+        self.assertIn("vcns[0].subnets[0].security_lists[0].name: expected str, got NoneType", joined)
+        self.assertIn("vcns[0].subnets[0].items[0].nsgs: expected list, got str", joined)
 
 
 # ---------------------------------------------------------------------------
