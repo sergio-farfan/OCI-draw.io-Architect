@@ -428,7 +428,7 @@ git commit -m "feat(builder): drg group type, ociGroup/ociRole style tokens, add
 - Consumes: Task 2 tokens `ociGroup=<type>` (containers) and `ociRole=drg` (DRG icons); `add_box()`; `add_icon(label_fill=)`.
 - Produces: module constants `STRADDLE_TOL = 4.0`, `FOREIGN_TOL = ICON_W / 4` (18.75); helpers `_group_type_of(entry: dict) -> str`, `_is_drg_icon(entry: dict) -> bool`, `_centre_within(outer: _Box, inner: _Box, tol: float) -> bool`; `_attach_captions` sets `registry[<caption id>]["owner"] = <icon id>`; validator messages `ERROR: DRG '<label>' is inside VCN '<vcn label>'` and `ERROR: '<label>' [abs ...] lies inside '<container>' [abs ...] but is not one of its children`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Insert after `class TestValidation` (before the `# 9. Helpers` banner) in `oci-drawio-architect/tests/test_builder.py`:
 
@@ -541,12 +541,12 @@ class TestForeignContainment(TempDirMixin, unittest.TestCase):
         self.assertEqual(errors, ["ERROR: DRG 'DRG hub' is inside VCN 'VCN: a'"])
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestForeignContainment -v 2>&1 | tail -14`
 Expected: `test_region_parented_drg_inside_vcn_is_an_error`, `test_vcn_parented_drg_is_also_an_error`, `test_icon_inside_a_foreign_subnet...`, `test_mostly_inside...`, `test_box_inside_foreign_vcn...`, `test_handwritten_file...` FAIL with `[] != [...]` / `False is not true`; `test_region_parented_vm_inside_vcn...` FAILS with `0 != 2`; `test_border_centred_gateway_is_clean_whichever_parent` FAILS for `parent_is_vcn=True` with the `extends outside its parent` error; `test_side_border_gateway_is_clean` and `test_own_children_are_never_foreign` already PASS.
 
-- [ ] **Step 3: Implement the helpers**
+- [x] **Step 3: Implement the helpers**
 
 In `oci-drawio-architect/scripts/drawio_builder.py`, after `_label_of` (line 961) add:
 
@@ -595,7 +595,7 @@ In `_attach_captions` change `best = (gap, te)` to `best = (gap, tid, te)` and t
             te["owner"] = cid
 ```
 
-- [ ] **Step 4: Implement the validator rules**
+- [x] **Step 4: Implement the validator rules**
 
 Replace rule 3 in `validate_registry` with:
 
@@ -659,17 +659,17 @@ Insert a rule 7 before the final `if not any(k in ("group", "icon", "text") ...)
 
 Update the `validate()` docstring (line 2349) and the module docstring bullet on `validate()` to mention "foreign containment (icons inside a VCN/subnet they do not belong to; DRG inside a VCN)". Add `"STRADDLE_TOL"`, `"FOREIGN_TOL"` to `__all__`. In `scripts/check_overlaps.py` docstring add the line `  - icons, captions or boxes lying inside a VCN / subnet they do not belong to; a DRG inside any VCN`.
 
-- [ ] **Step 5: Run the new tests and the suite**
+- [x] **Step 5: Run the new tests and the suite**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestForeignContainment -v 2>&1 | tail -14 && cd .. && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3`
 Expected: all ten PASS; suite `OK`. If `test_side_border_gateway_is_clean` reports a caption `extends outside` error, the caption owner link was not set - check that `_attach_captions` runs before rule 3 (it does, line 1055) and that the `owner` key is written on the text entry.
 
-- [ ] **Step 6: Confirm the shipped examples still pass the gate**
+- [x] **Step 6: Confirm the shipped examples still pass the gate**
 
 Run: `python3 oci-drawio-architect/examples/generate_reference_layout.py /tmp/ref13.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/ref13.drawio && python3 oci-drawio-architect/examples/generate_demo_diagram.py /tmp/demo13.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/demo13.drawio`
 Expected: both `OK: no container overlaps or layout errors ...` (the 1.2.0 reference draws the DRG inside the on-premises panel, which is a `onprem` group, not a VCN, so rule 7 does not fire yet).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/drawio_builder.py oci-drawio-architect/scripts/check_overlaps.py oci-drawio-architect/tests/test_builder.py
