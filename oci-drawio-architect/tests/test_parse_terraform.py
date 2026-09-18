@@ -535,6 +535,112 @@ class DrgAttachmentTfvarsVcnTests(unittest.TestCase):
         self.assertEqual(json.loads(proc.stdout)["drgs"][0]["attachments"][0]["vcn"], "vcn-hub")
 
 
+class DefaultRouteTableAndSecurityListTests(unittest.TestCase):
+    """A subnet that uses the VCN's default route table / security list still gets badges.
+
+    ``oci_core_default_route_table`` / ``oci_core_default_security_list`` are what the Oracle
+    network modules and the CIS landing zone hand a subnet; they carry no ``vcn_id`` - they
+    point at the VCN through ``manage_default_resource_id``.
+    """
+
+    MAIN_TF = """
+provider "oci" {
+  tenancy_ocid = "ocid1.tenancy.oc1..aaaa"
+  region       = "us-ashburn-1"
+}
+
+resource "oci_core_vcn" "a" {
+  compartment_id = var.compartment_ocid
+  cidr_block     = "10.0.0.0/16"
+  display_name   = "vcn-a"
+}
+
+resource "oci_core_vcn" "b" {
+  compartment_id = var.compartment_ocid
+  cidr_block     = "10.1.0.0/16"
+  display_name   = "vcn-b"
+}
+
+resource "oci_core_default_route_table" "a" {
+  manage_default_resource_id = oci_core_vcn.a.default_route_table_id
+  display_name               = "rt-default-a"
+}
+
+resource "oci_core_default_security_list" "a" {
+  manage_default_resource_id = oci_core_vcn.a.default_security_list_id
+  display_name               = "sl-default-a"
+}
+
+resource "oci_core_security_list" "extra" {
+  compartment_id = var.compartment_ocid
+  vcn_id         = oci_core_vcn.a.id
+  display_name   = "sl-shared"
+}
+
+resource "oci_core_subnet" "app" {
+  compartment_id    = var.compartment_ocid
+  vcn_id            = oci_core_vcn.a.id
+  cidr_block        = "10.0.1.0/24"
+  display_name      = "sn-app"
+  route_table_id    = oci_core_default_route_table.a.id
+  security_list_ids = [oci_core_default_security_list.a.id, oci_core_security_list.extra.id]
+}
+
+resource "oci_core_instance" "app" {
+  compartment_id = var.compartment_ocid
+  display_name   = "app-vm"
+
+  create_vnic_details {
+    subnet_id = oci_core_subnet.app.id
+  }
+}
+"""
+
+    @classmethod
+    def setUpClass(cls):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "main.tf").write_text(cls.MAIN_TF)
+            cls.model = pt.parse_terraform_dir(Path(tmp))
+        cls.vcn = next(v for v in cls.model["vcns"] if v["name"] == "vcn-a")
+
+    def test_default_route_table_becomes_the_subnet_badge(self):
+        sn = find_subnet(self.vcn, "sn-app")
+        self.assertEqual(sn["route_table"],
+                         pt.badge_ref("rt-default-a", "oci_core_default_route_table.a"))
+
+    def test_default_and_managed_security_lists_share_the_badge(self):
+        sn = find_subnet(self.vcn, "sn-app")
+        self.assertEqual([(s["name"], s["address"]) for s in sn["security_lists"]],
+                         [("sl-default-a", "oci_core_default_security_list.a"),
+                          ("sl-shared", "oci_core_security_list.extra")])
+
+    def test_default_resources_stay_in_the_controls_inventory_of_their_vcn(self):
+        ctl = items_by_type(self.vcn["controls"])
+        self.assertEqual(set(ctl), {"oci_core_default_route_table", "oci_core_default_security_list",
+                                    "oci_core_security_list"})
+        self.assertEqual(ctl["oci_core_default_route_table"]["icon"], "route_table")
+        self.assertEqual(ctl["oci_core_default_security_list"]["icon"], "security_list")
+        other = next(v for v in self.model["vcns"] if v["name"] == "vcn-b")
+        self.assertEqual(other["controls"], [])          # placed by manage_default_resource_id, not guessed
+
+    def test_default_resources_are_never_workload_icons(self):
+        self.assertEqual([i["icon"] for i in find_subnet(self.vcn, "sn-app")["items"]], ["vm"])
+        self.assertEqual(self.vcn["services"], [])
+        self.assertEqual(self.model["services"], [])
+        self.assertEqual(pt.validate_model(self.model, BUILDER_ICONS), [])
+
+    def test_the_diagram_of_that_model_carries_both_badges(self):
+        import oci_layout as ol
+        with contextlib.redirect_stderr(io.StringIO()):
+            d = ol.build_diagram(self.model)
+        self.assertEqual([m for m in d.validate(strict=True)
+                          if not m.split("] ")[-1].startswith("WARNING")], [])
+        tips = {el.get("id"): el.get("tooltip") for el in d.root if el.tag == "object" and el.get("tooltip")}
+        sid = "subnet-sn-app"
+        self.assertEqual(tips[f"{sid}-rt"], "Route table: rt-default-a")
+        self.assertEqual(tips[f"{sid}-sl"], "Security lists: sl-default-a, sl-shared")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

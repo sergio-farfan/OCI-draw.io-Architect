@@ -111,7 +111,7 @@ Order of operations: migrate legacy model -> classify topology -> title -> regio
 | `oci_core_cpe` / `oci_core_ipsec` / `oci_core_virtual_circuit` | `cpe` / (attachment `ipsec`) / `cpe` | `hub.items` / `drgs[].attachments` / `hub.items` + attachment `virtual_circuit` (private circuits only: a `PUBLIC` circuit peers with Oracle public services and gets no DRG attachment) |
 | `oci_network_firewall_network_firewall` | `firewall` | subnet (hub VCN) |
 | `oci_core_network_security_group` | `nsg` (badge) | `items[].nsgs` of the protected resources - never an item |
-| `oci_core_security_list` / `oci_core_route_table` | `security_list` / `route_table` (badges) | `subnets[].security_lists` / `subnets[].route_table`; rule tables via `add_table` on page 2 |
+| `oci_core_security_list` / `oci_core_route_table` (and the `oci_core_default_*` pair) | `security_list` / `route_table` (badges) | `subnets[].security_lists` / `subnets[].route_table`; rule tables via `add_table` on page 2 |
 | `oci_load_balancer_load_balancer` / `oci_network_load_balancer_*` | `load_balancer` (`flexible_lb`) | lb subnet |
 | `oci_apigateway_gateway` / `oci_waf_web_app_firewall` / `oci_certificates_management_certificate` | `api_gateway` / `waf` / `certificates` | lb subnet |
 | `oci_core_instance` (shape `BM.*` -> `bare_metal`) | `vm` | app / compute / mgmt subnet |
