@@ -1284,6 +1284,28 @@ class TestForeignContainment(TempDirMixin, unittest.TestCase):
         self.assertEqual(only_errors(d.validate()),
                          ["ERROR: DRG 'DRG drg-a' is inside VCN 'VCN: a (10.0.0.0/16)'"])
 
+    def test_drg_caption_inside_a_vcn_is_flagged_when_the_glyph_only_straddles(self):
+        """A02: the glyph straddles the VCN top border (no DRG error) but the caption is inside it."""
+        d = DrawioBuilder()
+        r, v = self._region_vcn(d)
+        # slot y such that the glyph centre sits on the VCN top border (GLYPH_TOP + GLYPH_H / 2 = 40)
+        d.add_icon("DRG\nhub", "drg", 400, 0, parent=r, key="drg")
+        errors = only_errors(d.validate())
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("'DRG hub'", errors[0])
+        self.assertIn("lies inside 'VCN: a (10.0.0.0/16)'", errors[0])
+        self.assertNotIn("is inside VCN", errors[0])
+
+    def test_nested_foreign_containers_report_only_the_innermost(self):
+        """A13: a leaf inside a foreign subnet inside a foreign VCN is one error, not two."""
+        d = DrawioBuilder()
+        r, v = self._region_vcn(d)
+        d.add_group("sn-app", 20, 50, 300, 200, parent=v, group_type="subnet", key="sn-app")
+        d.add_box("VCN attachment", 340, 100, 100, 44, parent=r, key="att")
+        errors = only_errors(d.validate())
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("lies inside 'sn-app'", errors[0])
+
     def test_region_parented_vm_inside_vcn_is_a_foreign_containment_error(self):
         d = DrawioBuilder()
         r, v = self._region_vcn(d)
