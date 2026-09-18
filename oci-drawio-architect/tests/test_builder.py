@@ -1360,8 +1360,18 @@ class TestForeignContainment(TempDirMixin, unittest.TestCase):
     def test_mostly_inside_icon_is_still_flagged(self):
         d = DrawioBuilder()
         r, v = self._region_vcn(d)
-        d.add_icon("Almost in", "vm", 300 - 10, 200, parent=r, key="almost")  # sticks out 10 px < FOREIGN_TOL
+        d.add_icon("Almost in", "vm", 300 - 10, 200, parent=r, key="almost")  # the glyph sticks out 8 px < FOREIGN_TOL
         self.assertTrue(any("lies inside" in e for e in only_errors(d.validate())))
+
+    def test_foreign_containment_tolerance_boundary(self):
+        """A12: FOREIGN_TOL (18.75 px) is the exact cut-off, measured on a box with no glyph inset."""
+        for overhang, flagged in ((db.FOREIGN_TOL - 1, True), (db.FOREIGN_TOL + 1, False)):
+            with self.subTest(overhang=overhang):
+                d = DrawioBuilder()
+                r, v = self._region_vcn(d)                       # VCN starts at absolute x = 320
+                d.add_box("Marker", 300 - overhang, 200, 100, 44, parent=r, key="m")
+                errs = [e for e in only_errors(d.validate()) if "lies inside" in e]
+                self.assertEqual(bool(errs), flagged, errs)
 
     def test_box_inside_foreign_vcn_is_an_error_and_outside_is_clean(self):
         d = DrawioBuilder()
