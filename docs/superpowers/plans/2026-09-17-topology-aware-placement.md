@@ -1581,7 +1581,7 @@ git commit -m "feat(layout): region-level Oracle Services Network panel fed by t
 - Consumes: `oci_topology.migrate_legacy_model`, `classify_topology`, `choose_drg_style`, `attachment_type`, `attachment_label`, `attachment_link_label`, `first_line`; `DrawioBuilder.add_box`, `add_group(group_type="drg")`, `add_edge(kind=)`; Task 5/6 helpers.
 - Produces: `build_diagram(model, style_profile="default", legend=False, logo=None, page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None) -> DrawioBuilder` with `builder.layout_info = {"topology": dict, "warnings": list[str], "drg_style": dict[address, "icon"|"box"]}`; constants `DRG_GAP = 45`, `ATT_W = 100`, `ATT_H = 44`, `ATT_GAP = 15`, `ATT_PITCH = 56`, `DRG_CLUSTER_GAP = 40`; helpers `_drg_attachments(drg) -> list`, `_drg_style_for(drg, requested) -> str`, `_drg_cluster_geometry(drg, style) -> dict` (keys `left, right, left_w, inner_w, body_h, cluster_h`), `_drg_column_width(drgs, requested) -> int`, `_layout_drg_column(d, region_id, drgs, col_x, stack_y, stack_h, requested, reg, style_out) -> list[dict]` (pending connectors `{"source", "vcn", "target", "label", "key"}`), `_resolve_attachment_target(reg, pe) -> str | None`; `EDGE_KINDS` values become `dict(kind=<builder kind>, color=...)`. Cell ids: DRG = its address; attachment box = its address; attachment connector = `<address>-edge`; box-style group = `drgbox:<address>` (slugged `drgbox-<address>`); registry aliases `drg:<name>`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `oci-drawio-architect/tests/test_oci_layout.py` (before `if __name__`):
 
@@ -1732,12 +1732,12 @@ class LegacyModelTests(unittest.TestCase):
         self.assertEqual(errors_of(d), [])
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout.DrgColumnTests tests.test_oci_layout.DrgStyleTests tests.test_oci_layout.LegacyModelTests 2>&1 | tail -6`
 Expected: ERROR/FAIL - DrgColumnTests error in setUpClass with `ValueError: edge endpoint 'drg' not found` (no DRG cell yet), `TypeError: build_diagram() got an unexpected keyword argument 'drg_style'` in DrgStyleTests, `AttributeError: 'DrawioBuilder' object has no attribute 'layout_info'`, and for the legacy model `AssertionError: 'hub' != 'region'` (the DRG is still drawn inside the hub panel).
 
-- [ ] **Step 3: Constants, imports and `EDGE_KINDS`**
+- [x] **Step 3: Constants, imports and `EDGE_KINDS`**
 
 In `oci_layout.py` extend the topology import to:
 
@@ -1775,7 +1775,7 @@ EDGE_KINDS = {
 }
 ```
 
-- [ ] **Step 4: DRG column helpers**
+- [x] **Step 4: DRG column helpers**
 
 Insert before `def build_diagram`:
 
@@ -1878,7 +1878,7 @@ def _resolve_attachment_target(reg: _Registry, pe: dict):
     return None
 ```
 
-- [ ] **Step 5: Rewrite `build_diagram`**
+- [x] **Step 5: Rewrite `build_diagram`**
 
 Replace the whole `build_diagram` function with (Task 5 and Task 6 pieces are included verbatim so the function reads top to bottom):
 
@@ -2016,12 +2016,12 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     return d
 ```
 
-- [ ] **Step 6: Run the tests, the suite and the reference gate**
+- [x] **Step 6: Run the tests, the suite and the reference gate**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout -v 2>&1 | tail -22 && cd .. && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3 && python3 oci-drawio-architect/examples/generate_reference_layout.py /tmp/ref13.drawio 2>&1 | tail -4 && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/ref13.drawio`
 Expected: all layout tests PASS; suite `OK`; the (still legacy) reference prints `WARNING: legacy model: hub item 'drg' moved to drgs[]` and `WARNING: model: DRG 'drg' has no attachments; assuming a VCN attachment to 'Spoke-VCN-D'`, writes the file, and the gate prints `OK`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/oci_layout.py oci-drawio-architect/tests/test_oci_layout.py

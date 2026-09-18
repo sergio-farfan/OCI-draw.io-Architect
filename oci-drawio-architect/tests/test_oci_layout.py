@@ -1,5 +1,6 @@
 """Layout tests for scripts/oci_layout.py (v1.3.0 topology-aware placement)."""
 import contextlib
+import copy
 import io
 import sys
 import unittest
@@ -245,6 +246,151 @@ class OsnPanelTests(unittest.TestCase):
         self.assertNotIn("osn", d._cells)
         self.assertEqual([e for e in d._cells.values() if e["kind"] == "edge" and e.get("target") == "osn"], [])
 
+
+HYBRID = {
+    "subject": "Spoke", "region": "us-ashburn-1",
+    "hub": {"name": "On-premises", "items": [{"icon": "cpe", "label": "CPE\nhq", "address": "cpe"}]},
+    "drgs": [{"name": "drg", "address": "drg", "label": "DRG\ndrg", "attachments": [
+        {"type": "vcn", "vcn": "Spoke", "address": "att-spoke", "label": "VCN attachment\nSpoke"}]}],
+    "vcns": [simple_vcn("Spoke", gateways=[gw("sgw", "service_gateway", "Service\nGateway", "sgw")])],
+    "edges": [{"source": "cpe", "target": "drg", "label": "IPSec VPN", "kind": "data"},
+              {"source": "drg", "target": "app-Spoke", "label": "", "kind": "data"}],
+}
+
+
+class DrgColumnTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.d = quiet(ol.build_diagram, HYBRID)
+
+    def test_topology_and_style_recorded(self):
+        self.assertEqual(self.d.layout_info["topology"]["kind"], "hybrid")
+        self.assertEqual(self.d.layout_info["drg_style"], {"drg": "icon"})
+        self.assertEqual(self.d.layout_info["warnings"], [])
+
+    def test_drg_is_a_region_child_between_hub_and_vcn(self):
+        d = self.d
+        self.assertEqual(d._cells["drg"]["parent"], "region")
+        hx, hy, hw, hh = d.abs_bbox("hub")
+        vx, vy, vw, vh = d.abs_bbox("vcn-Spoke")
+        dx, dy, dw, dh = d.abs_bbox("drg")
+        self.assertGreaterEqual(dx, hx + hw + ol.HUB_GAP)
+        self.assertLess(dx + dw, vx)
+        self.assertAlmostEqual(dy + ol.GW_STRADDLE, vy + vh / 2, delta=ol.ATT_PITCH)   # centred on the VCN stack
+
+    def test_attachment_box_sits_between_drg_and_vcn_and_connects_to_the_border(self):
+        d = self.d
+        bx, by, bw, bh = d.abs_bbox("att-spoke")
+        dx, dy, dw, dh = d.abs_bbox("drg")
+        vx, vy, vw, vh = d.abs_bbox("vcn-Spoke")
+        self.assertEqual(d._cells["att-spoke"]["parent"], "region")
+        self.assertEqual(bx, dx + ol.ICON_W + ol.ATT_GAP)
+        self.assertEqual((bw, bh), (ol.ATT_W, ol.ATT_H))
+        self.assertEqual(vx - (bx + bw), ol.DRG_GAP)
+        e = d._cells["att-spoke-edge"]
+        self.assertEqual((e["source"], e["target"]), ("att-spoke", "vcn-Spoke"))
+        tok = style_of(d, "att-spoke-edge")
+        self.assertEqual((tok["endArrow"], tok["strokeWidth"], tok["dashed"]), ("none", "1", "0"))
+
+    def test_hub_holds_only_the_cpe_and_explicit_edges_resolve(self):
+        d = self.d
+        self.assertEqual([c for c, e in d._cells.items() if e["parent"] == "hub" and e["kind"] == "icon"], ["cpe"])
+        pairs = {(e["source"], e["target"]) for e in d._cells.values() if e["kind"] == "edge" and e.get("source")}
+        self.assertIn(("cpe", "drg"), pairs)
+        self.assertIn(("drg", "app-Spoke"), pairs)
+        self.assertEqual(errors_of(d), [])
+
+    def test_edge_kinds_map_to_builder_kinds(self):
+        model = copy.deepcopy(MODEL_GW)
+        model["vcns"][0]["subnets"][0]["items"].append({"icon": "vault", "label": "Vault", "address": "vault-a"})
+        model["edges"] = [
+            {"source": "app-a", "target": "vault-a", "label": "secrets", "kind": "association", "address": "e-assoc"},
+            {"source": "app-a", "target": "sgw", "label": "443", "kind": "control", "address": "e-ctl"},
+            {"source": "app-a", "target": "igw", "label": "", "kind": "datalake", "address": "e-lake"},
+            {"source": "app-a", "target": "nat", "label": "", "kind": "data", "dashed": True, "address": "e-dashed"},
+        ]
+        d = quiet(ol.build_diagram, model)
+        self.assertEqual((style_of(d, "e-assoc")["dashPattern"], style_of(d, "e-assoc")["endArrow"]), ("1 3", "none"))
+        self.assertEqual((style_of(d, "e-ctl")["dashed"], style_of(d, "e-ctl")["endArrow"]), ("1", "open"))
+        self.assertEqual(style_of(d, "e-lake")["strokeColor"], db.COLORS["edge_purple"])
+        self.assertEqual(style_of(d, "e-dashed")["endArrow"], "none")     # explicit dashed keeps the profile look
+
+
+class DrgStyleTests(unittest.TestCase):
+    def _hub_spoke(self, n=5):
+        vcns = [simple_vcn(f"v{i}") for i in range(2)]
+        atts = [{"type": "vcn", "vcn": f"v{i % 2}", "address": f"att-{i}"} for i in range(n)]
+        return {"subject": "hs", "region": "us-ashburn-1", "vcns": vcns,
+                "drgs": [{"name": "drg", "address": "drg", "label": "DRG\ndrg", "attachments": atts}]}
+
+    def test_auto_picks_box_above_four_attachments(self):
+        d = quiet(ol.build_diagram, self._hub_spoke(5))
+        self.assertEqual(d.layout_info["topology"]["kind"], "hub_spoke")
+        self.assertEqual(d.layout_info["drg_style"]["drg"], "box")
+        self.assertEqual(d._cells["drgbox-drg"]["group_type"], "drg")
+        self.assertEqual(d._cells["drgbox-drg"]["parent"], "region")
+        self.assertEqual(d._cells["drg"]["parent"], "drgbox-drg")
+        self.assertEqual(d._cells["att-0"]["parent"], "drgbox-drg")
+        self.assertEqual(style_of(d, "drgbox-drg")["ociGroup"], "drg")
+        self.assertEqual(errors_of(d), [])
+
+    def test_auto_picks_icon_up_to_four_and_overrides_apply(self):
+        d = quiet(ol.build_diagram, self._hub_spoke(4))
+        self.assertEqual(d.layout_info["drg_style"]["drg"], "icon")
+        self.assertNotIn("drgbox-drg", d._cells)
+        d = quiet(ol.build_diagram, self._hub_spoke(2), drg_style="box")
+        self.assertIn("drgbox-drg", d._cells)
+        model = self._hub_spoke(6)
+        model["drg_style"] = "icon"
+        d = quiet(ol.build_diagram, model)
+        self.assertNotIn("drgbox-drg", d._cells)
+        with self.assertRaises(ValueError):
+            quiet(ol.build_diagram, model, drg_style="fancy")
+
+    def test_onprem_attachments_sit_left_and_link_to_the_hub_item(self):
+        model = self._hub_spoke(1)
+        model["hub"] = {"name": "On-premises", "items": [{"icon": "cpe", "label": "CPE", "address": "cpe"},
+                                                         {"icon": "rpg", "label": "RPC peer", "address": "rpc-peer"}]}
+        model["drgs"][0]["attachments"] += [
+            {"type": "ipsec", "target": "cpe", "address": "att-vpn", "label": "vpn-hq"},
+            {"type": "rpc", "target": "rpc-peer", "address": "att-rpc"},
+            {"type": "loopback", "address": "att-loop"}]
+        d = quiet(ol.build_diagram, model)
+        self.assertEqual(d.layout_info["topology"]["kind"], "hybrid")
+        dx, _, _, _ = d.abs_bbox("drg")
+        vx, _, _, _ = d.abs_bbox("att-vpn")
+        self.assertEqual(vx + ol.ATT_W + ol.ATT_GAP, dx)
+        self.assertEqual(d._cells["att-vpn-edge"]["target"], "cpe")
+        self.assertEqual(d._cells["att-vpn-edge"]["label"], "Site-to-Site VPN")
+        self.assertEqual(d._cells["att-rpc-edge"]["label"], "Remote Peering")
+        self.assertEqual(d._cells["att-rpc"]["label"], "RPC attachment")
+        self.assertNotIn("att-loop", d._cells)
+        self.assertEqual(errors_of(d), [])
+
+
+class LegacyModelTests(unittest.TestCase):
+    LEGACY = {
+        "subject": "Spoke", "region": "us-ashburn-1",
+        "hub": {"name": "Hub Network", "link_label": "IPSec VPN",
+                "items": [{"icon": "firewall", "label": "Corp VPN", "address": "cpe"},
+                          {"icon": "drg", "label": "Dynamic Routing\nGateway (DRG)", "address": "drg"}]},
+        "vcns": [simple_vcn("Spoke", gateways=[gw("sgw", "service_gateway", "Service\nGateway", "sgw")])],
+        "edges": [{"source": "drg", "target": "app-Spoke", "label": "", "kind": "data"}],
+    }
+
+    def test_legacy_hub_drg_is_drawn_at_region_level_with_a_warning(self):
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            d = ol.build_diagram(self.LEGACY)
+        self.assertEqual(d._cells["drg"]["parent"], "region")
+        self.assertEqual([c for c, e in d._cells.items() if e["parent"] == "hub" and e["kind"] == "icon"], ["cpe"])
+        self.assertIn("drg-Spoke", d._cells)                      # implicit attachment drg@Spoke
+        pairs = {(e["source"], e["target"]) for e in d._cells.values() if e["kind"] == "edge" and e.get("source")}
+        self.assertIn(("cpe", "drg"), pairs)                      # link_label became an explicit edge
+        self.assertIn(("drg", "app-Spoke"), pairs)
+        self.assertTrue(d.layout_info["warnings"])
+        self.assertIn("WARNING: legacy model: hub item 'drg' moved to drgs[]", err.getvalue())
+        self.assertEqual(errors_of(d), [])
 
 if __name__ == "__main__":
     unittest.main()

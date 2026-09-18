@@ -75,7 +75,10 @@ from drawio_builder import (  # noqa: E402
     COL_W, COLORS, GAP, ICON_FOOTPRINT_H, ICON_W, PAD, ROW1_Y, ROW_H, DrawioBuilder,
     escape_label, render,
 )
-from oci_topology import is_regional  # noqa: E402
+from oci_topology import (  # noqa: E402
+    attachment_label, attachment_link_label, attachment_type, choose_drg_style, classify_topology,
+    first_line, is_regional, migrate_legacy_model,
+)
 
 # ---------------------------------------------------------------------------
 # Layout constants (values reproduce the reference sample's geometry)
@@ -118,12 +121,23 @@ LPG_ICONS = ("remote_peering_gateway", "rpg", "networking_remote_peering_gateway
 OSN_GAP = 45                     # last VCN column -> Oracle Services Network panel
 OSN_LABEL = "Oracle Services Network"
 
+DRG_GAP = 45                     # DRG column -> first VCN column
+ATT_W = 100                      # attachment box
+ATT_H = 44
+ATT_GAP = 15                     # DRG slot -> attachment boxes
+ATT_PITCH = 56                   # vertical pitch of stacked attachment boxes
+DRG_CLUSTER_GAP = 40             # between stacked DRG clusters
+
+# model edge kind -> builder kind (+ colour). analytics / datalake are project
+# extensions kept for compatibility; management is an alias of control.
 EDGE_KINDS = {
-    "data": dict(dashed=False, color=None),
-    "control": dict(dashed=True, color=None),
-    "management": dict(dashed=True, color=None),
-    "analytics": dict(dashed=False, color=COLORS["edge_accent"]),
-    "datalake": dict(dashed=True, color=COLORS["edge_purple"]),
+    "data": dict(kind="data", color=None),
+    "control": dict(kind="control", color=None),
+    "management": dict(kind="control", color=None),
+    "association": dict(kind="association", color=None),
+    "attachment": dict(kind="attachment", color=None),
+    "analytics": dict(kind="data", color=COLORS["edge_accent"]),
+    "datalake": dict(kind="control", color=COLORS["edge_purple"]),
 }
 
 
@@ -424,13 +438,125 @@ def _layout_hub(d: DrawioBuilder, region_id, hub: dict, vcn_y, vcn_h, reg, expli
     return hid
 
 
+def _drg_attachments(drg: dict) -> list:
+    return [a for a in (drg.get("attachments") or []) if attachment_type(a) != "loopback"]
+
+
+def _drg_style_for(drg: dict, requested: str) -> str:
+    return choose_drg_style(requested, len(_drg_attachments(drg)))
+
+
+def _drg_cluster_geometry(drg: dict, style: str) -> dict:
+    """Sizes of one DRG cluster: icon slot + attachment boxes (right = VCNs, left = on-prem / RPC)."""
+    atts = _drg_attachments(drg)
+    right = [a for a in atts if attachment_type(a) == "vcn"]
+    left = [a for a in atts if attachment_type(a) != "vcn"]
+    left_w = ATT_W + ATT_GAP if left else 0
+    right_w = ATT_W + ATT_GAP if right else 0
+    n = max(len(left), len(right))
+    boxes_h = n * ATT_PITCH - (ATT_PITCH - ATT_H) if n else 0
+    body_h = max(ICON_FOOTPRINT_H, boxes_h)
+    inner_w = left_w + ICON_W + right_w
+    cluster_h = body_h
+    if style == "box":
+        inner_w += 2 * PAD
+        cluster_h += ROW1_Y + PAD
+    return {"left": left, "right": right, "left_w": left_w, "inner_w": inner_w,
+            "body_h": body_h, "cluster_h": cluster_h}
+
+
+def _drg_column_width(drgs, requested: str) -> int:
+    return max(_drg_cluster_geometry(drg, _drg_style_for(drg, requested))["inner_w"] for drg in drgs)
+
+
+def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_h, requested, reg,
+                       style_out) -> list:
+    """DRG icon(s) with their attachment boxes at region level, centred on the VCN stack.
+
+    Returns the pending attachment connectors: {"source", "vcn", "target", "label", "key"}.
+    """
+    clusters = [(drg, _drg_style_for(drg, requested)) for drg in drgs]
+    geoms = [_drg_cluster_geometry(drg, style) for drg, style in clusters]
+    total_h = sum(g["cluster_h"] for g in geoms) + DRG_CLUSTER_GAP * (len(geoms) - 1)
+    y = max(VCN_Y, int(round((stack_y + (stack_h - total_h) / 2) / 10.0) * 10))
+    pending = []
+    for (drg, style), g in zip(clusters, geoms):
+        name = drg.get("name") or first_line(drg.get("label")) or "DRG"
+        addr = str(drg.get("address") or f"drg:{name}")
+        label = drg.get("label") or f"DRG\n{name}"
+        if style == "box":
+            gid = d.add_group(f"DRG: {name}", col_x, y, g["inner_w"], g["cluster_h"], parent=region_id,
+                              group_type="drg", key=f"drgbox:{addr}")
+            parent, x0, y0 = gid, PAD, ROW1_Y
+        else:
+            parent, x0, y0 = region_id, col_x, y
+        cy = y0 + g["body_h"] / 2
+        slot_x = x0 + g["left_w"]
+        slot_y = int(round(cy - GW_STRADDLE))
+        spec = {"label": label, "icon": drg.get("icon") or "drg", "key": addr}
+        for k in ("metadata", "tooltip"):
+            if drg.get(k):
+                spec[k] = drg[k]
+        (did,), _ = d.place_icons(parent, [spec], cols=1, x0=slot_x, y0=slot_y)
+        reg.add_item({"address": addr, "label": label}, did)
+        reg.containers[f"drg:{name}"] = did
+        for side, atts in (("right", g["right"]), ("left", g["left"])):
+            if not atts:
+                continue
+            bx = slot_x + ICON_W + ATT_GAP if side == "right" else x0
+            block_h = len(atts) * ATT_PITCH - (ATT_PITCH - ATT_H)
+            by = int(round(cy - block_h / 2))
+            for i, att in enumerate(atts):
+                akey = str(att["address"]) if att.get("address") else None
+                text = attachment_label(att)
+                bid = d.add_box(text, bx, by + i * ATT_PITCH, ATT_W, ATT_H, parent=parent, key=akey,
+                                metadata=att.get("metadata"), tooltip=att.get("tooltip"))
+                reg.add_item({"address": att.get("address"), "label": text}, bid)
+                pending.append({"source": bid,
+                                "vcn": att.get("vcn") if side == "right" else None,
+                                "target": att.get("target") if side == "left" else None,
+                                "label": attachment_link_label(att),
+                                "key": f"{akey}-edge" if akey else None})
+        if style == "box":
+            d.fit_to_children(gid, pad=PAD)
+        style_out[addr] = style
+        y += g["cluster_h"] + DRG_CLUSTER_GAP
+    return pending
+
+
+def _resolve_attachment_target(reg: _Registry, pe: dict):
+    """Cell the attachment box connects to: its VCN's border, a hub item, or nothing."""
+    if pe.get("vcn") is not None:
+        for ref in (f"vcn:{pe['vcn']}", str(pe["vcn"])):
+            try:
+                return reg.resolve(ref)
+            except ValueError:
+                continue
+        raise ValueError(f"DRG attachment {pe['source']!r}: VCN {pe['vcn']!r} is not in the model")
+    if pe.get("target"):
+        return reg.resolve(pe["target"])
+    return None
+
+
 def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
-                  page_name=None, title=True, max_row_w=MAX_ROW_W) -> DrawioBuilder:
-    """Lay out a normalized model and return the (unwritten) DrawioBuilder."""
-    if not model.get("vcns") and not model.get("hub"):
-        raise ValueError("model needs at least one VCN (model['vcns']) or a hub")
+                  page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None) -> DrawioBuilder:
+    """Lay out a normalized model and return the (unwritten) DrawioBuilder.
+
+    Schema-1 models are migrated first (DRG hub items / drg gateways -> drgs[]);
+    migration warnings go to stderr and to ``builder.layout_info["warnings"]``.
+    ``drg_style`` (auto | icon | box) overrides ``model["drg_style"]``.
+    """
+    model, warnings = migrate_legacy_model(model)
+    for w in warnings:
+        print(w, file=sys.stderr)
+    if not model.get("vcns") and not model.get("hub") and not model.get("drgs"):
+        raise ValueError("model needs at least one VCN (model['vcns']), a hub or a DRG")
+    requested = str(drg_style or model.get("drg_style") or "auto").lower()
+    choose_drg_style(requested, 0)                     # validates the value early
+    topo = classify_topology(model)
     subject = model.get("subject") or (model["vcns"][0].get("name") if model.get("vcns") else "Architecture")
     d = DrawioBuilder(page_name=page_name or f"{subject} Architecture", style_profile=style_profile)
+    d.layout_info = {"topology": topo, "warnings": list(warnings), "drg_style": {}}
     reg = _Registry()
 
     if title:
@@ -445,7 +571,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     reg.containers["region"] = rid
 
     hub = model.get("hub")
-    vcn_x = HUB_X + HUB_W + HUB_GAP if hub else PAD
+    drgs = list(model.get("drgs") or [])
     vcns = [dict(v) for v in (model.get("vcns") or [])]
     osn_items = []
     for vcn in vcns:
@@ -458,10 +584,15 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         vcns[0]["services"] = list(vcns[0].get("services") or []) + top_services
         top_services = []
 
+    # Column order: on-premises panel | DRG column | VCN columns | OCI Services | Oracle Services Network
+    x = HUB_X + HUB_W + HUB_GAP if hub else PAD
+    drg_col_x = x
+    if drgs:
+        x = drg_col_x + _drg_column_width(drgs, requested) + DRG_GAP
+
     order = _vcn_order(vcns)
     vcn_boxes = []
     edge_gateways = []          # (vcn index, side, gateway dict, icon id)
-    x = vcn_x
     for i, vcn in enumerate(vcns):
         sides = _gateway_sides(vcn, i, order)
         # Reserve the room the straddling gateways need: one bottom slot every GW_PITCH
@@ -517,6 +648,11 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         pairs = {(str(e.get("source")), str(e.get("target"))) for e in (model.get("edges") or [])}
         _layout_hub(d, rid, hub, VCN_Y, ref_h, reg, explicit_pairs=pairs)
 
+    pending = []
+    if drgs:
+        pending = _layout_drg_column(d, rid, drgs, drg_col_x, VCN_Y, ref_h, requested, reg,
+                                     d.layout_info["drg_style"])
+
     d.fit_to_children(rid, pad=PAD)
 
     if osn_id is not None:
@@ -529,11 +665,19 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         d.add_text(escape_label(model["notes"]), TITLE_BOX[0] + TITLE_BOX[2] + 20, TITLE_BOX[1],
                    400, TITLE_BOX[3], font_size=10, raw_html=True)
 
+    for pe in pending:
+        target = _resolve_attachment_target(reg, pe)
+        if target is not None:
+            d.add_edge(pe["source"], target, pe["label"], kind="attachment", key=pe["key"])
+
     for e in model.get("edges") or []:
-        kind = EDGE_KINDS.get((e.get("kind") or "data").lower(), EDGE_KINDS["data"])
-        d.add_edge(reg.resolve(e["source"]), reg.resolve(e["target"]), e.get("label", ""),
-                   dashed=e.get("dashed", kind["dashed"]), color=e.get("color", kind["color"]),
-                   key=e.get("address"))
+        spec = EDGE_KINDS.get(str(e.get("kind") or "data").lower(), EDGE_KINDS["data"])
+        kwargs = dict(color=e.get("color", spec["color"]), key=e.get("address"))
+        if "dashed" in e:
+            kwargs["dashed"] = e["dashed"]            # explicit override keeps the profile look
+        else:
+            kwargs["kind"] = spec["kind"]
+        d.add_edge(reg.resolve(e["source"]), reg.resolve(e["target"]), e.get("label", ""), **kwargs)
 
     if legend:
         _, _, _, bottom = d.content_bbox()
