@@ -26,8 +26,11 @@ Topology-aware placement. The layout recipe now follows how Oracle's Architectur
 - `oracle_services_network` panels created by the recipe use a left-aligned label; `oracle-styles.md` records that the Rose look is the toolkit's "Optional" grouping spec while slide 19 specifies Neutral 3 2pt dashed for the OSN.
 - Documentation (README, plugin README, SKILL.md, command, references, repo CLAUDE.md) rewritten for schema 2 and the new placement rules.
 
+### Notes
+- The plugin does not use draw.io's MCP connector (the hosted MCP server at `mcp.draw.io`): draw.io's built-in shape libraries carry no OCI icons, local generation keeps diagram content on the machine, and the connector's inline preview needs an MCP Apps host, which Claude Code is not. Rationale in the repository README ("Why not the draw.io MCP connector").
+
 ### Roadmap (not in this release)
-- Diagram purpose selection, resource filtering (tag / compartment / region / VCN / subnet / type / environment), detail levels, label modes, draw.io view layers, a separate global-services bucket, all-resources versus participating mode, multi-region canvases, draw.io MCP integration.
+- Diagram purpose selection, resource filtering (tag / compartment / region / VCN / subnet / type / environment), detail levels, label modes, draw.io view layers, a separate global-services bucket, all-resources versus participating mode, multi-region canvases.
 - **Location boxes outside the region**: an Internet box, and On-Premises / 3rd Party Cloud as sibling location boxes next to the region instead of a panel nested inside it, with the Site-to-Site VPN / FastConnect label in the gap between the two locations (the toolkit's form). This release keeps the on-premises panel inside the region, so those labels sit inside the region box; the choice and its reason are recorded in section 14 of `docs/superpowers/specs/2026-09-17-topology-aware-placement-design.md`.
 
 ## [1.2.0] - 2026-09-12
