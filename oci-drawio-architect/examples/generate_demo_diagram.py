@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from drawio_builder import PAD, __version__, build_cell_registry, render  # noqa: E402
+from drawio_builder import PAD, __version__, build_cell_registry, is_warning, render  # noqa: E402
 from oci_layout import build_diagram  # noqa: E402
 
 DEMO_MODEL = {
@@ -86,7 +86,7 @@ def build(out_path: Path, do_render: bool = False) -> None:
     d.fit_page()
 
     problems = d.validate()
-    errors = [p for p in problems if not p.split("] ")[-1].startswith("WARNING")]
+    errors = [p for p in problems if not is_warning(p)]
     for p in problems:
         print(p)
     if errors:

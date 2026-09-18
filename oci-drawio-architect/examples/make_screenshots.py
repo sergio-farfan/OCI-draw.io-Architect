@@ -25,7 +25,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "scripts"))
 sys.path.insert(0, str(HERE))
-from drawio_builder import find_drawio_binary  # noqa: E402
+from drawio_builder import find_drawio_binary, is_warning  # noqa: E402
 from generate_reference_layout import MODEL  # noqa: E402
 from oci_layout import build_diagram  # noqa: E402
 
@@ -79,7 +79,7 @@ def main(argv=None) -> int:
 
     d = build_diagram(MODEL)
     problems = d.validate()
-    if any(not p.split("] ")[-1].startswith("WARNING") for p in problems):
+    if any(not is_warning(p) for p in problems):
         raise SystemExit("\n".join(problems))
     cx0, cy0, _, _ = d.content_bbox()
 

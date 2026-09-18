@@ -91,7 +91,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from drawio_builder import (  # noqa: E402
     BADGE_GAP, BADGE_RESERVE, BADGE_SIZE, CHAR_W_RATIO, COL_W, COLORS, GAP, ICON_FOOTPRINT_H, ICON_W,
     LABEL_FONT_SIZE, LABEL_LINE_H, PAD, ROW1_Y, ROW_H, DrawioBuilder, edge_label_extent,
-    escape_label, label_lines, render, wrap_hints,
+    escape_label, is_warning, label_lines, render, wrap_hints,
 )
 from oci_topology import (  # noqa: E402
     attachment_label, attachment_link_label, attachment_type, choose_drg_style, classify_topology,
@@ -844,7 +844,7 @@ def write_diagram(model: dict, out_path, strict=False, render_fmt=None, **opts) 
     """Build, validate (raising on errors) and write the diagram."""
     d = build_diagram(model, **opts)
     problems = d.validate(strict=strict)
-    errors = [p for p in problems if not p.split("] ")[-1].startswith("WARNING")]
+    errors = [p for p in problems if not is_warning(p)]
     for p in problems:
         print(p, file=sys.stderr)
     if errors:

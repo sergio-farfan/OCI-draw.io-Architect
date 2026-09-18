@@ -47,7 +47,7 @@ def label_collisions(d):
 
 
 def errors_of(d):
-    return [m for m in d.validate() if not m.split("] ")[-1].startswith("WARNING")]
+    return [m for m in d.validate() if not db.is_warning(m)]
 
 
 def style_of(d, cid):

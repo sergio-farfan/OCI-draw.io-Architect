@@ -102,11 +102,20 @@ def decode_uri(uri):
 
 
 def only_errors(messages):
-    return [m for m in messages if not m.startswith("WARNING")]
+    return [m for m in messages if not db.is_warning(m)]
 
 
 def only_warnings(messages):
-    return [m for m in messages if m.startswith("WARNING")]
+    return [m for m in messages if db.is_warning(m)]
+
+
+class TestWarningSplit(unittest.TestCase):
+    def test_is_warning_handles_a_page_prefix_and_brackets_in_the_label(self):
+        """A16: only the message's own prefix decides; a "] " inside a label must not."""
+        self.assertTrue(db.is_warning("WARNING: caption 'sn [old] app' needs ~4 lines"))
+        self.assertTrue(db.is_warning("[page: Page-1] WARNING: caption 'sn [old] app' needs ~4 lines"))
+        self.assertFalse(db.is_warning("[page: Page-1] ERROR: 'x [y] z' overlaps 'q'"))
+        self.assertFalse(db.is_warning("ERROR: unknown parent 'nope'"))
 
 
 class TempDirMixin:
