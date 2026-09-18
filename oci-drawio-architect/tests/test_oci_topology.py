@@ -1,5 +1,7 @@
 """Unit tests for scripts/oci_topology.py (classification, regional services, legacy migration)."""
+import contextlib
 import copy
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -15,6 +17,50 @@ def vcn(name, gateways=None):
 
 def drg(name="drg", attachments=None):
     return {"name": name, "address": name, "label": "DRG", "attachments": attachments or []}
+
+
+def stderr_of(fn, *args, **kwargs):
+    buf = io.StringIO()
+    with contextlib.redirect_stderr(buf):
+        result = fn(*args, **kwargs)
+    return result, buf.getvalue()
+
+
+class InputToleranceTests(unittest.TestCase):
+    def setUp(self):
+        ot._WARNED.clear()
+
+    def test_regional_accepts_the_json_string_and_integer_forms(self):
+        self.assertTrue(ot.is_regional({"icon": "vm", "regional": "true"}))
+        self.assertTrue(ot.is_regional({"icon": "vm", "regional": "TRUE"}))
+        self.assertFalse(ot.is_regional({"icon": "logging", "regional": "false"}))
+        self.assertTrue(ot.is_regional({"icon": "vm", "regional": 1}))
+        self.assertFalse(ot.is_regional({"icon": "logging", "regional": 0}))
+
+    def test_an_empty_regional_value_falls_back_silently(self):
+        (value, err) = stderr_of(ot.is_regional, {"icon": "logging", "regional": ""})
+        self.assertTrue(value)                                  # falls back to the icon table
+        self.assertEqual(err, "")
+
+    def test_regional_warns_once_for_a_value_it_cannot_read(self):
+        (value, err) = stderr_of(ot.is_regional, {"icon": "logging", "regional": "maybe"})
+        self.assertTrue(value)                                  # falls back to the icon table
+        self.assertIn("is not a boolean", err)
+        (_, again) = stderr_of(ot.is_regional, {"icon": "logging", "regional": "maybe"})
+        self.assertEqual(again, "")                             # deduplicated
+
+    def test_unknown_attachment_type_warns(self):
+        (atype, err) = stderr_of(ot.attachment_type, {"type": "ipsec-tunnel"})
+        self.assertEqual(atype, "ipsec-tunnel")
+        self.assertIn("ipsec-tunnel", err)
+        (_, clean) = stderr_of(ot.attachment_type, {"type": "rpc"})
+        self.assertEqual(clean, "")
+
+    def test_choose_drg_style_rejects_a_non_string(self):
+        with self.assertRaises(ValueError):
+            ot.choose_drg_style(7, 1)
+        with self.assertRaises(ValueError):
+            ot.choose_drg_style("fancy", 1)
 
 
 class ClassifyTests(unittest.TestCase):
@@ -93,6 +139,9 @@ class RegionalTests(unittest.TestCase):
 
 
 class MigrationTests(unittest.TestCase):
+    def setUp(self):
+        ot._WARNED.clear()
+
     LEGACY = {
         "subject": "Spoke", "vcns": [vcn("Spoke", [
             {"icon": "service_gateway", "label": "Service\nGateway", "address": "sgw"},
@@ -118,7 +167,11 @@ class MigrationTests(unittest.TestCase):
         self.assertIn({"source": "cpe", "target": "drg", "label": "IPSec VPN", "kind": "data"}, m["edges"])
         self.assertEqual(len(m["edges"]), 2)
         self.assertTrue(all(w.startswith("WARNING: legacy model:") for w in warnings))
-        self.assertEqual(len(warnings), 2)
+        # the VCN's legacy drg-gateway ("drg-hub") and the hub item's own DRG name
+        # ("Dynamic Routing") differ, so the single-DRG shortcut also warns (A33)
+        self.assertIn("WARNING: legacy model: gateway 'drg-hub' merged into the only DRG 'Dynamic Routing'",
+                      warnings)
+        self.assertEqual(len(warnings), 3)
 
     def test_hub_with_only_a_drg_is_removed(self):
         m, warnings = ot.migrate_legacy_model({"vcns": [vcn("a")], "hub": {"name": "Hub", "items": [
@@ -166,6 +219,19 @@ class MigrationTests(unittest.TestCase):
         v2 = {"vcns": [vcn("a")], "drgs": [drg(attachments=[{"type": "vcn", "vcn": "a", "address": "att"}])]}
         _, warnings = ot.migrate_legacy_model(v2)
         self.assertEqual(warnings, [])
+
+    def test_single_drg_shortcut_warns_when_the_names_differ(self):
+        model = {"vcns": [{"name": "a", "subnets": [], "services": [],
+                           "gateways": [{"type": "drg", "icon": "drg", "label": "drg-old", "address": "gw-drg"}]}],
+                 "drgs": [{"name": "drg-new", "address": "drg-new", "label": "DRG\ndrg-new", "attachments": []}]}
+        _, warnings = ot.migrate_legacy_model(model)
+        self.assertTrue(any("merged into the only DRG" in w and "drg-new" in w for w in warnings), warnings)
+
+    def test_two_drgs_are_matched_by_name(self):
+        drgs = [{"name": "hub", "address": "hub", "label": "DRG\nhub", "attachments": []},
+                {"name": "spoke", "address": "spoke", "label": "DRG\nspoke", "attachments": []}]
+        self.assertIs(ot._match_drg(drgs, {"label": "spoke"}), drgs[1])
+        self.assertIsNone(ot._match_drg(drgs, {"label": "neither"}))
 
 
 if __name__ == "__main__":

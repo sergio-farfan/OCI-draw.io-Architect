@@ -13,6 +13,7 @@ All functions are pure: they never mutate their input.
 from __future__ import annotations
 
 import copy
+import sys
 from typing import Dict, List, Optional, Tuple
 
 TOPOLOGY_KINDS = ("single_vcn", "multi_vcn", "vcn_with_drg", "hub_spoke", "hybrid")
@@ -57,13 +58,26 @@ REGIONAL_ICON_KEYS = frozenset({
 _VCN_RESIDENT_TYPES = frozenset({"oci_dns_resolver"})
 
 
+_WARNED = set()
+
+
+def _warn_once(message: str) -> None:
+    """Print a one-off WARNING to stderr; repeats within the process are dropped."""
+    if message not in _WARNED:
+        _WARNED.add(message)
+        print(message, file=sys.stderr)
+
+
 def first_line(text) -> str:
     return str(text or "").split("\n")[0].strip()
 
 
 def attachment_type(att: dict) -> str:
     raw = str(att.get("type") or "vcn").strip().lower()
-    return _ATTACHMENT_ALIASES.get(raw, raw)
+    atype = _ATTACHMENT_ALIASES.get(raw, raw)
+    if atype not in ATTACHMENT_TYPES:
+        _warn_once(f"WARNING: attachment type {raw!r} is not one of {ATTACHMENT_TYPES}")
+    return atype
 
 
 def attachment_label(att: dict) -> str:
@@ -93,12 +107,20 @@ def is_regional(item: dict) -> bool:
     flag = item.get("regional")
     if isinstance(flag, bool):
         return flag
+    if isinstance(flag, str) and flag.strip().lower() in ("true", "false"):
+        return flag.strip().lower() == "true"
+    if isinstance(flag, int) and not isinstance(flag, bool):
+        return bool(flag)
+    if flag not in (None, ""):
+        _warn_once(f"WARNING: regional: {flag!r} is not a boolean; falling back to the icon table")
     if str(item.get("type") or "") in _VCN_RESIDENT_TYPES:
         return False
     return str(item.get("icon") or "") in REGIONAL_ICON_KEYS
 
 
 def choose_drg_style(requested: str, n_attachments: int) -> str:
+    if requested is not None and not isinstance(requested, str):
+        raise ValueError(f"drg_style must be auto, icon or box, not {requested!r}")
     requested = (requested or "auto").lower()
     if requested not in ("auto", "icon", "box"):
         raise ValueError(f"drg_style must be auto, icon or box, not {requested!r}")
@@ -107,10 +129,16 @@ def choose_drg_style(requested: str, n_attachments: int) -> str:
     return "box" if n_attachments > DRG_BOX_THRESHOLD else "icon"
 
 
-def _match_drg(drgs: List[dict], gateway: dict) -> Optional[dict]:
-    if len(drgs) == 1:
-        return drgs[0]
+def _match_drg(drgs: List[dict], gateway: dict, warnings: Optional[List[str]] = None) -> Optional[dict]:
     name = first_line(gateway.get("label"))
+    if len(drgs) == 1:
+        only = drgs[0]
+        if name and only.get("name") and str(only["name"]) != name:
+            message = (f"WARNING: legacy model: gateway {name!r} merged into the only DRG "
+                       f"{only['name']!r}")
+            if warnings is not None and message not in warnings:
+                warnings.append(message)
+        return only
     for d in drgs:
         if d.get("name") == name:
             return d
@@ -154,7 +182,7 @@ def migrate_legacy_model(model: dict) -> Tuple[dict, List[str]]:
         vcn["gateways"] = [g for g in gws if not is_drg_item(g)]
         vname = vcn.get("name") or vcn.get("address") or "vcn"
         for g in legacy:
-            drg = _match_drg(drgs, g)
+            drg = _match_drg(drgs, g, warnings)
             if drg is None:
                 addr = "drg" if not drgs else f"drg-{len(drgs) + 1}"
                 drg = {"name": first_line(g.get("label")) or "DRG", "address": addr,
