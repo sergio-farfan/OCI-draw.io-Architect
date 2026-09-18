@@ -698,7 +698,7 @@ git commit -m "feat(validator): straddle tolerance, foreign-containment rule and
   - `classify_topology(model: dict) -> dict` with keys `kind, n_vcns, n_drgs, n_vcn_attachments, has_onprem, has_rpc, has_lpg`
   - `choose_drg_style(requested: str, n_attachments: int) -> str`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `oci-drawio-architect/tests/test_oci_topology.py`:
 
@@ -854,12 +854,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_topology 2>&1 | tail -3`
 Expected: FAIL/ERROR with `ModuleNotFoundError: No module named 'oci_topology'`.
 
-- [ ] **Step 3: Create the module**
+- [x] **Step 3: Create the module**
 
 Create `oci-drawio-architect/scripts/oci_topology.py`:
 
@@ -1067,17 +1067,17 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_topology -v 2>&1 | tail -16`
 Expected: 13 tests PASS. If `test_v2_model_is_untouched` fails because `m["drgs"]` was re-assigned, check the final `if drgs or "drgs" in model` guard keeps the original list content (deep-copied) - equality must hold.
 
-- [ ] **Step 5: Check the icon keys really exist**
+- [x] **Step 5: Check the icon keys really exist**
 
 Run: `python3 -c "import sys; sys.path.insert(0,'oci-drawio-architect/scripts'); import drawio_builder as d, oci_topology as t; print(sorted(k for k in t.REGIONAL_ICON_KEYS if k not in d.ICON_MAP))"`
 Expected: `[]`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/oci_topology.py oci-drawio-architect/tests/test_oci_topology.py
