@@ -2762,7 +2762,7 @@ git commit -m "feat(tenancy): schema-2 model output and LPG peer references"
 - Consumes: `oci_layout.build_diagram(model, page_name=, legend=, drg_style=)` (Task 7), `write_diagram` (Task 8).
 - Produces: `DrawioBuilder.append_pages(other: DrawioBuilder) -> None` (appends every page of another builder; ids only need to be unique per page); `examples.generate_reference_layout.MODEL` in schema 2; `examples.generate_demo_diagram.DEMO_MODEL` (schema 2, two VCNs, hybrid) and `build(out_path: Path, do_render: bool = False) -> None` producing a three-page file ("Architecture" icon style, "DRG as a box", "Security").
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `TestHelpers` in `oci-drawio-architect/tests/test_builder.py`:
 
@@ -2822,12 +2822,12 @@ class ExamplesTests(unittest.TestCase):
             self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestHelpers.test_append_pages tests.test_oci_layout.ExamplesTests 2>&1 | tail -6`
 Expected: `AttributeError: 'DrawioBuilder' object has no attribute 'append_pages'`; `AssertionError: ['cpe', 'drg'] != ['cpe']` for the reference MODEL (the DRG is still a hub item); `AttributeError: module 'generate_demo_diagram' has no attribute 'DEMO_MODEL'`-style failure or a two-page count for the demo.
 
-- [ ] **Step 3: Implement `append_pages`**
+- [x] **Step 3: Implement `append_pages`**
 
 Insert after `use_page` in `drawio_builder.py`:
 
@@ -2851,7 +2851,7 @@ Insert after `use_page` in `drawio_builder.py`:
 
 Add `append_pages(other)` to the module docstring's helper list and to the `CLAUDE.md` API table in Task 12.
 
-- [ ] **Step 4: Migrate the reference model**
+- [x] **Step 4: Migrate the reference model**
 
 In `oci-drawio-architect/examples/generate_reference_layout.py` replace the docstring paragraph with "...a generated script only has to fill in the model: subnets in traffic order, icons per subnet, regional services (drawn in the Oracle Services Network panel), gateways on the VCN border, the DRG with its attachments, the on-premises panel and the edges." and replace the `"hub": {...}` block and the two gateway entries / edges as follows:
 
@@ -2885,7 +2885,7 @@ In `oci-drawio-architect/examples/generate_reference_layout.py` replace the docs
     ],
 ```
 
-- [ ] **Step 5: Rewrite the demo**
+- [x] **Step 5: Rewrite the demo**
 
 Replace `oci-drawio-architect/examples/generate_demo_diagram.py` with:
 
@@ -3004,7 +3004,7 @@ if __name__ == "__main__":
     build(out, do_render="--render" in sys.argv)
 ```
 
-- [ ] **Step 6: Adjust the screenshot crop**
+- [x] **Step 6: Adjust the screenshot crop**
 
 In `oci-drawio-architect/examples/make_screenshots.py` replace lines 95-101 (`sx, sy, sw, sh = ...` through `_crop(full150, ...)`; the `gw_bottom = max(...)` statement spans two lines; lines 88-94 - `content_bbox()`, the `px()` helper and the two `_export` calls - stay) with:
 
@@ -3020,12 +3020,12 @@ In `oci-drawio-architect/examples/make_screenshots.py` replace lines 95-101 (`sx
 
 and update the docstring line to `screenshots/diagram-detail.png     data subnet + border gateways (1.5x)`.
 
-- [ ] **Step 7: Run the tests, regenerate the reference file and the screenshots**
+- [x] **Step 7: Run the tests, regenerate the reference file and the screenshots**
 
 Run: `python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3 && python3 oci-drawio-architect/examples/generate_reference_layout.py OCI_Architecture.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py OCI_Architecture.drawio && python3 oci-drawio-architect/examples/generate_demo_diagram.py /tmp/demo13.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/demo13.drawio && python3 oci-drawio-architect/examples/make_screenshots.py; echo "screenshots exit $?"`
 Expected: suite `OK`; both gates `OK` with no `WARNING: legacy model` lines; `make_screenshots.py` exits 0 and prints the four rewritten PNG paths with their pixel sizes (`screenshots/diagram-overview.png`, `screenshots/diagram-detail.png`, `Screens/1.png`, `Screens/2.png`); `git status --short` must list all four as modified. A `draw.io desktop not found` exit 3 is a failure of this step (the binary is in ~/Applications; set `DRAWIO_BIN=/Users/sergio.farfan/Applications/draw.io.app/Contents/MacOS/draw.io` if discovery changes).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/drawio_builder.py oci-drawio-architect/examples/generate_reference_layout.py oci-drawio-architect/examples/generate_demo_diagram.py oci-drawio-architect/examples/make_screenshots.py OCI_Architecture.drawio oci-drawio-architect/tests/test_builder.py oci-drawio-architect/tests/test_oci_layout.py

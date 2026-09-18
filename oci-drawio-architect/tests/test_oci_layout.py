@@ -417,5 +417,39 @@ class CliTests(unittest.TestCase):
             self.assertIn("Attachment (structural)", text)
 
 
+class ExamplesTests(unittest.TestCase):
+    def test_reference_model_is_schema_2_and_passes_the_gate(self):
+        import check_overlaps
+        sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
+        from generate_reference_layout import MODEL
+        self.assertEqual([i["address"] for i in MODEL["hub"]["items"]], ["cpe"])
+        self.assertEqual([a["type"] for a in MODEL["drgs"][0]["attachments"]], ["vcn"])
+        self.assertIn({"source": "cpe", "target": "drg", "label": "IPSec VPN", "kind": "data"}, MODEL["edges"])
+        d = quiet(ol.build_diagram, MODEL)
+        self.assertEqual(d.layout_info["warnings"], [])
+        self.assertEqual(d.layout_info["topology"]["kind"], "hybrid")
+        self.assertEqual(d._cells["drg"]["parent"], "region")
+        self.assertEqual(d._cells["sgw"]["parent"], "region")
+        self.assertEqual(d._cells["logging"]["parent"], "osn")
+        self.assertNotIn("services-Spoke-VCN-D", d._cells)
+        with tempfile.TemporaryDirectory() as tmp:
+            out = quiet(ol.write_diagram, MODEL, Path(tmp) / "ref.drawio")
+            self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
+
+    def test_demo_builds_three_pages_and_passes_the_gate(self):
+        import check_overlaps
+        sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
+        import generate_demo_diagram as demo
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "demo.drawio"
+            quiet(demo.build, out)
+            text = out.read_text(encoding="utf-8")
+            self.assertEqual(text.count("<diagram "), 3)
+            self.assertIn('id="drgbox-drg"', text)                  # page 2: box style
+            self.assertIn("Attachment (structural)", text)          # legend row
+            self.assertIn("Oracle Services Network", text)
+            self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

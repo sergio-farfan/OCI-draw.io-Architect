@@ -4,8 +4,9 @@
 This is the canonical example for the /drawio-architect workflow. The whole
 diagram is described as data (MODEL below) and laid out by
 scripts/oci_layout.py, so a generated script only has to fill in the model:
-subnets in traffic order, icons per subnet, the OCI Services panel, gateways,
-a hub and the edges.
+subnets in traffic order, icons per subnet, regional services (drawn in the
+Oracle Services Network panel), gateways on the VCN border, the DRG with its
+attachments, the on-premises panel and the edges.
 
 Usage:
     python3 generate_reference_layout.py [output.drawio] [--render]
@@ -27,10 +28,15 @@ MODEL = {
         "name": "Hub Network\nHub-Network\n(Shared-Services)",
         "items": [
             {"icon": "firewall", "label": "Corp VPN\n(10.0.0.0/8)", "address": "cpe"},
-            {"icon": "drg", "label": "Dynamic Routing\nGateway (DRG)", "address": "drg"},
         ],
-        "link_label": "IPSec VPN",
     },
+    "drgs": [{
+        "name": "drg", "address": "drg", "label": "Dynamic Routing\nGateway (DRG)",
+        "attachments": [
+            {"type": "vcn", "vcn": "Spoke-VCN-D", "address": "drg-att-spoke",
+             "label": "VCN attachment\nSpoke-VCN-D"},
+        ],
+    }],
     "vcns": [{
         "name": "Spoke-VCN-D",
         "cidr": "10.0.0.0/16",
@@ -75,11 +81,13 @@ MODEL = {
             {"icon": "dns", "label": "Private DNS\n*.internal...", "address": "dns"},
         ],
         "gateways": [
-            {"icon": "service_gateway", "label": "Service\nGateway", "address": "sgw"},
-            {"icon": "nat_gateway", "label": "NAT Gateway\n(backup - unused)", "address": "nat"},
+            {"icon": "service_gateway", "type": "sgw", "label": "Service\nGateway", "address": "sgw"},
+            {"icon": "nat_gateway", "type": "nat", "label": "NAT Gateway\n(backup - unused)",
+             "address": "nat"},
         ],
     }],
     "edges": [
+        {"source": "cpe", "target": "drg", "label": "IPSec VPN", "kind": "data"},
         {"source": "drg", "target": "lb", "label": "", "kind": "data"},
         {"source": "lb", "target": "app-vm", "label": "3000 / 8000", "kind": "data"},
         {"source": "app-vm", "target": "worker-vm", "label": "443", "kind": "control"},
