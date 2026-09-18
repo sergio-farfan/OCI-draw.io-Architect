@@ -770,6 +770,19 @@ class HelperTests(unittest.TestCase):
         self.assertIn("drg_style", joined)
         self.assertEqual(pt.validate_model([]), ["model: expected dict, got list"])
 
+    def test_validate_model_reports_bad_container_types_instead_of_raising(self):
+        """A41: model_addresses() must not walk drgs/vcns before their types are checked."""
+        model = pt.new_model("x")
+        model["drgs"] = "not-a-list"
+        problems = pt.validate_model(model)
+        self.assertTrue(any(p.startswith("drgs: expected list") for p in problems), problems)
+        model = pt.new_model("x")
+        model["drgs"] = ["not-a-dict"]
+        self.assertTrue(any(p.startswith("drgs[0]: expected dict") for p in pt.validate_model(model)))
+        model = pt.new_model("x")
+        model["vcns"] = 7
+        self.assertTrue(any(p.startswith("vcns: expected list") for p in pt.validate_model(model)))
+
     def test_model_is_empty(self):
         self.assertTrue(pt.model_is_empty(pt.new_model()))
         self.assertFalse(pt.model_is_empty(pt.parse_terraform_dir(FIXTURES / "three_tier")))
