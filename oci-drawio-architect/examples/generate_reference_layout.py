@@ -29,7 +29,8 @@ MODEL = {
     "hub": {
         "name": "Hub Network\nHub-Network\n(Shared-Services)",
         "items": [
-            {"icon": "firewall", "label": "Corp VPN\n(10.0.0.0/8)", "address": "cpe"},
+            {"icon": "firewall", "type": "oci_core_cpe", "label": "Corp VPN\n(10.0.0.0/8)",
+             "address": "cpe"},
         ],
     },
     "drgs": [{
