@@ -970,6 +970,25 @@ class TestRouterQuality(TempDirMixin, unittest.TestCase):
                                  f"segment {(x0, y0)}->{(x1, y1)} runs between the glyph "
                                  f"(bottom {cy + ch}) and caption (top {ly}) of {end}")
 
+    def test_label_with_no_room_on_the_line_is_shifted_off_it(self):
+        """Two icons side by side: the label is wider than the gap between them,
+        so it must be offset off the line instead of drawn over the glyphs."""
+        d = DrawioBuilder()
+        sn = d.add_group("S", 0, 0, 400, 300, group_type="subnet")
+        a = d.add_icon("A", "lb", 20, 80, parent=sn)
+        b = d.add_icon("B", "waf", 150, 80, parent=sn)
+        eid = d.add_edge(a, b, "WAF policy", kind="association")
+        self.assertEqual(only_errors(d.validate()), [])
+        offsets = [pt for pt in cell(d.root, eid).findall("mxGeometry/mxPoint")
+                   if pt.get("as") == "offset"]
+        self.assertEqual(len(offsets), 1, "expected an absolute label offset")
+        self.assertNotEqual(offsets[0].get("y"), "0")
+        lbox = db._Box(*d._cells[eid]["label_box"])
+        for end in (a, b):
+            for cid in (end, d._cells[end]["label_id"]):
+                with self.subTest(shape=cid):
+                    self.assertFalse(db._Box(*d._abs_cell(cid)).intersects(lbox))
+
     def test_second_edge_does_not_squeeze_between_own_glyph_and_caption(self):
         """KNOWN DEFECT: when a source's right-hand corridor is already used
         by an earlier edge, the shared-corridor penalty makes the router exit
@@ -1617,12 +1636,41 @@ class TestHelpers(TempDirMixin, unittest.TestCase):
         a.append_pages(b)
         self.assertEqual([p["name"] for p in a._pages], ["One", "Two", "Three"])
         self.assertEqual([d.get("id") for d in a.mxfile.findall("diagram")], ["page1", "page2", "page3"])
-        self.assertEqual(a._page_idx, 2)
+        self.assertEqual(a._page_idx, 0)                    # appended pages are read-only
         path, _ = self.roundtrip(a)
         errors, _, pages, containers = db.validate_file(path)
         self.assertEqual((errors, pages, containers), ([], 3, 2))
         with self.assertRaises(ValueError):
             a.append_pages(a)
+
+    def test_append_pages_keeps_both_builders_usable(self):
+        b = DrawioBuilder(page_name="Two")
+        b.add_group("B", 0, 0, 200, 100, key="region")
+        b.add_page("Three")
+        b.add_icon("VM", "vm", 0, 0, key="vm")
+        docs = []
+        for name in ("One", "Uno"):
+            a = DrawioBuilder(page_name=name)
+            a.add_group("A", 0, 0, 200, 100, key="region")
+            a.append_pages(b)
+            docs.append(a)
+        # the source keeps its own pages and ids; appending it twice corrupts neither document
+        self.assertEqual([d.get("id") for d in b.mxfile.findall("diagram")], ["page1", "page2"])
+        for a in docs:
+            self.assertEqual([d.get("id") for d in a.mxfile.findall("diagram")],
+                             ["page1", "page2", "page3"])
+            # the current page is still the builder's own and still sizeable from its content
+            self.assertEqual(a.fit_page(), (220, 120))
+            self.assertEqual([m for m in a.validate() if "exceeds the page" in m], [])
+        path, _ = self.roundtrip(b, name="source.drawio")
+        errors, _, pages, _ = db.validate_file(path)
+        self.assertEqual((errors, pages), ([], 2))
+        # an appended page cannot be made current (its cells are not in the registry)
+        with self.assertRaises(ValueError):
+            docs[0].use_page("Three")
+        with self.assertRaises(ValueError):
+            docs[0].use_page(1)
+        self.assertEqual(docs[0].use_page("One"), 0)
 
 
 # ---------------------------------------------------------------------------
@@ -1657,6 +1705,16 @@ class TestModuleCompat(unittest.TestCase):
             self.assertEqual(reg[cid]["w"], 200.0)
             self.assertEqual(db._kind(reg[cid]), "group")
         self.assertEqual(db._kind(reg[icon]), "icon")
+
+    def test_edge_label_extent_estimates_width_and_height(self):
+        w, h = db.edge_label_extent("Site-to-Site VPN", 12)
+        self.assertAlmostEqual(w, 16 * 12 * 0.56 + 8)
+        self.assertAlmostEqual(h, 15)
+        w2, h2 = db.edge_label_extent("one<br>three", 12)
+        self.assertAlmostEqual(w2, 5 * 12 * 0.56 + 8)          # widest line wins
+        self.assertAlmostEqual(h2, 30)
+        self.assertAlmostEqual(db.edge_label_extent("", 12)[0], 8)
+        self.assertAlmostEqual(db.edge_label_extent("&amp;", 12)[0], 1 * 12 * 0.56 + 8)
 
     def test_label_lines_estimate(self):
         self.assertGreater(db.label_lines("word " * 30, 101), 3)

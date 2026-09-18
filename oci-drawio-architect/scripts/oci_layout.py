@@ -9,7 +9,9 @@ generated diagram has the same structure as the reference sample:
       +-- On-premises panel (left, vertically centred on the VCN stack): CPE, virtual circuit, RPC peer
       +-- DRG column (region level, centred on the VCN stack): DRG icon with one attachment
       |   box per attachment beside it (VCN attachments facing the VCNs, on-prem / RPC
-      |   attachments facing the on-premises panel); drg_style "box" wraps them in a dashed group
+      |   attachments facing the on-premises panel, whose gutter widens to fit the
+      |   Site-to-Site VPN / FastConnect / Remote Peering label on the line); drg_style
+      |   "box" wraps them in a dashed group
       +-- VCN column(s)
       |     +-- row 1: lb -> app -> compute -> mgmt subnets (traffic order, 2 icon columns)
       |     +-- OCI Services panel (right of row 1) only for VCN-resident services without a subnet
@@ -79,7 +81,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from drawio_builder import (  # noqa: E402
     COL_W, COLORS, GAP, ICON_FOOTPRINT_H, ICON_W, PAD, ROW1_Y, ROW_H, DrawioBuilder,
-    escape_label, render,
+    edge_label_extent, escape_label, render,
 )
 from oci_topology import (  # noqa: E402
     attachment_label, attachment_link_label, attachment_type, choose_drg_style, classify_topology,
@@ -102,6 +104,7 @@ SUBNET_BOTTOM_PAD = 28
 HUB_X = 15
 HUB_W = 180
 HUB_GAP = 45
+HUB_ATT_LABEL_PAD = 12           # clearance each side of a hub-side attachment label in the gutter
 HUB_ICON_Y0 = 70
 HUB_PITCH = 200
 VCN_COLUMN_GAP = 45
@@ -471,6 +474,23 @@ def _drg_cluster_geometry(drg: dict, style: str) -> dict:
             "body_h": body_h, "cluster_h": cluster_h}
 
 
+def _hub_gutter(drgs, edge_font: float) -> int:
+    """Gap between the on-premises panel and the DRG column.
+
+    Spec section 2 (A-Team `topo1-2`, deck slides 21-22): the Site-to-Site VPN /
+    FastConnect / Remote Peering label sits on the line next to the on-premises
+    item, so the gutter has to hold the widest of those labels - otherwise the
+    router has nowhere to put the text and lands it on the attachment box.
+    """
+    widest = max((edge_label_extent(attachment_link_label(att), edge_font)[0]
+                  for drg in drgs for att in _drg_attachments(drg)
+                  if attachment_type(att) != "vcn" and attachment_link_label(att)), default=0.0)
+    if not widest:
+        return HUB_GAP
+    need = int(math.ceil((widest + 2 * HUB_ATT_LABEL_PAD) / 10.0) * 10)
+    return max(HUB_GAP, need)
+
+
 def _drg_column_width(drgs, requested: str) -> int:
     return max(_drg_cluster_geometry(drg, _drg_style_for(drg, requested))["inner_w"] for drg in drgs)
 
@@ -594,6 +614,8 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     x = HUB_X + HUB_W + HUB_GAP if hub else PAD
     drg_col_x = x
     if drgs:
+        if hub:
+            drg_col_x = max(drg_col_x, HUB_X + HUB_W + _hub_gutter(drgs, d.profile["edge_font"]))
         x = drg_col_x + _drg_column_width(drgs, requested) + DRG_GAP
 
     order = _vcn_order(vcns)

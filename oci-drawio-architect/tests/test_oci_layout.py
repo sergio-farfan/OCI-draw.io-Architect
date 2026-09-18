@@ -20,6 +20,32 @@ def quiet(fn, *args, **kwargs):
         return fn(*args, **kwargs)
 
 
+def label_collisions(d):
+    """(edge id, shape id) pairs where a connector label is drawn over a real shape.
+
+    An endpoint icon's footprint hull is skipped (its side margins are empty
+    canvas) but its glyph slot and caption are not, and an endpoint box - an
+    attachment box, a table, a text block - counts in full: a label on top of
+    the box it leaves is the defect this catches.
+    """
+    d.route_edges()
+    hits = []
+    for page_idx in range(len(d._pages)):
+        _, obstacles = d._routing_shapes(page_idx)
+        for cid, e in d._cells.items():
+            if e["kind"] != "edge" or e["page"] != page_idx or not e.get("label_box"):
+                continue
+            lbox = db._Box(*e["label_box"])
+            for oid, ob in obstacles.items():
+                own_hull = (oid in (e["source"], e["target"])
+                            and d._cells[oid]["kind"] == "icon")
+                if oid.endswith("#label") or own_hull:
+                    continue
+                if ob.intersects(lbox):
+                    hits.append((cid, oid))
+    return hits
+
+
 def errors_of(d):
     return [m for m in d.validate() if not m.split("] ")[-1].startswith("WARNING")]
 
@@ -449,6 +475,39 @@ class ExamplesTests(unittest.TestCase):
             self.assertIn("Attachment (structural)", text)          # legend row
             self.assertIn("Oracle Services Network", text)
             self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
+
+    def test_connector_labels_are_not_drawn_over_shapes(self):
+        """Spec section 2: the Site-to-Site VPN label sits on the line next to the
+        on-premises item - not on top of the IPSec attachment box it leaves."""
+        sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
+        from generate_demo_diagram import DEMO_MODEL
+        from generate_reference_layout import MODEL
+        cases = (("reference", MODEL, {}),
+                 ("demo icon", DEMO_MODEL, {"legend": True}),
+                 ("demo box", DEMO_MODEL, {"legend": True, "drg_style": "box"}))
+        for name, model, opts in cases:
+            with self.subTest(diagram=name):
+                d = quiet(ol.build_diagram, model, **opts)
+                self.assertEqual(label_collisions(d), [])
+                if "att-vpn" not in d._cells:
+                    continue
+                box = db._Box(*d._abs_cell("att-vpn"))
+                label = db._Box(*d._cells["att-vpn-edge"]["label_box"])
+                self.assertFalse(box.intersects(label))
+                self.assertLessEqual(label.right, box.x)      # on the on-premises side
+
+    def test_committed_reference_diagram_is_not_stale(self):
+        sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
+        from generate_reference_layout import MODEL
+        committed = TESTS_DIR.parent.parent / "OCI_Architecture.drawio"
+        if not committed.exists():                            # not shipped in the plugin archive
+            self.skipTest("OCI_Architecture.drawio is not part of this tree")
+        with tempfile.TemporaryDirectory() as tmp:
+            out = quiet(ol.write_diagram, MODEL, Path(tmp) / "ref.drawio")
+            self.assertEqual(out.read_text(encoding="utf-8"),
+                             committed.read_text(encoding="utf-8"),
+                             "OCI_Architecture.drawio is stale; regenerate it with "
+                             "examples/generate_reference_layout.py OCI_Architecture.drawio")
 
 
 if __name__ == "__main__":

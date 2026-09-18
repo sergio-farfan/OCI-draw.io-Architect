@@ -65,6 +65,7 @@ Minimal usage
 from __future__ import annotations
 
 import base64
+import copy
 import difflib
 import html as _html
 import io
@@ -800,6 +801,17 @@ def escape_label(text) -> str:
     return _html.escape(str(text), quote=False).replace("\n", "<br>")
 
 
+def edge_label_extent(text, font_size: float = 12.0) -> tuple:
+    """Estimated (width, height) in px of a connector label (HTML or plain text).
+
+    The same estimate the auto-router uses to place a label clear of icons and
+    captions; layout recipes use it to reserve the gutter a label needs.
+    """
+    lines = _BR_RE.split(str(text or ""))
+    longest = max((len(_html.unescape(_TAG_RE.sub("", l))) for l in lines), default=1)
+    return (longest * font_size * 0.56 + 8, max(1, len(lines)) * (font_size + 3))
+
+
 def label_lines(text: str, width_px: float, font_size: float = LABEL_FONT_SIZE) -> int:
     """Estimate how many lines an HTML/plain label needs at a given width."""
     if not text:
@@ -1432,35 +1444,52 @@ class DrawioBuilder:
         return idx
 
     def use_page(self, index_or_name) -> int:
-        """Make an existing page current (by index or name)."""
+        """Make an existing page current (by index or name).
+
+        Pages added by append_pages() are read-only (their cells are not in
+        this builder's registry) and cannot be made current.
+        """
         if isinstance(index_or_name, int):
             if not 0 <= index_or_name < len(self._pages):
                 raise IndexError(f"No page {index_or_name}")
-            self._page_idx = index_or_name
+            idx = index_or_name
         else:
             for i, p in enumerate(self._pages):
                 if p["name"] == index_or_name:
-                    self._page_idx = i
+                    idx = i
                     break
             else:
                 raise KeyError(f"No page named {index_or_name!r}")
+        if self._pages[idx].get("appended"):
+            raise ValueError(f"use_page: page {self._pages[idx]['name']!r} was added by "
+                             "append_pages() and is read-only; add_page() a new one instead")
+        self._page_idx = idx
         return self._page_idx
 
     def append_pages(self, other: "DrawioBuilder") -> None:
-        """Append every page of ``other`` to this document (cell ids are unique per page).
+        """Append every page of ``other`` to this document as read-only pages.
 
-        ``other``'s pending auto routes are resolved first; the pages keep their
-        geometry and become part of validate() / write(). The last appended
-        page becomes current.
+        ``other``'s pending auto routes are resolved first, then each page is
+        deep-copied, so ``other`` stays intact and usable (its own ids are not
+        renumbered) and the same builder can be appended to several documents.
+        The copies keep their geometry and take part in validate() / write(),
+        but their cells are NOT registered in this builder: appended pages are
+        read-only, the current page is left unchanged, and use_page() refuses
+        them. Call add_page() to continue building.
         """
         if other is self:
             raise ValueError("append_pages: cannot append a builder to itself")
         other.route_edges()
         for p in other._pages:
-            p["diagram"].set("id", f"page{len(self._pages) + 1}")
-            self.mxfile.append(p["diagram"])
-            self._pages.append(p)
-        self._page_idx = len(self._pages) - 1
+            diagram = copy.deepcopy(p["diagram"])
+            diagram.set("id", f"page{len(self._pages) + 1}")
+            self.mxfile.append(diagram)
+            model = diagram.find("mxGraphModel")
+            page = dict(p)
+            page.update({"diagram": diagram, "model": model,
+                         "root": model.find("root") if model is not None else None,
+                         "layers": list(p.get("layers") or ["1"]), "appended": True})
+            self._pages.append(page)
 
     def add_layer(self, name: str, visible: bool = True, key=None) -> str:
         """Add a named layer to the current page; returns its id (use as parent)."""
@@ -2396,40 +2425,69 @@ class DrawioBuilder:
         e["polyline"] = pts
         if e["label"] and job.get("label_pos") is None:
             exclude = {src, tgt}
-            pos, box = self._place_edge_label(pts, e["label"], lat["obstacles"], exclude)
+            pos, box, off = self._place_edge_label(pts, e["label"], lat["obstacles"], exclude)
             if box is not None:
                 lat["obstacles"][f"{cid}#label"] = box
+                e["label_box"] = (box.x, box.y, box.w, box.h)   # where the label text lands
             if pos is not None and abs(pos) > 1e-6:
                 geom.set("x", _fmt_num(pos))
                 geom.set("y", "0")
+            if off:
+                # mxGeometry.offset is an absolute px offset of the label from its
+                # position on the line (jgraph.github.io/mxgraph, mxGeometry.offset)
+                for old in list(geom.findall("mxPoint")):
+                    if old.get("as") == "offset":
+                        geom.remove(old)
+                ET.SubElement(geom, "mxPoint", x=_fmt_num(off[0]),
+                              y=_fmt_num(off[1])).set("as", "offset")
+
+    _LABEL_SHIFT = 10.0        # step of the off-the-line label search
+    _LABEL_SHIFT_STEPS = 9     # up to 90 px away from the connector
 
     def _place_edge_label(self, pts, text, obstacles, exclude):
-        lines = re.split(r"<br\s*/?>|\n", text)
-        longest = max((len(_html.unescape(_TAG_RE.sub("", l))) for l in lines), default=1)
-        lw = longest * self.profile["edge_font"] * 0.56 + 8
-        lh = max(1, len(lines)) * (self.profile["edge_font"] + 3)
+        """Position of a connector label: (pos on the line, box, absolute offset).
+
+        Tries the middle of the line first and walks outwards; when no point on
+        the line is free, the label is shifted orthogonally off the line (the
+        returned offset) instead of being left on top of a shape.
+        """
+        lw, lh = edge_label_extent(text, self.profile["edge_font"])
         segs = list(zip(pts, pts[1:]))
         lens = [abs(b[0] - a[0]) + abs(b[1] - a[1]) for a, b in segs]
         total = sum(lens) or 1.0
 
-        def point_at(t):
+        def locate(t):
             d = t * total
             for (a, b), ln in zip(segs, lens):
                 if d <= ln or (a, b) == segs[-1]:
                     f = d / ln if ln else 0
-                    return (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f)
+                    return (a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f), (a, b)
                 d -= ln
-            return pts[-1]
+            return pts[-1], (segs[-1] if segs else (pts[-1], pts[-1]))
 
+        def free(box):
+            return not any(ob.intersects(box) for oid, ob in obstacles.items() if oid not in exclude)
+
+        ts = (0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.12, 0.88)
         first_box = None
-        for t in (0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.12, 0.88):
-            cx, cy = point_at(t)
+        for t in ts:
+            (cx, cy), _ = locate(t)
             box = _Box(cx - lw / 2, cy - lh / 2, lw, lh)
             if first_box is None:
                 first_box = box
-            if not any(ob.intersects(box) for oid, ob in obstacles.items() if oid not in exclude):
-                return 2 * t - 1, box
-        return None, first_box
+            if free(box):
+                return 2 * t - 1, box, None
+        for t in ts:
+            (cx, cy), (a, b) = locate(t)
+            horizontal = abs(b[0] - a[0]) >= abs(b[1] - a[1])
+            for step in range(1, self._LABEL_SHIFT_STEPS + 1):
+                for sign in (-1, 1):
+                    shift = sign * step * self._LABEL_SHIFT
+                    dx, dy = (0.0, shift) if horizontal else (shift, 0.0)
+                    box = _Box(cx + dx - lw / 2, cy + dy - lh / 2, lw, lh)
+                    if free(box):
+                        return 2 * t - 1, box, (dx, dy)
+        return None, first_box, None
 
     def route_edges(self) -> int:
         """Resolve all pending auto-routed edges now. Returns the count."""
@@ -2591,6 +2649,7 @@ __all__ = [
     "LABEL_H", "ICON_FOOTPRINT_H", "PAD", "ROW1_Y", "COL_W", "ROW_H", "GAP", "BOX_STYLE", "DRG_ICON_STEM",
     "STRADDLE_TOL", "FOREIGN_TOL",
     "add_icons_to_map", "set_icon_dir", "resolve_icon_path", "escape_label", "label_lines",
+    "edge_label_extent",
     "build_cell_registry", "find_container_overlaps", "validate_registry", "validate_file",
     "find_drawio_binary", "render", "OCI_SVG_DIR",
 ]
