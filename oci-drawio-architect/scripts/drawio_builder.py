@@ -658,11 +658,18 @@ EDGE_KIND_STYLES = {
 
 _CONTAINER_TAIL = "container=1;collapsible=0;expand=0;recursiveResize=0;"
 
+BOX_STYLE = (
+    "rounded=1;arcSize=12;whiteSpace=wrap;html=1;strokeWidth=1;"
+    f"strokeColor={COLORS['ivy']};fillColor=#FFFFFF;fontFamily={{font}};fontSize=11;"
+    f"fontColor={COLORS['text_primary']};align=center;verticalAlign=middle;"
+)
+
 GROUP_TYPES = (
     "region", "tenancy", "availability_domain", "fault_domain", "compartment",
     "vcn", "subnet", "services", "oracle_services_network", "onprem", "hub",
-    "other", "metro_or_realm", "third_party_cloud", "internet",
+    "other", "metro_or_realm", "third_party_cloud", "internet", "drg",
 )
+DRG_ICON_STEM = "networking_dynamic_routing_gateway_drg"
 
 
 def _build_group_styles(profile: dict, font: str) -> dict:
@@ -735,9 +742,16 @@ def _build_group_styles(profile: dict, font: str) -> dict:
             f"strokeColor={c['text_primary']};fontSize=11;fontStyle=1;"
             f"fontColor={c['text_primary']};align=center;{_CONTAINER_TAIL}"
         ),
+        "drg": (
+            f"{common}rounded=1;arcSize=10;strokeWidth=1;dashed=1;fillColor=none;"
+            f"strokeColor={c['text_primary']};fontSize=11;fontStyle=1;"
+            f"fontColor={c['text_primary']};{left}{_CONTAINER_TAIL}"
+        ),
     }
     styles["hub"] = styles["onprem"]  # deprecated alias
-    return styles
+    # ``ociGroup`` lets validate_file() recognise VCNs / subnets in written files.
+    return {gt: st.replace(_CONTAINER_TAIL, f"ociGroup={'onprem' if gt == 'hub' else gt};{_CONTAINER_TAIL}")
+            for gt, st in styles.items()}
 
 
 # Module-level view for documentation/tests (default profile, default font).
@@ -1523,7 +1537,7 @@ class DrawioBuilder:
 
         group_type: region, tenancy, availability_domain, fault_domain,
         compartment, vcn, subnet, services, oracle_services_network, onprem,
-        other, metro_or_realm, third_party_cloud, internet (hub = onprem).
+        other, metro_or_realm, third_party_cloud, internet, drg (hub = onprem).
         label_position: "left" or "center" to override the template.
         """
         if group_type not in self._group_styles:
@@ -1552,7 +1566,7 @@ class DrawioBuilder:
     # -- icons ----------------------------------------------------------------
     def add_icon(self, label, icon_key, x, y, parent="1", w=None, h=None,
                  metadata=None, tooltip=None, key=None, label_w=None, label_h=None,
-                 raw_html=False, font_size=None, link=None) -> str:
+                 raw_html=False, font_size=None, link=None, label_fill=None) -> str:
         """Add an OCI icon with a caption below. Returns the icon cell id.
 
         (x, y) is the top-left of a ICON_W x ICON_H slot; the glyph is fitted
@@ -1561,6 +1575,9 @@ class DrawioBuilder:
         text cell) starts LABEL_GAP below the slot, centred on it. Passing
         w and/or h sizes the image cell explicitly instead (the caption then
         follows the cell).
+
+        label_fill: opaque caption background (e.g. COLORS["region_fill"])
+        for icons that straddle a dashed border.
         """
         parent = self._check_parent(parent, "add_icon")
         data_uri, nw, nh = _load_svg(icon_key)
@@ -1584,9 +1601,15 @@ class DrawioBuilder:
             cell_x, cell_y = x, y
             slot = (x, y, cell_w, cell_h)
 
+        role = ""
+        try:
+            if resolve_icon_path(icon_key).stem == DRG_ICON_STEM:
+                role = "ociRole=drg;"
+        except (KeyError, ValueError, FileNotFoundError):
+            role = ""
         style = (
             "shape=image;verticalLabelPosition=bottom;verticalAlign=top;"
-            f"imageAspect=1;aspect=fixed;image={data_uri};"
+            f"imageAspect=1;aspect=fixed;{role}image={data_uri};"
         )
         cid = self._emit_vertex("", style, parent, cell_x, cell_y, cell_w, cell_h,
                                 metadata=metadata, tooltip=tooltip,
@@ -1607,7 +1630,7 @@ class DrawioBuilder:
             label_y = slot[1] + slot[3] + LABEL_GAP
             lid = self._new_id(f"{cid}-label" if key is not None else None)
             label_style = (
-                "text;html=1;strokeColor=none;fillColor=none;align=center;"
+                f"text;html=1;strokeColor=none;fillColor={label_fill or 'none'};align=center;"
                 "verticalAlign=top;whiteSpace=wrap;rounded=0;connectable=0;"
                 f"fontFamily={self.font};fontSize={_fmt_num(fs)};fontStyle=0;"
                 f"fontColor={COLORS['text_primary']};"
@@ -1653,6 +1676,24 @@ class DrawioBuilder:
             right = max(right, fx + fw)
             bottom = max(bottom, fy + fh)
         return ids, (x0, y0, right, bottom)
+
+    # -- labelled boxes ---------------------------------------------------------
+    def add_box(self, label, x, y, w, h, parent="1", key=None, style_extra="",
+                metadata=None, tooltip=None) -> str:
+        """Add a small labelled rounded rectangle (DRG attachment marker, note).
+
+        The cell is a leaf (kind "other"): it is a routing obstacle, takes part
+        in the collision checks and can be an edge endpoint. Returns its id.
+        """
+        parent = self._check_parent(parent, "add_box")
+        if w <= 0 or h <= 0:
+            raise ValueError(f"add_box({label!r}): width and height must be positive")
+        style = _merge_style(BOX_STYLE.replace("{font}", self.font), style_extra)
+        text = escape_label(label)
+        cid = self._emit_vertex(text, style, parent, x, y, w, h, metadata=metadata, tooltip=tooltip,
+                                cid=self._new_id(key) if key is not None else None)
+        self._register(cid, "other", x, y, w, h, parent, label=text)
+        return cid
 
     # -- images / text -------------------------------------------------------
     def add_image(self, image_path, x, y, w, h, parent="1", key=None) -> str:
@@ -2449,7 +2490,7 @@ def _is_ancestor_builder(cells, anc, cid) -> bool:
 __all__ = [
     "DrawioBuilder", "COLORS", "FONT_STACK", "ICON_MAP", "ICON_ALIASES", "GROUP_TYPES",
     "STYLE_PROFILES", "EDGE_KIND_STYLES", "ICON_W", "ICON_H", "GLYPH_W", "GLYPH_H", "LABEL_GAP", "LABEL_W",
-    "LABEL_H", "ICON_FOOTPRINT_H", "PAD", "ROW1_Y", "COL_W", "ROW_H", "GAP",
+    "LABEL_H", "ICON_FOOTPRINT_H", "PAD", "ROW1_Y", "COL_W", "ROW_H", "GAP", "BOX_STYLE", "DRG_ICON_STEM",
     "add_icons_to_map", "set_icon_dir", "resolve_icon_path", "escape_label", "label_lines",
     "build_cell_registry", "find_container_overlaps", "validate_registry", "validate_file",
     "find_drawio_binary", "render", "OCI_SVG_DIR",
