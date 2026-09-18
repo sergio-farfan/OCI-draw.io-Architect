@@ -226,6 +226,20 @@ class OsnPanelTests(unittest.TestCase):
         self.assertGreater(ox, sx + sw)
         self.assertEqual(errors_of(d), [])
 
+    def test_services_colon_vcn_endpoint_resolves_to_the_osn_panel(self):
+        model = {"subject": "svc", "region": "us-ashburn-1",
+                 "vcns": [simple_vcn("a", services=[svc("logging", "log")]),
+                          simple_vcn("b", services=[svc("bastion", "bastion", regional=False)])],
+                 "edges": [{"source": "app-a", "target": "services:a", "kind": "control"},
+                           {"source": "app-b", "target": "services:b", "kind": "control"}]}
+        d = quiet(ol.build_diagram, model)
+        self.assertNotIn("services-a", d._cells)
+        targets = {e["source"]: e["target"] for e in d._cells.values()
+                   if e["kind"] == "edge" and e.get("source") in ("app-a", "app-b")}
+        self.assertEqual(targets["app-a"], "osn")            # the split left VCN a without a panel
+        self.assertEqual(targets["app-b"], "services-b")     # VCN b keeps its own panel
+        self.assertEqual(errors_of(d), [])
+
     def test_no_regional_services_means_no_osn_panel(self):
         d = quiet(ol.build_diagram, MODEL_GW)
         self.assertNotIn("osn", d._cells)
