@@ -1489,6 +1489,19 @@ class TestBadges(TempDirMixin, unittest.TestCase):
         path, _ = self.roundtrip(d)
         self.assertEqual(db.validate_file(path)[0], [])
 
+    def test_badge_of_an_endpoint_is_not_a_crossing_but_another_badge_is(self):
+        """A15: rule 6 treats a badge over an endpoint as part of that endpoint."""
+        d = DrawioBuilder()
+        r = d.add_group("R", 0, 0, 700, 600)
+        a = d.add_icon("A", "vm", 20, 50, parent=r, key="a")
+        b = d.add_icon("B", "vm", 500, 50, parent=r, key="b")
+        c = d.add_icon("C", "vm", 250, 300, parent=r, key="c")      # off the line; only its badge is on it
+        d.add_badge("nsg", 150, 90, parent=r, host=a, key="a-nsg")
+        d.add_edge(a, b, "x", exit_x=1, exit_y=0.5, entry_x=0, entry_y=0.5)
+        self.assertEqual([m for m in d.validate() if "estimated to cross" in m], [])
+        d.add_badge("nsg", 350, 90, parent=r, host=c, key="c-nsg")
+        self.assertTrue(any("estimated to cross" in m for m in d.validate()))
+
     def test_badge_over_a_foreign_icon_is_still_a_collision(self):
         d = DrawioBuilder()
         g = d.add_group("R", 0, 0, 400, 300, key="r")
