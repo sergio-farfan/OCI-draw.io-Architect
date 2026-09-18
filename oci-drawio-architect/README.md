@@ -160,7 +160,7 @@ oci-drawio-architect/
 │   ├── build_icon_catalog.py          # Regenerate / --check references/icon-catalog.md
 │   └── smoke_test.sh                  # Demo -> overlap gate -> PNG (if draw.io present)
 ├── examples/
-│   ├── generate_demo_diagram.py       # Three-page demo: every container type, both DRG styles, edge kinds, legend, table
+│   ├── generate_demo_diagram.py       # Three-page demo: recipe on a hybrid model, both DRG styles, all four edge kinds, legend, plus a custom-API NSG table page
 │   ├── generate_reference_layout.py   # Rebuilds the reference sample from a MODEL dict
 │   └── make_screenshots.py            # Regenerates the README screenshots from the reference example
 ├── tests/
