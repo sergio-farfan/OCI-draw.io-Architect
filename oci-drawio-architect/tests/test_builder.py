@@ -1131,6 +1131,26 @@ class TestValidation(TempDirMixin, unittest.TestCase):
         self.assertTrue(any("caption" in m and "lines" in m for m in msgs))
         self.assertEqual(d.check_overlaps(), [], "warnings are not blocking")
 
+    def test_box_label_taller_than_its_box_is_a_warning(self):
+        # a 43-character parser-style display name in the old fixed 100x44 box
+        text = db.wrap_hints("drg_attachment_vcn_prod_shared_services_hub")
+        lines = db.label_lines(text, 100 - 4, 11)
+        self.assertEqual(lines, 5)
+        d = DrawioBuilder()
+        r = d.add_group("R", 0, 0, 500, 300)
+        d.add_box(text, 20, 50, 100, 44, parent=r, key="tight")
+        msgs = d.validate()
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertTrue(msgs[0].startswith("WARNING: label "), msgs[0])
+        self.assertIn(f"needs ~{lines} lines", msgs[0])
+        self.assertIn("44px tall", msgs[0])
+        self.assertEqual(d.check_overlaps(), [], "warnings are not blocking")
+        # a box grown to the estimated line count (what the layout recipe does) is clean
+        d2 = DrawioBuilder()
+        r2 = d2.add_group("R", 0, 0, 500, 300)
+        d2.add_box(text, 20, 50, 100, lines * db.LABEL_LINE_H + 8, parent=r2, key="roomy")
+        self.assertEqual(d2.validate(), [])
+
     def test_clean_diagram_validates_empty(self):
         d = DrawioBuilder()
         r = d.add_group("R", 0, 0, 500, 300)
@@ -1722,6 +1742,21 @@ class TestModuleCompat(unittest.TestCase):
         self.assertEqual(db.label_lines("short", 101), 1)
         self.assertEqual(db.label_lines("a<br>b<br>c", 101), 3)
         self.assertEqual(db.label_lines("a\nb", 101), 2)
+        # a wrap hint is a break opportunity of zero width: measured as a space
+        self.assertEqual(db.label_lines(f"aaaaa{db.WRAP_HINT}bbbbb", 40, 11), 2)
+        self.assertEqual(db.label_lines("aaaaa bbbbb", 40, 11), 2)
+
+    def test_wrap_hints_only_break_identifier_separators(self):
+        self.assertEqual(db.wrap_hints("vcn_a-b.c"),
+                         f"vcn_{db.WRAP_HINT}a-{db.WRAP_HINT}b.{db.WRAP_HINT}c")
+        self.assertEqual(db.wrap_hints("VCN attachment\nspoke"), "VCN attachment\nspoke")
+        self.assertEqual(db.wrap_hints("ends-"), "ends-")                  # nothing to break before
+        self.assertEqual(db.wrap_hints("a__b"), f"a__{db.WRAP_HINT}b")     # one hint per run
+        self.assertEqual(db.wrap_hints("10.0.0.0/16"), "10.0.0.0/16")      # dotted numbers keep their line
+        self.assertEqual(db.wrap_hints(None), "")
+        hinted = db.wrap_hints("drg_attachment_vcn_prod_shared_services_hub")
+        self.assertEqual(hinted.replace(db.WRAP_HINT, ""), "drg_attachment_vcn_prod_shared_services_hub")
+        self.assertGreater(db.label_lines(hinted, 96, 11), 1)
 
     def test_escape_label(self):
         self.assertEqual(db.escape_label(None), "")

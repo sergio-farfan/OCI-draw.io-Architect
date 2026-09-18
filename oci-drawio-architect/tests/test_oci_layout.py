@@ -344,6 +344,50 @@ class DrgColumnTests(unittest.TestCase):
         self.assertEqual(style_of(d, "e-dashed")["endArrow"], "none")     # explicit dashed keeps the profile look
 
 
+class AttachmentBoxTextTests(unittest.TestCase):
+    """A parser-style display name must wrap inside its box instead of across the diagram."""
+
+    LONG = "drg_attachment_vcn_prod_shared_services_hub"          # 43 chars, no break opportunity
+
+    def _model(self, *labels):
+        atts = [{"type": "vcn", "vcn": "Spoke", "address": f"att-{i}", "label": lab}
+                for i, lab in enumerate(labels)]
+        return {"subject": "Spoke", "region": "us-ashburn-1",
+                "drgs": [{"name": "drg", "address": "drg", "label": "DRG\ndrg", "attachments": atts}],
+                "vcns": [simple_vcn("Spoke")]}
+
+    def test_long_label_gets_wrap_hints_and_a_taller_box(self):
+        d = quiet(ol.build_diagram, self._model(self.LONG))
+        text = d._cells["att-0"]["label"]
+        self.assertIn(db.WRAP_HINT, text)
+        self.assertEqual(text.replace(db.WRAP_HINT, ""), self.LONG)
+        lines = db.label_lines(text, ol.ATT_W - 2 * ol.ATT_TEXT_PAD, ol.ATT_FONT_SIZE)
+        self.assertGreater(lines, 3)
+        _, _, bw, bh = d.abs_bbox("att-0")
+        self.assertEqual(bw, ol.ATT_W)
+        self.assertEqual(bh, lines * db.LABEL_LINE_H + 2 * ol.ATT_TEXT_PAD)
+        self.assertGreater(bh, ol.ATT_H)
+        self.assertEqual(errors_of(d), [])
+        self.assertEqual(d.validate(strict=True), [], "the grown box holds its own label")
+        # the plain label still resolves an edge and stays in the registry
+        self.assertEqual(ol.attachment_label({"type": "vcn", "vcn": "Spoke", "label": self.LONG}), self.LONG)
+
+    def test_short_label_keeps_the_default_box_and_no_hints(self):
+        d = quiet(ol.build_diagram, self._model("VCN attachment\nSpoke"))
+        self.assertEqual(d._cells["att-0"]["label"], "VCN attachment<br>Spoke")
+        self.assertEqual(d.abs_bbox("att-0")[3], ol.ATT_H)
+
+    def test_stacked_boxes_of_different_heights_keep_their_gap(self):
+        d = quiet(ol.build_diagram, self._model(self.LONG, "VCN attachment\nSpoke", self.LONG))
+        boxes = [d.abs_bbox(f"att-{i}") for i in range(3)]
+        for (_, y0, _, h0), (_, y1, _, _) in zip(boxes, boxes[1:]):
+            self.assertEqual(y1 - (y0 + h0), ol.ATT_VGAP)
+        _, dy, _, _ = d.abs_bbox("drg")
+        block = boxes[-1][1] + boxes[-1][3] - boxes[0][1]
+        self.assertAlmostEqual(boxes[0][1] + block / 2, dy + ol.GW_STRADDLE, delta=1)  # centred on the DRG glyph
+        self.assertEqual(d.validate(strict=True), [])
+
+
 class DrgStyleTests(unittest.TestCase):
     def _hub_spoke(self, n=5):
         vcns = [simple_vcn(f"v{i}") for i in range(2)]
