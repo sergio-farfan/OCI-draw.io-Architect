@@ -9,10 +9,12 @@ generated diagram has the same structure as the reference sample:
       +-- Hub / on-premises panel (left, vertically centred on the VCN)
       +-- VCN column(s)
             +-- row 1: lb -> app -> compute -> mgmt subnets (traffic order, 2 icon columns)
-            +-- OCI Services panel (right of row 1)
+            +-- OCI Services panel (right of row 1; VCN-resident services)
             +-- data-tier subnets stretched to the row width
       +-- gateways centred on the VCN border (IGW / NAT bottom, SGW right,
           LPG facing its peer), parented to the region
+      +-- Oracle Services Network panel (region level, right of the VCN columns;
+          regional services, reached from the SGW by an attachment connector)
       edges auto-routed through the gutters; optional legend below the region.
 
 Model schema (JSON-serialisable dict; every key optional except vcns/subject):
@@ -30,12 +32,15 @@ Model schema (JSON-serialisable dict; every key optional except vcns/subject):
          "subnets": [{"name": "sn-priv-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": false,
                       "items": [{"icon": "load_balancer", "label": "Load Balancer\\n10.0.0.23",
                                  "address": "lb", "metadata": {"ocid": "..."}, "tooltip": "..."}]}],
+         # regional services -> Oracle Services Network panel;
+         # "regional": false keeps an item in the VCN panel
          "services": [{"icon": "devops", "label": "DevOps\\nProject + CI/CD", "address": "devops"}],
          "services_label": "OCI Services",
          "gateways": [{"icon": "service_gateway", "type": "sgw",
                        "label": "Service\\nGateway", "address": "sgw"}]
       }],
-      "services": [ ... ],                  # regional services when there are several VCNs
+      "services": [ ... ],                  # regional -> Oracle Services Network panel; the rest
+                                            # joins the VCN panel (single VCN) or a region panel
       "edges": [{"source": "lb", "target": "app-vm", "label": "3000 / 8000", "kind": "data"}],
       "notes": "optional free text placed under the title"
     }
@@ -68,6 +73,7 @@ from drawio_builder import (  # noqa: E402
     COL_W, COLORS, GAP, ICON_FOOTPRINT_H, ICON_W, PAD, ROW1_Y, ROW_H, DrawioBuilder,
     escape_label, render,
 )
+from oci_topology import is_regional  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Layout constants (values reproduce the reference sample's geometry)
@@ -106,6 +112,9 @@ VCN_COLUMN_GAP_GW = 110          # column gap after a VCN with right-border gate
                                  # captions on facing borders must not touch (>= LABEL_W + 1)
 SGW_ICONS = ("service_gateway", "sgw", "networking_service_gateway")
 LPG_ICONS = ("remote_peering_gateway", "rpg", "networking_remote_peering_gateway")
+
+OSN_GAP = 45                     # last VCN column -> Oracle Services Network panel
+OSN_LABEL = "Oracle Services Network"
 
 EDGE_KINDS = {
     "data": dict(dashed=False, color=None),
@@ -171,11 +180,17 @@ def _vcn_order(vcns) -> dict:
     return order
 
 
+def _is_sgw(gw: dict) -> bool:
+    """Service Gateway: the declared type wins; the icon key decides when no type is given."""
+    gtype = str(gw.get("type") or "").lower()
+    return gtype == "sgw" or (not gtype and str(gw.get("icon") or "") in SGW_ICONS)
+
+
 def _gateway_side(gw: dict, vcn_index: int, order: dict) -> str:
     """bottom (IGW, NAT, unknown), right (SGW; LPG whose peer is a later column), left (LPG, earlier peer)."""
     gtype = str(gw.get("type") or "").lower()
     icon = str(gw.get("icon") or "")
-    if gtype == "sgw" or (not gtype and icon in SGW_ICONS):
+    if _is_sgw(gw):
         return "right"
     if gtype == "lpg" or (not gtype and icon in LPG_ICONS):
         peer = gw.get("peer")
@@ -211,6 +226,26 @@ def _place_edge_gateway(d: DrawioBuilder, region_id, box, side: str, slot: int, 
     ids, _ = d.place_icons(region_id, [spec], cols=1, x0=int(x), y0=int(y), label_fill=COLORS["region_fill"])
     reg.add_item(gw, ids[0])
     return ids[0]
+
+
+def _split_services(items) -> tuple:
+    """(regional, vcn-resident) using item['regional'] or the icon-key table."""
+    items = list(items or [])
+    return [s for s in items if is_regional(s)], [s for s in items if not is_regional(s)]
+
+
+def _layout_osn(d: DrawioBuilder, region_id, items, x, y, min_h, reg) -> tuple:
+    """Region-level Oracle Services Network panel; returns (id, w, h)."""
+    rows_n, cols = _grid(len(items), 2)
+    prov_w = cols * COL_W + SUBNET_EXTRA_W
+    prov_h = ROW1_Y + (rows_n - 1) * ROW_H + ICON_FOOTPRINT_H + SUBNET_BOTTOM_PAD
+    pid = d.add_group(OSN_LABEL, x, y, prov_w, prov_h, parent=region_id,
+                      group_type="oracle_services_network", key="osn", label_position="left")
+    reg.containers["osn"] = pid
+    reg.containers.setdefault("services", pid)
+    _icon_items(d, pid, items, cols, reg=reg)
+    w, h = d.fit_to_children(pid, pad=PAD, min_w=prov_w, min_h=max(prov_h, min_h or 0))
+    return pid, w, h
 
 
 class _Registry:
@@ -409,10 +444,15 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
 
     hub = model.get("hub")
     vcn_x = HUB_X + HUB_W + HUB_GAP if hub else PAD
-    vcns = list(model.get("vcns") or [])
-    top_services = list(model.get("services") or [])
+    vcns = [dict(v) for v in (model.get("vcns") or [])]
+    osn_items = []
+    for vcn in vcns:
+        regional, local = _split_services(vcn.get("services"))
+        osn_items.extend(regional)
+        vcn["services"] = local
+    regional, top_services = _split_services(model.get("services"))
+    osn_items.extend(regional)
     if top_services and len(vcns) == 1:
-        vcns[0] = dict(vcns[0])
         vcns[0]["services"] = list(vcns[0].get("services") or []) + top_services
         top_services = []
 
@@ -453,14 +493,29 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                           parent=rid, group_type="services", key="services")
         reg.containers["services"] = pid
         _icon_items(d, pid, top_services, cols, reg=reg)
-        d.fit_to_children(pid, pad=PAD)
+        pw, _ = d.fit_to_children(pid, pad=PAD)
+        x += pw + VCN_COLUMN_GAP
+
+    ref_h = max((b[4] for b in vcn_boxes), default=400)
+    osn_id = None
+    if osn_items:
+        # the VCN loop already added the trailing column gap: subtracting VCN_COLUMN_GAP
+        # leaves last_right + OSN_GAP, plus the extra VCN_COLUMN_GAP_GW - VCN_COLUMN_GAP
+        # when the last column has right-border gateways whose captions need the room.
+        osn_x = (x - VCN_COLUMN_GAP + OSN_GAP) if (vcn_boxes or top_services) else x
+        osn_id, _, _ = _layout_osn(d, rid, osn_items, osn_x, VCN_Y, ref_h, reg)
 
     if hub:
-        ref_h = max((b[4] for b in vcn_boxes), default=400)
         pairs = {(str(e.get("source")), str(e.get("target"))) for e in (model.get("edges") or [])}
         _layout_hub(d, rid, hub, VCN_Y, ref_h, reg, explicit_pairs=pairs)
 
     d.fit_to_children(rid, pad=PAD)
+
+    if osn_id is not None:
+        for _i, side, g, gid in edge_gateways:
+            if side == "right" and _is_sgw(g):
+                d.add_edge(gid, osn_id, "", kind="attachment",
+                           key=f"{g['address']}-osn" if g.get("address") else None)
 
     if model.get("notes"):
         d.add_text(escape_label(model["notes"]), TITLE_BOX[0] + TITLE_BOX[2] + 20, TITLE_BOX[1],

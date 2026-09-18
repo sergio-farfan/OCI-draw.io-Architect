@@ -1409,7 +1409,7 @@ git commit -m "feat(layout): IGW/NAT/SGW/LPG straddle the VCN border as region-l
 - Consumes: `oci_topology.is_regional(item) -> bool`; Task 5 `edge_gateways` list; `DrawioBuilder.add_group(..., group_type="oracle_services_network", label_position="left")`; `add_edge(kind="attachment")` (Task 1).
 - Produces: constants `OSN_GAP = 45`, `OSN_LABEL = "Oracle Services Network"`; `_split_services(items: list) -> tuple[list, list]` (regional, local); `_layout_osn(d, region_id, items, x, y, min_h, reg) -> tuple[str, int, int]` (panel id `osn`, width, height); registry keys `osn` (and `services` when no per-VCN panel exists); one edge per SGW with key `<sgw address>-osn`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `oci-drawio-architect/tests/test_oci_layout.py` (before `if __name__`):
 
@@ -1475,12 +1475,12 @@ class OsnPanelTests(unittest.TestCase):
         self.assertEqual([e for e in d._cells.values() if e["kind"] == "edge" and e.get("target") == "osn"], [])
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout.OsnPanelTests 2>&1 | tail -5`
 Expected: FAIL with `KeyError: 'osn'` (no OSN panel yet) and `'vcn-a' != 'osn'`-style assertion errors.
 
-- [ ] **Step 3: Implement the split and the panel**
+- [x] **Step 3: Implement the split and the panel**
 
 Add to the imports of `oci_layout.py`:
 
@@ -1557,12 +1557,12 @@ Note the last column gap: because the loop adds `VCN_COLUMN_GAP` (or `VCN_COLUMN
 
 Update the module docstring: `+-- Oracle Services Network panel (region level, right of the VCN columns; regional services)` and `"services"` comments (`# regional services -> Oracle Services Network panel; "regional": false keeps an item in the VCN panel`).
 
-- [ ] **Step 4: Run the tests, the suite and the reference gate**
+- [x] **Step 4: Run the tests, the suite and the reference gate**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout -v 2>&1 | tail -14 && cd .. && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3 && python3 oci-drawio-architect/examples/generate_reference_layout.py /tmp/ref13.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/ref13.drawio`
 Expected: 12 layout tests PASS; suite `OK`; reference `OK` - all eight reference services are regional, so the VCN's `OCI Services` panel disappears and an `osn` panel appears right of the VCN. Warnings about estimated crossings are acceptable at this task; errors are not.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/oci_layout.py oci-drawio-architect/tests/test_oci_layout.py
