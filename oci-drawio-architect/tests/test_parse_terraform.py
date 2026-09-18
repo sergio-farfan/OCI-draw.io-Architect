@@ -7,6 +7,8 @@ Fixtures live under tests/fixtures/terraform/:
     three_tier/   HCL project: one VCN, lb/app/data subnets, instance, ADB, LB, IGW/NAT/SGW,
                   DRG + IPSec, bucket and vault (variables, locals, cidrsubnet(), heredocs).
     tfvars_map/   for_each-driven VCNs whose names/CIDRs only exist in *.auto.tfvars.
+    hub_spoke/    two VCNs, one DRG with VCN / FastConnect / RPC attachments, an LPG pair
+                  and a regional log group with no single VCN to attach it to.
     plan.json     hand-written 'terraform show -json tfplan' with unknown values resolved
                   through configuration references, OCID links and nested modules.
 """
@@ -120,23 +122,34 @@ class HclThreeTierTests(unittest.TestCase):
 
     def test_gateways(self):
         gws = {g["type"]: g for g in self.vcn["gateways"]}
-        self.assertEqual(set(gws), {"igw", "nat", "sgw", "drg"})
+        self.assertEqual(set(gws), {"igw", "nat", "sgw"})          # the DRG is no longer a VCN gateway
         self.assertEqual(gws["igw"]["label"], "igw-shop")
         self.assertEqual(gws["igw"]["icon"], "internet_gateway")
         self.assertEqual(gws["nat"]["icon"], "nat_gateway")
         self.assertEqual(gws["sgw"]["icon"], "service_gateway")
-        # DRG attachment used network_details { id = oci_core_vcn.main.id }
-        self.assertEqual(gws["drg"]["label"], "drg-shop")
-        self.assertEqual(gws["drg"]["address"], "oci_core_drg_attachment.vcn")
+        self.assertNotIn("peer", gws["sgw"])
 
-    def test_hub_from_drg_cpe_and_ipsec(self):
+    def test_hub_holds_only_the_on_premises_side(self):
         hub = self.model["hub"]
         self.assertEqual(hub["name"], "On-premises")
-        self.assertEqual(hub["link_label"], "IPSec VPN")
+        self.assertIsNone(hub["link_label"])
         self.assertEqual([(i["icon"], i["label"], i["address"]) for i in hub["items"]],
-                         [("drg", "drg-shop", "oci_core_drg.drg"), ("cpe", "cpe-hq", "oci_core_cpe.onprem")])
-        # the oci_core_ipsec resource does not add a second CPE glyph
-        self.assertNotIn("oci_core_ipsec", [i["type"] for i in hub["items"]])
+                         [("cpe", "cpe-hq", "oci_core_cpe.onprem")])
+
+    def test_drgs_and_attachments(self):
+        m = self.model
+        self.assertEqual(m["schema_version"], 2)
+        self.assertEqual(m["drg_style"], "auto")
+        self.assertEqual(m["drgs"], [{
+            "name": "drg-shop", "address": "oci_core_drg.drg", "label": "DRG\ndrg-shop",
+            "attachments": [
+                {"type": "vcn", "address": "oci_core_drg_attachment.vcn", "label": "drg-att-shop",
+                 "vcn": "vcn-shop", "target": None},
+                {"type": "ipsec", "address": "oci_core_ipsec.vpn@oci_core_drg.drg", "label": "vpn-hq",
+                 "vcn": None, "target": "oci_core_cpe.onprem"},
+            ]}])
+        self.assertIn("oci_core_drg.drg", list(pt.model_addresses(m)))
+        self.assertIn("oci_core_ipsec.vpn@oci_core_drg.drg", list(pt.model_addresses(m)))
 
     def test_regional_services_attach_to_the_single_vcn(self):
         svc = items_by_type(self.vcn["services"])
@@ -144,6 +157,8 @@ class HclThreeTierTests(unittest.TestCase):
         self.assertEqual(svc["oci_objectstorage_bucket"]["icon"], "buckets")
         self.assertEqual(svc["oci_objectstorage_bucket"]["label"], "shop-assets")   # name attr
         self.assertEqual(svc["oci_kms_vault"]["icon"], "vault")
+        self.assertTrue(svc["oci_objectstorage_bucket"]["regional"])
+        self.assertTrue(svc["oci_kms_vault"]["regional"])
         self.assertEqual(self.model["services"], [])
 
     def test_network_controls_are_separated(self):
@@ -154,18 +169,16 @@ class HclThreeTierTests(unittest.TestCase):
 
     def test_edges(self):
         edges = {(e["source"], e["target"]): e for e in self.model["edges"]}
-        cpe_drg = edges[("oci_core_cpe.onprem", "oci_core_drg.drg")]
-        self.assertEqual((cpe_drg["label"], cpe_drg["kind"], cpe_drg["inferred"]), ("IPSec VPN", "control", False))
+        self.assertNotIn(("oci_core_cpe.onprem", "oci_core_drg.drg"), edges)   # drawn from drgs[] by the layout
         app_db = edges[("oci_core_instance.app", "oci_database_autonomous_database.shop")]
         self.assertEqual((app_db["label"], app_db["kind"], app_db["inferred"]), ("1522", "data", True))
         lb_app = edges[("oci_load_balancer_load_balancer.public", "oci_core_instance.app")]
-        self.assertEqual((lb_app["label"], lb_app["inferred"]), ("443", True))   # listener port
-        self.assertEqual(len(edges), 3)
+        self.assertEqual((lb_app["label"], lb_app["inferred"]), ("443", True))
+        self.assertEqual(len(edges), 2)
 
     def test_no_inferred_edges_keeps_only_reference_backed_ones(self):
         model = pt.parse_terraform_dir(FIXTURES / "three_tier", inferred_edges=False)
-        self.assertEqual([(e["source"], e["target"]) for e in model["edges"]],
-                         [("oci_core_cpe.onprem", "oci_core_drg.drg")])
+        self.assertEqual(model["edges"], [])
 
     def test_dot_terraform_data_blocks_and_lb_children_are_ignored(self):
         dump = json.dumps(self.model)
@@ -203,6 +216,71 @@ class HclTfvarsMapTests(unittest.TestCase):
     def test_unplaceable_item_goes_to_top_level_services(self):
         self.assertEqual([(i["icon"], i["label"]) for i in self.model["services"]], [("bastion", "bastion-ops")])
         self.assertEqual(self.model["hub"], None)
+
+
+# ---------------------------------------------------------------------------
+# HCL mode: hub-and-spoke with a region-level DRG
+# ---------------------------------------------------------------------------
+
+class HclHubSpokeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.model = pt.parse_terraform_dir(FIXTURES / "hub_spoke")
+        cls.vcns = {v["name"]: v for v in cls.model["vcns"]}
+
+    def test_valid(self):
+        self.assertEqual(pt.validate_model(self.model, BUILDER_ICONS), [])
+        self.assertEqual(set(self.vcns), {"vcn-hub", "vcn-spoke"})
+        self.assertEqual(self.model["subject"], "hub_spoke")
+
+    def test_drg_with_four_typed_attachments(self):
+        drgs = self.model["drgs"]
+        self.assertEqual(len(drgs), 1)
+        d = drgs[0]
+        self.assertEqual((d["name"], d["address"]), ("drg-core", "oci_core_drg.core"))
+        atts = {a["address"]: a for a in d["attachments"]}
+        self.assertEqual([a["type"] for a in d["attachments"]], ["vcn", "vcn", "virtual_circuit", "rpc"])
+        self.assertEqual((atts["oci_core_drg_attachment.hub"]["vcn"], atts["oci_core_drg_attachment.hub"]["label"]),
+                         ("vcn-hub", "att-hub"))
+        self.assertEqual(atts["oci_core_drg_attachment.spoke"]["vcn"], "vcn-spoke")
+        fc = atts["oci_core_virtual_circuit.fc@oci_core_drg.core"]
+        self.assertEqual((fc["label"], fc["target"]), ("fc-hq", "oci_core_virtual_circuit.fc"))
+        rpc = atts["oci_core_remote_peering_connection.dr@oci_core_drg.core"]
+        self.assertEqual((rpc["label"], rpc["target"]), ("rpc-dr", "oci_core_remote_peering_connection.dr"))
+
+    def test_hub_has_the_virtual_circuit_and_the_rpc_peer(self):
+        hub = self.model["hub"]
+        self.assertEqual(hub["name"], "On-premises")
+        self.assertEqual([(i["icon"], i["label"]) for i in hub["items"]],
+                         [("cpe", "fc-hq"), ("remote_peering_gateway", "rpc-dr")])
+        self.assertNotIn("drg", [i["icon"] for i in hub["items"]])
+
+    def test_lpg_pair_and_local_peering_edge(self):
+        hub_gws = {g["type"]: g for g in self.vcns["vcn-hub"]["gateways"]}
+        spoke_gws = {g["type"]: g for g in self.vcns["vcn-spoke"]["gateways"]}
+        self.assertEqual(hub_gws["lpg"]["peer"], "oci_core_local_peering_gateway.spoke")
+        self.assertIsNone(spoke_gws["lpg"]["peer"])                   # only one side declares peer_id
+        self.assertEqual(set(spoke_gws), {"sgw", "lpg"})
+        peering = [e for e in self.model["edges"] if e["label"] == "Local Peering"]
+        self.assertEqual(peering, [pt.new_edge("oci_core_local_peering_gateway.hub",
+                                               "oci_core_local_peering_gateway.spoke",
+                                               "Local Peering", "attachment", False)])
+
+    def test_regional_service_without_a_single_vcn_goes_to_model_services(self):
+        self.assertEqual([(i["icon"], i["label"], i["regional"]) for i in self.model["services"]],
+                         [("logging", "lg-app", True)])
+
+    def test_select_vcn_prunes_attachments_of_dropped_vcns(self):
+        model = pt.parse_terraform_dir(FIXTURES / "hub_spoke")
+        self.assertTrue(pt.select_vcn(model, "vcn-spoke"))
+        atts = model["drgs"][0]["attachments"]
+        self.assertEqual([a["type"] for a in atts], ["vcn", "virtual_circuit", "rpc"])
+        self.assertEqual(atts[0]["vcn"], "vcn-spoke")
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+        self.assertEqual([e["label"] for e in model["edges"]], [])      # the peering edge lost an endpoint
+
+    def test_summary_mentions_drgs(self):
+        self.assertIn("1 DRG(s) / 4 attachment(s)", pt.summarise(self.model))
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +397,9 @@ class HelperTests(unittest.TestCase):
         model["edges"].append(pt.new_edge("nope", "oci_core_drg.drg", "", "data"))
         model["edges"].append(pt.new_edge("oci_core_drg.drg", "oci_core_cpe.onprem", "", "sideways"))
         model["services"].append(pt.new_item("no_such_icon", "x", "t", "oci_core_drg.drg"))
+        model["drgs"][0]["attachments"][0]["type"] = "tunnel"
+        model["drgs"][0]["attachments"].append(pt.new_attachment("vcn", "att-x", "x", vcn="no-such-vcn"))
+        model["drg_style"] = "fancy"
         problems = pt.validate_model(model, BUILDER_ICONS)
         joined = "\n".join(problems)
         self.assertIn("tier", joined)
@@ -326,6 +407,9 @@ class HelperTests(unittest.TestCase):
         self.assertIn("kind", joined)
         self.assertIn("unknown icon key", joined)
         self.assertIn("appears 2 times", joined)
+        self.assertIn("attachments[0].type", joined)
+        self.assertIn("is not a VCN name", joined)
+        self.assertIn("drg_style", joined)
         self.assertEqual(pt.validate_model([]), ["model: expected dict, got list"])
 
     def test_model_is_empty(self):
@@ -475,7 +559,7 @@ class CliTests(unittest.TestCase):
     def test_no_inferred_edges_flag(self):
         proc = self.run_cli(str(FIXTURES / "three_tier"), "--no-inferred-edges")
         self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertEqual(len(json.loads(proc.stdout)["edges"]), 1)
+        self.assertEqual(json.loads(proc.stdout)["edges"], [])
 
     def test_bad_paths_exit_2(self):
         proc = self.run_cli(str(FIXTURES / "does_not_exist"))
