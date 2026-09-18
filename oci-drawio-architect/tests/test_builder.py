@@ -604,6 +604,39 @@ class TestStyles(TempDirMixin, unittest.TestCase):
         self.assertEqual(solid["rounded"], "0")
         self.assertEqual(solid["fontSize"], "10.5")
 
+    def test_edge_kind_data(self):
+        tok = tokens(self._edge_style("default", kind="data"))
+        self.assertEqual((tok["dashed"], tok["endArrow"], tok["strokeWidth"]), ("0", "open", "1.5"))
+        self.assertNotIn("dashPattern", tok)
+
+    def test_edge_kind_control_is_dashed_with_open_arrow_in_every_profile(self):
+        for profile in ("default", "official", "v1.0"):
+            tok = tokens(self._edge_style(profile, kind="control"))
+            self.assertEqual((tok["dashed"], tok["endArrow"]), ("1", "open"), profile)
+        self.assertIn("dashPattern=6 3", self._edge_style("default", kind="control"))
+        self.assertNotIn("dashPattern", tokens(self._edge_style("official", kind="control")))
+
+    def test_edge_kind_association_is_dotted_without_arrowhead(self):
+        tok = tokens(self._edge_style("default", kind="association"))
+        self.assertEqual((tok["dashed"], tok["dashPattern"], tok["endArrow"]), ("1", "1 3", "none"))
+
+    def test_edge_kind_attachment_is_thin_solid_without_arrowhead(self):
+        tok = tokens(self._edge_style("default", kind="attachment"))
+        self.assertEqual((tok["dashed"], tok["endArrow"], tok["strokeWidth"]), ("0", "none", "1"))
+
+    def test_edge_kind_keeps_colour_override_and_rejects_unknown(self):
+        tok = tokens(self._edge_style("default", kind="data", color=db.COLORS["edge_accent"]))
+        self.assertEqual(tok["strokeColor"], db.COLORS["edge_accent"])
+        d = DrawioBuilder()
+        a = d.add_icon("A", "vm", 0, 0)
+        b = d.add_icon("B", "vm", 300, 0)
+        with self.assertRaises(ValueError):
+            d.add_edge(a, b, kind="sideways")
+        self.assertEqual(set(db.EDGE_KIND_STYLES), {"data", "control", "association", "attachment"})
+
+    def test_plain_dashed_flag_keeps_profile_behaviour(self):
+        self.assertIn("endArrow=none", self._edge_style("default", dashed=True))
+
     def test_v10_profile_spacing_and_vcn_font(self):
         d = DrawioBuilder(style_profile="v1.0")
         r = d.add_group("R", 0, 0, 800, 600, group_type="region")
@@ -1228,9 +1261,9 @@ class TestHelpers(TempDirMixin, unittest.TestCase):
         edges = [c for _, c in kids if c.get("edge") == "1"]
         texts = [c for _, c in kids if "text" in tokens(c.get("style")) and c.get("vertex") == "1"]
         swatches = [c for _, c in kids if c.get("vertex") == "1" and "text" not in tokens(c.get("style"))]
-        self.assertEqual(len(edges), 2)
+        self.assertEqual(len(edges), 4)
         self.assertEqual(len(swatches), 4)
-        self.assertEqual(len(texts), 6)
+        self.assertEqual(len(texts), 8)
         for sw in swatches:
             self.assertNotIn("container", tokens(sw.get("style")))
         for e in edges:
@@ -1246,6 +1279,29 @@ class TestHelpers(TempDirMixin, unittest.TestCase):
         self.assertEqual(len(kids), 4)  # 1 edge + 1 swatch + 2 texts
         purple = [c for c in kids if c.get("edge") == "1"][0]
         self.assertEqual(tokens(purple.get("style"))["strokeColor"], db.COLORS["edge_purple"])
+
+    def test_add_legend_default_rows_cover_the_four_connector_kinds(self):
+        gid = self.d.add_legend(20, 20)
+        kids = [c for _, c, _ in iter_cells(self.d.root) if c.get("parent") == gid]
+        edge_styles = [tokens(c.get("style")) for c in kids if c.get("edge") == "1"]
+        self.assertEqual([(t["dashed"], t["endArrow"]) for t in edge_styles],
+                         [("0", "open"), ("1", "open"), ("1", "none"), ("0", "none")])
+        self.assertEqual(edge_styles[2]["dashPattern"], "1 3")
+        self.assertEqual(edge_styles[3]["strokeWidth"], "1")
+        texts = [c.get("value") for c in kids if c.get("vertex") == "1" and "text" in tokens(c.get("style"))]
+        self.assertEqual(texts, ["Data flow (protocol / port)", "Management / administrative traffic",
+                                 "Association / dependency", "Attachment (structural)",
+                                 "Region / on-premises", "VCN", "Subnet", "Oracle Services Network"])
+
+    def test_add_legend_accepts_kind_names_and_dotted_thin(self):
+        gid = self.d.add_legend(20, 20, entries=[("edge", "attachment", "A"), ("edge", "dotted", "B"),
+                                                 ("edge", "thin", "C"), ("edge", "control", "D")])
+        edges = [tokens(c.get("style")) for _, c, _ in iter_cells(self.d.root)
+                 if c.get("parent") == gid and c.get("edge") == "1"]
+        self.assertEqual([e["endArrow"] for e in edges], ["none", "none", "none", "open"])
+        self.assertEqual(edges[1]["dashPattern"], "1 3")
+        with self.assertRaises(ValueError):
+            self.d.add_legend(20, 300, entries=[("edge", "zigzag", "x")])
 
     def test_add_table_html_rows(self):
         tid = self.d.add_table([["Source", "Dest", "Port"], ["0.0.0.0/0", "10.0.1.0/24", "443"],

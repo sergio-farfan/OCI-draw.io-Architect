@@ -33,7 +33,7 @@
 - Consumes: existing `DrawioBuilder.add_edge(source, target, label="", parent=None, dashed=False, color=None, style_extra="", exit_x=None, exit_y=None, entry_x=None, entry_y=None, waypoints=None, orthogonal=None, route=None, label_pos=None, arrow=None, key=None, raw_html=False) -> str`; `STYLE_PROFILES[name]["dash_pattern"|"dashed_arrow"|"edge_width"]`.
 - Produces: module constant `EDGE_KIND_STYLES: dict[str, dict]` with keys `data`, `control`, `association`, `attachment` (values have keys `dashed: bool`, `arrow: str`, `width: int | None`, `dash_pattern: str | None`); new keyword `kind: str | None = None` on `add_edge` (after `raw_html`); `_arrow_fragment(self, dashed, arrow=None, dash_pattern=None) -> str`; `_edge_base_style(self, color, dashed, style_extra, orthogonal, arrow=None, width=None, dash_pattern=None) -> str`; `add_legend` accepting edge entry styles `"solid"|"dashed"|"accent"|"purple"|"dotted"|"thin"|"data"|"control"|"association"|"attachment"` and new default entries (4 edges + 4 group swatches).
 
-- [ ] **Step 1: Write the failing tests for edge kinds**
+- [x] **Step 1: Write the failing tests for edge kinds**
 
 Append to class `TestStyles` in `oci-drawio-architect/tests/test_builder.py` (after `test_official_profile_edges`):
 
@@ -72,12 +72,12 @@ Append to class `TestStyles` in `oci-drawio-architect/tests/test_builder.py` (af
         self.assertIn("endArrow=none", self._edge_style("default", dashed=True))
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestStyles -v 2>&1 | tail -15`
 Expected: the five `test_edge_kind_*` tests ERROR with `TypeError: DrawioBuilder.add_edge() got an unexpected keyword argument 'kind'`; `test_plain_dashed_flag_keeps_profile_behaviour` and the pre-existing TestStyles tests PASS.
 
-- [ ] **Step 3: Implement `EDGE_KIND_STYLES`, the style overrides and `kind=`**
+- [x] **Step 3: Implement `EDGE_KIND_STYLES`, the style overrides and `kind=`**
 
 In `oci-drawio-architect/scripts/drawio_builder.py`, insert after `STYLE_PROFILES["sample"] = STYLE_PROFILES["v1.0"]` (line 646):
 
@@ -141,12 +141,12 @@ In `add_edge`, change the signature to end with `key=None, raw_html=False, kind=
 
 Then pass the overrides in both `_edge_base_style` calls inside `add_edge`: `self._edge_base_style(color, dashed, style_extra, orthogonal=False, arrow=arrow, width=width, dash_pattern=dash_pattern)` (pinned branch) and `self._edge_base_style(color, dashed, style_extra, orthogonal=True, arrow=arrow, width=width, dash_pattern=dash_pattern)` (router branch). Add a docstring line: `kind: "data" | "control" | "association" | "attachment" applies EDGE_KIND_STYLES (dashed / arrow / width / dash pattern); explicit arrow= still wins.` Add `"EDGE_KIND_STYLES"` to `__all__` after `"STYLE_PROFILES"`.
 
-- [ ] **Step 4: Run the edge-kind tests**
+- [x] **Step 4: Run the edge-kind tests**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestStyles -v 2>&1 | tail -15`
 Expected: all `TestStyles` tests PASS (including the six new ones).
 
-- [ ] **Step 5: Write the failing legend tests**
+- [x] **Step 5: Write the failing legend tests**
 
 In `oci-drawio-architect/tests/test_builder.py` class `TestHelpers`, replace `test_add_legend_creates_group_with_swatches_and_texts` assertions `self.assertEqual(len(edges), 2)`, `self.assertEqual(len(swatches), 4)`, `self.assertEqual(len(texts), 6)` with `4`, `4`, `8`, and add after `test_add_legend_custom_entries`:
 
@@ -175,12 +175,12 @@ In `oci-drawio-architect/tests/test_builder.py` class `TestHelpers`, replace `te
             self.d.add_legend(20, 300, entries=[("edge", "zigzag", "x")])
 ```
 
-- [ ] **Step 6: Run the legend tests to verify they fail**
+- [x] **Step 6: Run the legend tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestHelpers -k legend -v 2>&1 | tail -8`
 Expected: FAIL (`AssertionError: 2 != 4`, and the new tests fail on row texts / `ValueError` not raised).
 
-- [ ] **Step 7: Implement the legend changes**
+- [x] **Step 7: Implement the legend changes**
 
 In `add_legend` (line 1786) replace the default `entries` list and the edge branch:
 
@@ -216,12 +216,12 @@ and inside the loop:
 
 (the rest of the edge branch - `eid`, `cell`, `geom`, source/target points, registry entry - is unchanged). The `"dashed"` legacy entry keeps the profile's no-arrow look; the `"purple"` legacy entry now shows the open arrowhead of kind control, matching the datalake edges after Task 7 (existing tests only assert its strokeColor).
 
-- [ ] **Step 8: Run the whole suite**
+- [x] **Step 8: Run the whole suite**
 
 Run: `python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3`
 Expected: `OK` (244 existing + 8 new tests).
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/drawio_builder.py oci-drawio-architect/tests/test_builder.py
