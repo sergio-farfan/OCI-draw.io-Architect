@@ -26,7 +26,7 @@
 ### Task 1: Builder edge kinds and legend
 
 **Files:**
-- Modify: `oci-drawio-architect/scripts/drawio_builder.py:1786-1858` (`add_legend`, `_arrow_fragment`, `_edge_base_style`), `:1860-1960` (`add_edge`), `:2411-2417` (`__all__`)
+- Modify: `oci-drawio-architect/scripts/drawio_builder.py:1786-1858` (`add_legend`, `_arrow_fragment`, `_edge_base_style`), `:1860-1960` (`add_edge`), `:2410-2417` (`__all__`)
 - Test: `oci-drawio-architect/tests/test_builder.py` (class `TestStyles` around line 541, class `TestHelpers` legend tests around line 1222)
 
 **Interfaces:**
@@ -74,8 +74,8 @@ Append to class `TestStyles` in `oci-drawio-architect/tests/test_builder.py` (af
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `python3 -m unittest oci-drawio-architect.tests.test_builder -k edge_kind 2>&1 | tail -5` (or `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestStyles -v`)
-Expected: FAIL with `TypeError: add_edge() got an unexpected keyword argument 'kind'` and `AttributeError: module 'drawio_builder' has no attribute 'EDGE_KIND_STYLES'`.
+Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestStyles -v 2>&1 | tail -15`
+Expected: the five `test_edge_kind_*` tests ERROR with `TypeError: DrawioBuilder.add_edge() got an unexpected keyword argument 'kind'`; `test_plain_dashed_flag_keeps_profile_behaviour` and the pre-existing TestStyles tests PASS.
 
 - [ ] **Step 3: Implement `EDGE_KIND_STYLES`, the style overrides and `kind=`**
 
@@ -214,7 +214,7 @@ and inside the loop:
                                               width=ks["width"], dash_pattern=ks["dash_pattern"])
 ```
 
-(the rest of the edge branch - `eid`, `cell`, `geom`, source/target points, registry entry - is unchanged). The `"dashed"` legacy entry keeps the profile's no-arrow look so existing custom legends do not change.
+(the rest of the edge branch - `eid`, `cell`, `geom`, source/target points, registry entry - is unchanged). The `"dashed"` legacy entry keeps the profile's no-arrow look; the `"purple"` legacy entry now shows the open arrowhead of kind control, matching the datalake edges after Task 7 (existing tests only assert its strokeColor).
 
 - [ ] **Step 8: Run the whole suite**
 
@@ -233,7 +233,7 @@ git commit -m "feat(builder): connector kinds data/control/association/attachmen
 ### Task 2: Builder `drg` group type, `ociGroup`/`ociRole` tokens, `add_box()` and caption fill
 
 **Files:**
-- Modify: `oci-drawio-architect/scripts/drawio_builder.py:650-733` (`GROUP_TYPES`, `_build_group_styles`), `:1508-1612` (`add_group` docstring, `add_icon`), new method after `place_icons` (line ~1645), `:2411-2417` (`__all__`)
+- Modify: `oci-drawio-architect/scripts/drawio_builder.py:650-733` (`GROUP_TYPES`, `_build_group_styles`), `:1508-1612` (`add_group` docstring, `add_icon`), new method after `place_icons` (line ~1645), `:2410-2417` (`__all__`)
 - Test: `oci-drawio-architect/tests/test_builder.py` (new class `TestTopologyCells` placed before `TestValidation`)
 
 **Interfaces:**
@@ -319,7 +319,7 @@ class TestTopologyCells(TempDirMixin, unittest.TestCase):
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestTopologyCells -v 2>&1 | tail -12`
-Expected: FAIL with `ValueError: Unknown group_type 'drg'`, `AttributeError: 'DrawioBuilder' object has no attribute 'add_box'`, `KeyError: 'ociGroup'`, `TypeError: add_icon() got an unexpected keyword argument 'label_fill'`.
+Expected: FAIL/ERROR with `AssertionError: 'drg' not found in ('region', ...)`, `AttributeError: 'DrawioBuilder' object has no attribute 'add_box'`, `KeyError: 'ociGroup'`, `KeyError: 'ociRole'`, `TypeError: DrawioBuilder.add_icon() got an unexpected keyword argument 'label_fill'`.
 
 - [ ] **Step 3: Implement the group type and tokens**
 
@@ -421,7 +421,7 @@ git commit -m "feat(builder): drg group type, ociGroup/ociRole style tokens, add
 ### Task 3: Validator - straddle tolerance, foreign containment, DRG-in-VCN error
 
 **Files:**
-- Modify: `oci-drawio-architect/scripts/drawio_builder.py:955-982` (`_label_of`, `_attach_captions`), `:1049-1162` (`validate_registry`), `:2411-2417` (`__all__`)
+- Modify: `oci-drawio-architect/scripts/drawio_builder.py:955-982` (`_label_of`, `_attach_captions`), `:1049-1162` (`validate_registry`), `:2410-2417` (`__all__`); `oci-drawio-architect/scripts/check_overlaps.py:9-13` (docstring check list)
 - Test: `oci-drawio-architect/tests/test_builder.py` (new class `TestForeignContainment` after `TestValidation`)
 
 **Interfaces:**
@@ -544,7 +544,7 @@ class TestForeignContainment(TempDirMixin, unittest.TestCase):
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestForeignContainment -v 2>&1 | tail -14`
-Expected: `test_region_parented_drg_inside_vcn_is_an_error`, `test_vcn_parented_drg_is_also_an_error`, `test_region_parented_vm_inside_vcn...`, `test_icon_inside_a_foreign_subnet...`, `test_mostly_inside...`, `test_box_inside_foreign_vcn...`, `test_handwritten_file...` FAIL (no errors reported: `[] != [...]`); `test_border_centred_gateway_is_clean_whichever_parent` FAILS for `parent_is_vcn=True` with the `extends outside its parent` error.
+Expected: `test_region_parented_drg_inside_vcn_is_an_error`, `test_vcn_parented_drg_is_also_an_error`, `test_icon_inside_a_foreign_subnet...`, `test_mostly_inside...`, `test_box_inside_foreign_vcn...`, `test_handwritten_file...` FAIL with `[] != [...]` / `False is not true`; `test_region_parented_vm_inside_vcn...` FAILS with `0 != 2`; `test_border_centred_gateway_is_clean_whichever_parent` FAILS for `parent_is_vcn=True` with the `extends outside its parent` error; `test_side_border_gateway_is_clean` and `test_own_children_are_never_foreign` already PASS.
 
 - [ ] **Step 3: Implement the helpers**
 
@@ -1094,7 +1094,7 @@ git commit -m "feat(layout): oci_topology module with classify_topology, legacy 
 
 **Interfaces:**
 - Consumes: `DrawioBuilder.place_icons(parent, items, cols, x0, y0, **icon_kwargs)` with `label_fill=` (Task 2); `COLORS["region_fill"]`; `ICON_W`, `ICON_FOOTPRINT_H`, `ROW_H`, `ROW1_Y`, `PAD` from `drawio_builder`.
-- Produces: constants `GW_STRADDLE = 40`, `GW_SIDE_DX = 38`, `SIDE_GW_Y0 = ROW1_Y`, `LEFT_GW_Y0 = ROW1_Y + 80`, `SIDE_GW_PITCH = ROW_H`, `VCN_BOTTOM_PAD_GW = 60`, `VCN_SIDE_PAD = 60`, `SIDE_INSET = 40`, `VCN_COLUMN_GAP_GW = 80`; functions `_vcn_order(vcns: list) -> dict[str, int]`, `_gateway_side(gw: dict, vcn_index: int, order: dict) -> str` (`"bottom" | "right" | "left"`), `_gateway_sides(vcn: dict, vcn_index: int, order: dict) -> dict[str, list]` (keys `left`, `right`, `bottom`), `_place_edge_gateway(d, region_id, box: tuple, side: str, slot: int, gw: dict, reg) -> str`; `_layout_vcn(d, region_id, vcn, x, y, reg, max_row_w=MAX_ROW_W, inset_left=0, right_pad=PAD, bottom_pad=VCN_BOTTOM_PAD, min_h=200) -> tuple[str, int, int]` (no longer draws gateways). Gateways are children of the region with their address as cell id.
+- Produces: constants `GW_STRADDLE = 40`, `GW_SIDE_DX = 38`, `SIDE_GW_Y0 = ROW1_Y`, `LEFT_GW_Y0 = SIDE_GW_Y0`, `SIDE_GW_PITCH = ROW_H`, `VCN_BOTTOM_PAD_GW = 60`, `VCN_SIDE_PAD = 60`, `SIDE_INSET = 40`, `VCN_COLUMN_GAP_GW = 110`; functions `_vcn_order(vcns: list) -> dict[str, int]`, `_gateway_side(gw: dict, vcn_index: int, order: dict) -> str` (`"bottom" | "right" | "left"`), `_gateway_sides(vcn: dict, vcn_index: int, order: dict) -> dict[str, list]` (keys `left`, `right`, `bottom`), `_place_edge_gateway(d, region_id, box: tuple, side: str, slot: int, gw: dict, reg) -> str`; `_layout_vcn(d, region_id, vcn, x, y, reg, max_row_w=MAX_ROW_W, inset_left=0, right_pad=PAD, bottom_pad=VCN_BOTTOM_PAD, min_h=200) -> tuple[str, int, int]` (no longer draws gateways). Gateways are children of the region with their address as cell id.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1252,12 +1252,12 @@ In `oci-drawio-architect/scripts/oci_layout.py` after `DATA_TIERS = ("data",)` (
 GW_STRADDLE = 40                 # slot top -> glyph centre (GLYPH_TOP + GLYPH_H / 2)
 GW_SIDE_DX = 38                  # slot left offset from a side border (round(ICON_W / 2))
 SIDE_GW_Y0 = ROW1_Y              # first right-border slot
-LEFT_GW_Y0 = ROW1_Y + 80         # first left-border slot (offset from the neighbour's right-border slots)
+LEFT_GW_Y0 = SIDE_GW_Y0          # first left-border slot: same y series as the right-border slots (spec 7.3)
 SIDE_GW_PITCH = ROW_H
 VCN_BOTTOM_PAD_GW = 60           # VCN bottom padding when bottom-border gateways exist
 VCN_SIDE_PAD = 60                # VCN right padding when right-border gateways exist
 SIDE_INSET = 40                  # extra left inset of the VCN content when left-border gateways exist
-VCN_COLUMN_GAP_GW = 80           # column gap after a VCN with right-border gateways
+VCN_COLUMN_GAP_GW = 110          # column gap after a VCN with right-border gateways: two 105 px captions on facing borders must not touch (>= LABEL_W + 1)
 SGW_ICONS = ("service_gateway", "sgw", "networking_service_gateway")
 LPG_ICONS = ("remote_peering_gateway", "rpg", "networking_remote_peering_gateway")
 ```
@@ -1329,7 +1329,22 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
                 inset_left=0, right_pad=PAD, bottom_pad=VCN_BOTTOM_PAD, min_h=200):
 ```
 
-Inside it: `cx = PAD + inset_left` at the start of each row; `px = (row1_right + PANEL_GAP) if rows else PAD + inset_left`; data subnets at `PAD + inset_left` with `row_w = max(row1_right - PAD - inset_left, 0)`; delete the whole `# Gateways in the bottom row (bare icons)` block (lines 279-292, including `content_bottom` and `gateways`); replace the last three lines with:
+Inside it, four one-line edits plus one block replacement (before -> after):
+
+Lines 243-245: `row1_right = PAD` -> `row1_right = PAD + inset_left`; `cx = PAD` -> `cx = PAD + inset_left`.
+Line 261: `px = (row1_right + PANEL_GAP) if rows else PAD` -> `px = (row1_right + PANEL_GAP) if rows else PAD + inset_left`.
+Lines 272-276:
+
+```python
+    row_w = max(row1_right - PAD - inset_left, 0)
+    for s in data_subnets:
+        n = len(s.get("items") or [])
+        sid, w, h = _layout_subnet(d, vid, s, PAD + inset_left, cy, max(2, min(5, n or 2)), reg,
+                                   min_w=row_w if row_w else None)
+        cy += h + V_GAP
+```
+
+Then delete lines 279-292 (the whole `# Gateways in the bottom row (bare icons)` block, including `content_bottom` and `gateways`) and replace lines 294-296 (the last three lines: `fit_to_children`, `resize`, `return`) with:
 
 ```python
     w, h = d.fit_to_children(vid, pad=PAD, min_w=300, min_h=min_h)
@@ -1338,6 +1353,8 @@ Inside it: `cx = PAD + inset_left` at the start of each row; `px = (row1_right +
     d.resize(vid, w=w, h=h)
     return vid, w, h
 ```
+
+`GW_GAP` (line 80) becomes unused and may be deleted.
 
 In `build_diagram`, replace the VCN loop (`vcn_boxes = [] ... x += w + VCN_COLUMN_GAP`) with:
 
@@ -1414,7 +1431,8 @@ class OsnPanelTests(unittest.TestCase):
         self.assertEqual(d._cells["osn"]["group_type"], "oracle_services_network")
         self.assertEqual(d._cells["osn"]["parent"], "region")
         self.assertEqual(style_of(d, "osn")["align"], "left")
-        self.assertEqual(ox, vx + vw + ol.OSN_GAP)
+        # a right-border SGW widens the last column gap so its caption clears the panel
+        self.assertEqual(ox, vx + vw + ol.OSN_GAP + (ol.VCN_COLUMN_GAP_GW - ol.VCN_COLUMN_GAP))
         self.assertEqual((oy, oh), (vy, vh))                          # same vertical extent as the VCN
         self.assertEqual(d._cells["log"]["parent"], "osn")
         self.assertEqual(d._cells["bkt"]["parent"], "osn")
@@ -1535,7 +1553,7 @@ The existing `ref_h` computation inside `if hub:` is removed (it is computed onc
                            key=f"{g['address']}-osn" if g.get("address") else None)
 ```
 
-Note the last column gap: because the loop adds `VCN_COLUMN_GAP` (or `VCN_COLUMN_GAP_GW`) after the last VCN, `osn_x = x - VCN_COLUMN_GAP + OSN_GAP` gives `last_right + OSN_GAP` when the last VCN had no right gateways and `last_right + OSN_GAP + 35` when it had (extra room for the SGW caption). The test asserts the first case.
+Note the last column gap: because the loop adds `VCN_COLUMN_GAP` (or `VCN_COLUMN_GAP_GW`) after the last VCN, `osn_x = x - VCN_COLUMN_GAP + OSN_GAP` gives `last_right + OSN_GAP` when the last VCN had no right gateways and `last_right + OSN_GAP + (VCN_COLUMN_GAP_GW - VCN_COLUMN_GAP)` when it had (room for the SGW caption). The test asserts the second case because its VCN has an SGW.
 
 Update the module docstring: `+-- Oracle Services Network panel (region level, right of the VCN columns; regional services)` and `"services"` comments (`# regional services -> Oracle Services Network panel; "regional": false keeps an item in the VCN panel`).
 
@@ -1717,7 +1735,7 @@ class LegacyModelTests(unittest.TestCase):
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout.DrgColumnTests tests.test_oci_layout.DrgStyleTests tests.test_oci_layout.LegacyModelTests 2>&1 | tail -6`
-Expected: ERROR/FAIL - `KeyError: 'drg'` (no DRG cell), `AttributeError: 'DrawioBuilder' object has no attribute 'layout_info'`, `TypeError: build_diagram() got an unexpected keyword argument 'drg_style'`, and for the legacy model `ValueError: edge endpoint 'drg' not found`.
+Expected: ERROR/FAIL - DrgColumnTests error in setUpClass with `ValueError: edge endpoint 'drg' not found` (no DRG cell yet), `TypeError: build_diagram() got an unexpected keyword argument 'drg_style'` in DrgStyleTests, `AttributeError: 'DrawioBuilder' object has no attribute 'layout_info'`, and for the legacy model `AssertionError: 'hub' != 'region'` (the DRG is still drawn inside the hub panel).
 
 - [ ] **Step 3: Constants, imports and `EDGE_KINDS`**
 
@@ -2022,7 +2040,7 @@ git commit -m "feat(layout): region-level DRG column with attachment boxes, icon
 - Consumes: `build_diagram(..., drg_style=)` (Task 7); `write_diagram(model, out_path, strict=False, render_fmt=None, **opts)` (unchanged, forwards `drg_style`); `check_overlaps.main(argv) -> int`.
 - Produces: CLI `python3 oci_layout.py model.json -o out.drawio [--profile ...] [--legend] [--logo f] [--strict] [--render png|svg|pdf] [--drg-style auto|icon|box]`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the CLI test (the first one fails; the second is a regression guard that already passes after Task 7)**
 
 Append to `oci-drawio-architect/tests/test_oci_layout.py`:
 
@@ -2052,7 +2070,7 @@ class CliTests(unittest.TestCase):
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout.CliTests 2>&1 | tail -4`
-Expected: `SystemExit: 2` from argparse (`unrecognized arguments: --drg-style box`).
+Expected: test_cli_drg_style_and_gate errors with `SystemExit: 2` from argparse (`unrecognized arguments: --drg-style box`); test_write_diagram_forwards_drg_style_and_legend passes.
 
 - [ ] **Step 3: Add the flag and update the docstring**
 
@@ -2142,7 +2160,7 @@ git commit -m "feat(layout): --drg-style CLI flag and schema-2 docstring"
 
 **Files:**
 - Create: `oci-drawio-architect/tests/fixtures/terraform/hub_spoke/main.tf`
-- Modify: `oci-drawio-architect/scripts/parse_terraform.py:1-90` (docstring), `:94-107` (constants), `:236-281` (factories), `:352-475` (`validate_model`, `model_addresses`, `model_is_empty`), `:485-502` (`select_vcn`), `:1009-1034` (`ModelBuilder.__init__`), `:1154-1208` (`_build_gateways`, `_build_drgs`, `_build_hub`), `:1241-1264` (`_build_items`), `:1284-1314` (`_build_edges`), `:1402-1416` (`build`), `:1457-1464` (`summarise`)
+- Modify: `oci-drawio-architect/scripts/parse_terraform.py:1-90` (docstring), `:94-103` (constants), `:236-281` (factories), `:352-475` (`validate_model`, `model_addresses`, `model_is_empty`), `:485-502` (`select_vcn`), `:1009-1034` (`ModelBuilder.__init__`), `:1154-1208` (`_build_gateways`, `_build_drgs`, `_build_hub`), `:1241-1264` (`_build_items`), `:1284-1314` (`_build_edges`), `:1402-1416` (`build`), `:1457-1464` (`summarise`)
 - Test: `oci-drawio-architect/tests/test_parse_terraform.py`
 
 **Interfaces:**
@@ -2405,7 +2423,7 @@ Expected: several FAIL/ERROR - `KeyError: 'drgs'`, `AttributeError: module 'pars
 
 - [ ] **Step 4: Constants and factories**
 
-In `parse_terraform.py` replace lines 94-107 with:
+In `parse_terraform.py` replace lines 94-103 (`SCHEMA_VERSION` through the closing `}` of `GATEWAY_ICONS`; keep the `# Resource type -> (icon key, default label)` banner at lines 105-107) with:
 
 ```python
 SCHEMA_VERSION = 2
@@ -2638,7 +2656,7 @@ In `_build_edges` delete the `# IPSec / FastConnect: CPE -> DRG` block (from `hu
             edges.append(new_edge(pair[0], pair[1], "Local Peering", "attachment", False))
 ```
 
-In `build()` call `self._build_drg_links()` right after `self._build_hub()`. Update the module docstring: schema block (`schema_version: 2`, `"drg_style": "auto"|"icon"|"box"`, the `drgs` block from the spec, `services[].regional: bool`, `gateways[].type` without `drg` and optional `"peer": str | null` on LPGs, `edges[].kind` values) and replace the paragraph "A DRG is reported once per attached VCN ..." with: "A DRG is reported once in ``drgs`` with one typed attachment per ``oci_core_drg_attachment`` (VCN), ``oci_core_ipsec`` (ipsec, target = the CPE), ``oci_core_virtual_circuit`` (virtual_circuit) and ``oci_core_remote_peering_connection`` (rpc); a DRG without attachments in a single-VCN model gets an implicit ``<drg>@<vcn>`` attachment. ``hub`` holds the on-premises side only (CPE, virtual circuit, RPC peer). LPG pairs produce one ``Local Peering`` edge of kind ``attachment``; the layout draws the DRG attachment connectors itself."
+In `build()` call `self._build_drg_links()` right after `self._build_hub()`. Update the module docstring: schema block (`schema_version: 2`, `"drg_style": "auto"|"icon"|"box"`, the `drgs` block from the spec, `services[].regional: bool`, `gateways[].type` without `drg` and optional `"peer": str | null` on LPGs, `edges[].kind` values) and replace the paragraph "A DRG is reported once per attached VCN ..." with: "A DRG is reported once in ``drgs`` with one typed attachment per ``oci_core_drg_attachment`` (VCN), ``oci_core_ipsec`` (ipsec, target = the CPE), ``oci_core_virtual_circuit`` (virtual_circuit) and ``oci_core_remote_peering_connection`` (rpc); a DRG without attachments in a single-VCN model gets an implicit ``<drg>@<vcn>`` attachment. ``hub`` holds the on-premises side only (CPE, virtual circuit, RPC peer). LPG pairs produce one ``Local Peering`` edge of kind ``attachment``; the layout draws the DRG attachment connectors itself." Concretely, in the docstring schema block: line 15 `MODEL schema (``SCHEMA_VERSION = 2``)`; line 20 `"schema_version": 2,`; after line 26 (`"source": ...`) insert `"drg_style": "auto"|"icon"|"box",` and the `"drgs": [ {"name": str, "address": str, "label": str, "attachments": [ {"type": "vcn"|"ipsec"|"virtual_circuit"|"rpc"|"loopback", "address": str, "label": str, "vcn": str | null, "target": str | null} ]} ],` block from spec section 5; line 42 `"services": [ ITEM ],       # ... ITEM carries "regional": bool`; lines 45-46 `{"icon": "internet_gateway"|"nat_gateway"|"service_gateway"|"remote_peering_gateway", "type": "igw"|"nat"|"sgw"|"lpg", "label": str, "address": str | null, "peer": str | null   # lpg only}`; line 52 `"kind": "data"|"control"|"association"|"attachment"`.
 
 - [ ] **Step 7: Run the parser tests and the suite**
 
@@ -2658,7 +2676,7 @@ git commit -m "feat(parser): schema 2 with drgs/attachments, on-premises hub, LP
 
 **Files:**
 - Modify: `oci-drawio-architect/scripts/query_tenancy.py:1-47` (docstring), `:165-170` (`_REF_FIELDS`)
-- Test: `oci-drawio-architect/tests/test_query_tenancy.py:87-124, 180-190`
+- Test: `oci-drawio-architect/tests/test_query_tenancy.py:85-139, 186-189`
 
 **Interfaces:**
 - Consumes: `parse_terraform.ModelBuilder` (Task 9) through `entities_to_resources` / `build_model` (unchanged signatures).
@@ -2737,7 +2755,7 @@ git commit -m "feat(tenancy): schema-2 model output and LPG peer references"
 ### Task 11: Reference layout, demo diagram, `OCI_Architecture.drawio` and screenshots
 
 **Files:**
-- Modify: `oci-drawio-architect/examples/generate_reference_layout.py:1-101`, `oci-drawio-architect/examples/generate_demo_diagram.py:1-164`, `oci-drawio-architect/examples/make_screenshots.py:88-101`, `oci-drawio-architect/scripts/drawio_builder.py` (new method `append_pages` after `use_page`, line ~1343), `OCI_Architecture.drawio` (regenerated), `screenshots/*.png`, `Screens/*.png` (regenerated only when draw.io desktop is present)
+- Modify: `oci-drawio-architect/examples/generate_reference_layout.py:1-101`, `oci-drawio-architect/examples/generate_demo_diagram.py:1-164`, `oci-drawio-architect/examples/make_screenshots.py:8, 95-101`, `oci-drawio-architect/scripts/drawio_builder.py` (new method `append_pages` after `use_page`, line ~1343), `OCI_Architecture.drawio` (regenerated), `screenshots/diagram-overview.png`, `screenshots/diagram-detail.png`, `Screens/1.png`, `Screens/2.png` (regenerated - draw.io desktop is installed at /Users/sergio.farfan/Applications/draw.io.app and `find_drawio_binary()` resolves it)
 - Test: `oci-drawio-architect/tests/test_builder.py` (class `TestHelpers`, new `test_append_pages`), `oci-drawio-architect/tests/test_oci_layout.py` (new class `ExamplesTests`)
 
 **Interfaces:**
@@ -2807,7 +2825,7 @@ class ExamplesTests(unittest.TestCase):
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_builder.TestHelpers.test_append_pages tests.test_oci_layout.ExamplesTests 2>&1 | tail -6`
-Expected: `AttributeError: 'DrawioBuilder' object has no attribute 'append_pages'`; `KeyError: 'drgs'` for the reference MODEL; `AttributeError: module 'generate_demo_diagram' has no attribute 'DEMO_MODEL'`-style failure or a two-page count for the demo.
+Expected: `AttributeError: 'DrawioBuilder' object has no attribute 'append_pages'`; `AssertionError: ['cpe', 'drg'] != ['cpe']` for the reference MODEL (the DRG is still a hub item); `AttributeError: module 'generate_demo_diagram' has no attribute 'DEMO_MODEL'`-style failure or a two-page count for the demo.
 
 - [ ] **Step 3: Implement `append_pages`**
 
@@ -2988,7 +3006,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 6: Adjust the screenshot crop**
 
-In `oci-drawio-architect/examples/make_screenshots.py` replace lines 88-95 (`sx, sy, sw, sh = ...` through `_crop(full150, ...)`) with:
+In `oci-drawio-architect/examples/make_screenshots.py` replace lines 95-101 (`sx, sy, sw, sh = ...` through `_crop(full150, ...)`; the `gw_bottom = max(...)` statement spans two lines; lines 88-94 - `content_bbox()`, the `px()` helper and the two `_export` calls - stay) with:
 
 ```python
         sx, sy, sw, sh = d.abs_bbox("subnet-sn-priv-data")
@@ -3002,16 +3020,16 @@ In `oci-drawio-architect/examples/make_screenshots.py` replace lines 88-95 (`sx,
 
 and update the docstring line to `screenshots/diagram-detail.png     data subnet + border gateways (1.5x)`.
 
-- [ ] **Step 7: Run the tests, regenerate the reference file and try the screenshots**
+- [ ] **Step 7: Run the tests, regenerate the reference file and the screenshots**
 
 Run: `python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3 && python3 oci-drawio-architect/examples/generate_reference_layout.py OCI_Architecture.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py OCI_Architecture.drawio && python3 oci-drawio-architect/examples/generate_demo_diagram.py /tmp/demo13.drawio && python3 oci-drawio-architect/scripts/check_overlaps.py /tmp/demo13.drawio && python3 oci-drawio-architect/examples/make_screenshots.py; echo "screenshots exit $?"`
-Expected: suite `OK`; both gates `OK` with no `WARNING: legacy model` lines; `make_screenshots.py` exits 0 and rewrites the four PNGs when draw.io desktop is installed, otherwise prints `draw.io desktop not found; cannot render screenshots` and exits 3 - in that case leave the PNGs untouched and record in the CHANGELOG (Task 12) that screenshots are regenerated at release time on a machine with draw.io desktop.
+Expected: suite `OK`; both gates `OK` with no `WARNING: legacy model` lines; `make_screenshots.py` exits 0 and prints the four rewritten PNG paths with their pixel sizes (`screenshots/diagram-overview.png`, `screenshots/diagram-detail.png`, `Screens/1.png`, `Screens/2.png`); `git status --short` must list all four as modified. A `draw.io desktop not found` exit 3 is a failure of this step (the binary is in ~/Applications; set `DRAWIO_BIN=/Users/sergio.farfan/Applications/draw.io.app/Contents/MacOS/draw.io` if discovery changes).
 
 - [ ] **Step 8: Commit**
 
 ```bash
 git add oci-drawio-architect/scripts/drawio_builder.py oci-drawio-architect/examples/generate_reference_layout.py oci-drawio-architect/examples/generate_demo_diagram.py oci-drawio-architect/examples/make_screenshots.py OCI_Architecture.drawio oci-drawio-architect/tests/test_builder.py oci-drawio-architect/tests/test_oci_layout.py
-git add screenshots Screens 2>/dev/null || true
+git add screenshots/diagram-overview.png screenshots/diagram-detail.png Screens/1.png Screens/2.png
 git commit -m "feat(examples): schema-2 reference model, three-page demo with both DRG styles, regenerated reference diagram"
 ```
 
@@ -3051,7 +3069,7 @@ sed -i '' 's/oci-drawio-architect-v1.2.0.tar.gz/oci-drawio-architect-v1.3.0.tar.
 grep -rn "1\.2\.0" --include="*.md" --include="*.json" --include="*.py" --include="*.sh" . | grep -v "^./dev.to" | grep -v CHANGELOG.md | grep -v "/.git/" | grep -v "docs/superpowers"
 ```
 
-Expected: the final `grep` prints nothing (every remaining `1.2.0` is in `CHANGELOG.md`, `dev.to/` or these plan documents).
+Expected: the grep prints exactly these residual hits and nothing else - `tests/fixtures/terraform/plan.json:58` (the CIDR `10.1.2.0/24`, not a version), `README.md:75` and `oci-drawio-architect/README.md:5` (`## What's new in 1.2.0`, renamed to `## What was new in 1.2.0` in Step 5 and kept), `references/oracle-styles.md:160` (`Changed in v1.2.0`) and `references/gotchas.md:66`, `:190`, `:229` (history notes about what changed in 1.2.0 - leave them). Re-run the grep after Step 5; the same seven lines must remain and no other.
 
 - [ ] **Step 3: CHANGELOG**
 
@@ -3068,10 +3086,10 @@ Topology-aware placement. The layout recipe now follows how Oracle's Architectur
 - **Layout**: DRG column between the on-premises panel and the VCN columns, vertically centred on the VCN stack, one rounded attachment box per attachment (VCN attachments facing the VCNs, IPSec / FastConnect / RPC attachments facing the on-premises panel) connected with arrowhead-less `attachment` connectors labelled `Site-to-Site VPN` / `FastConnect` / `Remote Peering`; `drg_style="box"` wraps a DRG and its boxes in a dashed `DRG: <name>` group (`auto` picks it above 4 attachments). IGW and NAT straddle the VCN's bottom border, the Service Gateway its right border, LPGs the border facing their peer VCN. Regional services (Logging, Monitoring, Notifications, Events, IAM, Vault/KMS, Object Storage, OCIR, AI services, Data Safe, Streaming, Queue, APM, DevOps and others) are drawn in one region-level `Oracle Services Network` panel right of the VCN columns with an SGW -> panel connector; `"regional": false` keeps an item in the VCN. CLI `--drg-style {auto,icon,box}`; `build_diagram(..., drg_style=)`; `builder.layout_info` exposes the topology, warnings and the chosen style per DRG.
 - **Builder**: `add_edge(kind="data"|"control"|"association"|"attachment")` and `EDGE_KIND_STYLES` (data = solid open arrow, control = dashed open arrow, association = dotted no arrowhead, attachment = thin solid no arrowhead); `add_legend()` rows for the four kinds plus region, VCN, subnet and OSN; `drg` container type; `add_box()` for labelled rounded markers; `add_icon(label_fill=)` for captions crossing a dashed border; `append_pages()`; `ociGroup=<type>` token on every container and `ociRole=drg` on DRG icons so `check_overlaps.py` recognises them in hand-written files.
 - **Validator**: foreign-containment rule (`ERROR: '<label>' ... lies inside '<VCN or subnet>' ... but is not one of its children`), `ERROR: DRG '<label>' is inside VCN '<vcn>'` for a DRG box inside any VCN, and a straddle tolerance so border-centred gateways pass the containment check (`STRADDLE_TOL`, `FOREIGN_TOL`).
-- Tests: `tests/test_oci_topology.py`, `tests/test_oci_layout.py`, the `tests/fixtures/terraform/hub_spoke` fixture (two VCNs, DRG with four attachment types, LPG pair, regional service).
+- Tests: `tests/test_oci_topology.py`, `tests/test_oci_layout.py`, the `tests/fixtures/terraform/hub_spoke` fixture (two VCNs, one DRG with four attachments - two VCN attachments, a FastConnect virtual circuit and a remote peering connection - an LPG pair and a regional log group).
 
 ### Changed
-- `examples/generate_reference_layout.py`: the DRG moved from `hub.items` to `drgs[]` with one VCN attachment; the CPE stays in the hub with an explicit `cpe -> drg` edge labelled `IPSec VPN`; the eight services are regional and render in the OSN panel. `OCI_Architecture.drawio` regenerated; README screenshots are regenerated with `examples/make_screenshots.py` on a machine with draw.io desktop.
+- `examples/generate_reference_layout.py`: the DRG moved from `hub.items` to `drgs[]` with one VCN attachment; the CPE stays in the hub with an explicit `cpe -> drg` edge labelled `IPSec VPN`; the eight services are regional and render in the OSN panel. `OCI_Architecture.drawio`, `screenshots/` and `Screens/` regenerated (`examples/make_screenshots.py`; the detail crop now follows the NAT gateway on the bottom border and the Service Gateway on the right border).
 - `examples/generate_demo_diagram.py`: three pages built from one schema-2 model - icon style, box style and the NSG rule table; exercises the OSN panel, border gateways and the four connector kinds.
 - `parse_terraform.py` no longer emits CPE -> DRG edges (the layout draws the attachment connectors) and emits one `Local Peering` edge per LPG pair; `GATEWAY_ICONS` has no `drg` entry; `summarise()` reports DRGs and attachments.
 - `oracle_services_network` panels created by the recipe use a left-aligned label; `oracle-styles.md` records that the Rose look is the toolkit's "Optional" grouping spec while slide 19 specifies Neutral 3 2pt dashed for the OSN.
@@ -3091,7 +3109,7 @@ Edit `oci-drawio-architect/skills/oci-drawio-architect/SKILL.md`:
 4. Former item 9 (gateways): `Gateways straddle the VCN border (glyph centre on the line, caption with an opaque region-fill background, parent = region): IGW and NAT on the bottom border (pitch 180), the Service Gateway on the right border facing the OSN panel, LPGs on the border facing their peer VCN (`peer` = peer LPG address or VCN name; unknown peer -> bottom) linked by a `Local Peering` attachment connector.`
 5. Former item 10 (edges): `Edges: `data` solid Bark open arrow (label = protocol / port); `control` dashed Bark open arrow (management / administrative); `association` dotted, no arrowhead (dependency, configuration relationship); `attachment` thin solid, no arrowhead (structural: DRG attachments, LPG pairs, SGW -> OSN); `analytics` solid Sienna and `datalake` dashed purple remain. Routed automatically through the gutters.`
 6. Section 2: replace the `MODEL` block with the schema-2 example from `oci_layout.py`'s docstring (Task 8) and replace rule 3 with `Edge `kind`: `data`, `control`/`management`, `association`, `attachment`, `analytics`, `datalake`; or pass `dashed`/`color` directly (an explicit `dashed` keeps the profile look).`; add rule 6: `DRGs: never inside `hub.items` or `vcn.gateways`; `drgs[].attachments[].type` in `vcn | ipsec | virtual_circuit | rpc | loopback`, `vcn` = VCN name, `target` = hub item address. Schema-1 models are migrated with a `WARNING: legacy model:` line - move the DRG to `drgs` to silence it.`; add rule 7: `Edge endpoints also accept `drg:<name>`, a DRG address, an attachment address and `osn`.`
-7. Section 3: signature `build_diagram(model, style_profile="default", legend=False, logo=None, page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None) -> DrawioBuilder`; CLI adds `[--drg-style auto|icon|box]`; order of operations: `migrate legacy model -> classify topology -> title -> region -> for each VCN: subnet rows -> VCN-resident services panel -> data subnets -> fit_to_children(vcn) -> border gateways (region children) -> optional region-level OCI Services panel -> Oracle Services Network panel -> on-premises panel -> DRG column -> fit_to_children(region) -> SGW -> OSN connectors -> attachment connectors -> model edges -> optional legend -> fit_page()`; add the new constants to the table: `DRG_GAP 45`, `ATT_W x ATT_H 100 x 44`, `ATT_GAP / ATT_PITCH 15 / 56`, `DRG_CLUSTER_GAP 40`, `OSN_GAP 45`, `GW_STRADDLE / GW_SIDE_DX 40 / 38`, `SIDE_GW_Y0 / LEFT_GW_Y0 / SIDE_GW_PITCH 50 / 130 / 160`, `VCN_BOTTOM_PAD_GW / VCN_SIDE_PAD / SIDE_INSET 60 / 60 / 40`, `VCN_COLUMN_GAP_GW 80`.
+7. Section 3: signature `build_diagram(model, style_profile="default", legend=False, logo=None, page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None) -> DrawioBuilder`; CLI adds `[--drg-style auto|icon|box]`; order of operations: `migrate legacy model -> classify topology -> title -> region -> for each VCN: subnet rows -> VCN-resident services panel -> data subnets -> fit_to_children(vcn) -> border gateways (region children) -> optional region-level OCI Services panel -> Oracle Services Network panel -> on-premises panel -> DRG column -> fit_to_children(region) -> SGW -> OSN connectors -> attachment connectors -> model edges -> optional legend -> fit_page()`; add the new constants to the table: `DRG_GAP 45`, `ATT_W x ATT_H 100 x 44`, `ATT_GAP / ATT_PITCH 15 / 56`, `DRG_CLUSTER_GAP 40`, `OSN_GAP 45`, `GW_STRADDLE / GW_SIDE_DX 40 / 38`, `SIDE_GW_Y0 / LEFT_GW_Y0 / SIDE_GW_PITCH 50 / 50 / 160`, `VCN_BOTTOM_PAD_GW / VCN_SIDE_PAD / SIDE_INSET 60 / 60 / 40`, `VCN_COLUMN_GAP_GW 110`.
 8. Section 4 table rows: `oci_core_drg` -> `drg` -> `drgs[]`; `oci_core_drg_attachment` -> (box) -> `drgs[].attachments` (`type: vcn`); `oci_core_local_peering_gateway` -> `rpg` -> `gateways` (`type: lpg`, `peer`); `oci_core_remote_peering_connection` -> `rpg` -> `hub.items` + `drgs[].attachments` (`type: rpc`); `oci_core_cpe` / `oci_core_ipsec` / `oci_core_virtual_circuit` -> `cpe` / (attachment `ipsec`) / `cpe` -> `hub.items` / `drgs[].attachments` / `hub.items` + attachment `virtual_circuit`; `oci_network_firewall_network_firewall` -> `firewall` -> subnet (hub VCN); regional rows (`oci_objectstorage_bucket`, `oci_kms_*`, logging, monitoring, notifications, apm, streaming, queue, dns zones, devops, OCIR, connector hub, events, resource manager, data science, generative AI, analytics, cloud guard, data safe, vulnerability scanning) -> `services` (`regional: true`, OSN panel).
 9. Section 6 worked example: replace the hub-and-spoke script so the DRG is a region child and the attachments are boxes:
 
@@ -3143,13 +3161,13 @@ d.write("hub_spoke.drawio")
 
 `README.md` (root): "How it works" step 3 -> `normalizes the input into the diagram model (VCNs, subnets, services with their regional / VCN-resident class, gateways, DRGs with attachments, on-premises side, edges)`; diagram-types table -> Single-VCN: `Region > optional on-premises panel + DRG column + one VCN column: subnet rows in traffic order, data tier, gateways on the VCN border, Oracle Services Network panel`; Hub-and-Spoke: `On-premises panel (CPE), region-level DRG with one attachment box per spoke, spoke VCN columns, OSN panel; attachment connectors without arrowheads`; Multi-VCN: `Several VCN columns, LPG pairs on facing borders, OSN panel, cross-VCN edges`; replace `## What's new in 1.2.0` with a `## What's new in 1.3.0` section (six bullets: DRG at region level with attachment boxes and two styles; gateways on the VCN border; Oracle Services Network panel; four connector kinds and legend; validator rules; schema 2 with migration) and keep the 1.2.0 section below it under `## What was new in 1.2.0`; update the screenshot captions (`*Single-VCN topology with the on-premises panel, region-level DRG and its VCN attachment, subnets, gateways on the VCN border and the Oracle Services Network panel*`, `*Detail view: data subnet, NAT gateway on the bottom border and Service Gateway on the right border*`).
 
-`oci-drawio-architect/README.md`: mirror the root README bullets (`## What's new in 1.3.0`), workflow step 3 and the diagram-types table; add `oci_topology.py` to the structure listing and `tests/test_oci_topology.py`, `tests/test_oci_layout.py`, `tests/fixtures/terraform/hub_spoke/` under tests; CLI line for `oci_layout.py` gains `[--drg-style auto|icon|box]`.
+`oci-drawio-architect/README.md`: mirror the root README bullets (`## What's new in 1.3.0`), rename the existing section to `## What was new in 1.2.0` and keep it below the new one, workflow step 3 and the diagram-types table; add `oci_topology.py` to the structure listing and `tests/test_oci_topology.py`, `tests/test_oci_layout.py`, `tests/fixtures/terraform/hub_spoke/` under tests; CLI line for `oci_layout.py` gains `[--drg-style auto|icon|box]`.
 
 `CLAUDE.md` (repo root): version strings; "Repository Contents" tree adds `oci_topology.py` and the two test files; the `oci_layout.py` paragraph rewritten to the Task 8 docstring summary (columns, DRG column, border gateways, OSN panel, edge kinds, migration); the builder bullets gain `EDGE_KIND_STYLES` / `add_edge(kind=)`, `drg` group type, `add_box`, `append_pages`, `label_fill`, the `ociGroup` / `ociRole` tokens and the validator rules; the API table gains `add_box`, `append_pages`; the command section step 3 mentions `drgs[]`; the layout constants line gains the Task 5-7 constants.
 
 - [ ] **Step 6: Verify**
 
-Run: `python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3 && python3 oci-drawio-architect/scripts/build_icon_catalog.py --check && python3 oci-drawio-architect/scripts/check_overlaps.py --version && grep -rniE "$FORBIDDEN" docs/superpowers oci-drawio-architect/examples oci-drawio-architect/tests/fixtures/terraform/hub_spoke oci-drawio-architect/CHANGELOG.md README.md oci-drawio-architect/README.md oci-drawio-architect/skills oci-drawio-architect/commands; echo "public-repo grep exit $? (1 = clean)"`
+Run: `: "${FORBIDDEN:?export FORBIDDEN=<name1|name2|...> first}" && python3 -m unittest discover -s oci-drawio-architect/tests 2>&1 | tail -3 && python3 oci-drawio-architect/scripts/build_icon_catalog.py --check && python3 oci-drawio-architect/scripts/check_overlaps.py --version && grep -rniE "$FORBIDDEN" docs/superpowers oci-drawio-architect/examples oci-drawio-architect/tests/fixtures/terraform/hub_spoke oci-drawio-architect/CHANGELOG.md README.md oci-drawio-architect/README.md oci-drawio-architect/skills oci-drawio-architect/commands; echo "public-repo grep exit $? (1 = clean)"`
 where `FORBIDDEN` is exported beforehand as a pipe-separated, case-insensitive list of the company, project, tenancy, compartment and colleague names from the private review inputs (the list itself must never be written into the repository).
 Expected: suite `OK`; catalog check `OK`; `drawio_builder 1.3.0`; the grep exits 1 (no forbidden names).
 
@@ -3193,11 +3211,11 @@ class EndToEndTests(unittest.TestCase):
         model = pt.parse_terraform_dir(self.FIXTURES / "terraform" / "three_tier")
         self.assertEqual(ot.classify_topology(model)["kind"], "hybrid")
         text = self._gate(model, "three_tier.drawio")
-        self.assertIn('id="oci_core_drg-drg"', text)                 # DRG at region level
-        self.assertIn('id="oci_core_ipsec-vpn-oci_core_drg-drg"', text)   # IPSec attachment box
+        self.assertIn('id="oci_core_drg.drg"', text)                 # DRG at region level (dots survive _slug)
+        self.assertIn('id="oci_core_ipsec.vpn-oci_core_drg.drg"', text)   # IPSec attachment box (@ -> -)
         d = quiet(ol.build_diagram, model)
-        self.assertEqual(d._cells["oci_core_drg-drg"]["parent"], "region")
-        self.assertEqual(d._cells["oci_core_cpe-onprem"]["parent"], "hub")
+        self.assertEqual(d._cells["oci_core_drg.drg"]["parent"], "region")
+        self.assertEqual(d._cells["oci_core_cpe.onprem"]["parent"], "hub")
         self.assertEqual(d.layout_info["warnings"], [])
 
     def test_hub_spoke_terraform_model(self):
@@ -3223,7 +3241,7 @@ class EndToEndTests(unittest.TestCase):
 - [ ] **Step 2: Run the end-to-end tests**
 
 Run: `cd oci-drawio-architect && python3 -m unittest tests.test_oci_layout.EndToEndTests -v 2>&1 | tail -8`
-Expected: 3 PASS. If the hub_spoke gate reports `WARNING: edge ... is estimated to cross`, that is acceptable (warnings do not fail the gate); an `ERROR`/`OVERLAP` line is a layout bug in Tasks 5-7 - typical causes: the OSN panel `osn_x` colliding with the SGW caption (check `VCN_COLUMN_GAP_GW` is applied for a VCN with right gateways) or the left LPG of `vcn-spoke` colliding with the right LPG/SGW of `vcn-hub` (check `LEFT_GW_Y0`).
+Expected: 3 PASS. If the hub_spoke gate reports `WARNING: edge ... is estimated to cross`, that is acceptable (warnings do not fail the gate); an `ERROR`/`OVERLAP` line is a layout bug in Tasks 5-7 - typical causes: the OSN panel `osn_x` colliding with the SGW caption (check `VCN_COLUMN_GAP_GW` is applied for a VCN with right gateways) or the left LPG of `vcn-spoke` colliding with the right LPG/SGW of `vcn-hub` (check `LEFT_GW_Y0 == SIDE_GW_Y0` and `VCN_COLUMN_GAP_GW >= LABEL_W + 1`).
 
 - [ ] **Step 3: Run every gate**
 
@@ -3248,7 +3266,7 @@ git commit -m "test: end-to-end gate for Terraform, tenancy, reference and demo 
 
 - [ ] **Step 5: Hand-off**
 
-Do not merge or tag. Report the branch, the test count, and whether the screenshots were regenerated (draw.io desktop present) so the release step (`pack.sh`, GitHub release asset, `install.sh`, dev.to update) can follow the repository `CLAUDE.md`.
+Do not merge or tag. Report the branch, the test count, and confirm the four regenerated PNGs (`screenshots/diagram-overview.png`, `screenshots/diagram-detail.png`, `Screens/1.png`, `Screens/2.png`) are in the Task 11 commit (`git show --stat HEAD~2 -- screenshots Screens`) so the release step (`pack.sh`, GitHub release asset, `install.sh`, dev.to update) can follow the repository `CLAUDE.md`.
 
 ---
 
@@ -3284,7 +3302,7 @@ Do not merge or tag. Report the branch, the test count, and whether the screensh
 - `_split_services(items) -> (regional, local)` and `_layout_osn(d, region_id, items, x, y, min_h, reg) -> (pid, w, h)` (Task 6) match Task 7.
 - `migrate_legacy_model(model) -> (model, warnings)`, `classify_topology(model) -> dict`, `choose_drg_style(requested, n) -> str`, `attachment_type/label/link_label(att) -> str`, `first_line(text) -> str`, `is_regional(item) -> bool` (Task 4) match their uses in Tasks 6, 7, 13.
 - `_layout_drg_column(d, region_id, drgs, col_x, stack_y, stack_h, requested, reg, style_out) -> list` and `_resolve_attachment_target(reg, pe)` (Task 7) are consistent between definition and call; pending dict keys `source, vcn, target, label, key` are the same in both.
-- Cell ids: `region`, `hub`, `osn`, `vcn:<name>` -> `vcn-<name>`, `subnet:<name>` -> `subnet-<name>`, `services:<vcn>` -> `services-<vcn>`, `drgbox:<addr>` -> `drgbox-<addr>`, attachment edge `<addr>-edge`, SGW edge `<addr>-osn`, implicit attachment `<drg>@<vcn>` -> `<drg>-<vcn>` (slug replaces `:` and `@` with `-`) - tests in Tasks 5, 6, 7, 8, 11, 13 use the slugged forms.
+- Cell ids: `region`, `hub`, `osn`, `vcn:<name>` -> `vcn-<name>`, `subnet:<name>` -> `subnet-<name>`, `services:<vcn>` -> `services-<vcn>`, `drgbox:<addr>` -> `drgbox-<addr>`, attachment edge `<addr>-edge`, SGW edge `<addr>-osn`, implicit attachment `<drg>@<vcn>` -> `<drg>-<vcn>` (slug replaces `:` and `@` with `-`; `.` is kept, so Terraform addresses appear unchanged, e.g. `oci_core_drg.drg`) - tests in Tasks 5, 6, 7, 8, 11, 13 use the slugged forms.
 - `parse_terraform.new_attachment(atype, address, label, vcn=None, target=None)` returns `{type, address, label, vcn, target}`; Task 9 tests compare full dicts with `"vcn": None` / `"target": None` present, and `oci_topology.attachment_type` tolerates the `vcn` key being `None`.
 - `builder.layout_info = {"topology", "warnings", "drg_style"}` (Task 7) is read in Tasks 7, 11, 13 with those keys.
 - Version string `1.3.0` appears in `plugin.json`, `drawio_builder.__version__`, the test assertion and the docs (Task 12); `check_overlaps.py --version` reads the builder value.
