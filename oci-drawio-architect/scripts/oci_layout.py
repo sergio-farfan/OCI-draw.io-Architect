@@ -744,10 +744,11 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         x = drg_col_x + _drg_column_width(drgs, requested) + DRG_GAP
 
     order = _vcn_order(vcns)
+    all_sides = [_gateway_sides(v, i, order) for i, v in enumerate(vcns)]
     vcn_boxes = []
     edge_gateways = []          # (vcn index, side, gateway dict, icon id)
     for i, vcn in enumerate(vcns):
-        sides = _gateway_sides(vcn, i, order)
+        sides = all_sides[i]
         # Reserve the room the straddling gateways need: one bottom slot every GW_PITCH
         # from vx + PAD (the trailing PAD also covers the last caption's 15 px overhang),
         # and one side slot every SIDE_GW_PITCH from SIDE_GW_Y0 / LEFT_GW_Y0.
@@ -770,7 +771,10 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
             for slot, g in enumerate(sides[side]):
                 gid = _place_edge_gateway(d, rid, (x, VCN_Y, w, h), side, slot, g, reg)
                 edge_gateways.append((i, side, g, gid))
-        x += w + (VCN_COLUMN_GAP_GW if sides["right"] else VCN_COLUMN_GAP)
+        # The gap must clear the captions of both facing borders: this column's
+        # right-side gateways and the next column's left-side ones (spec A17).
+        next_left = all_sides[i + 1]["left"] if i + 1 < len(all_sides) else []
+        x += w + (VCN_COLUMN_GAP_GW if (sides["right"] or next_left) else VCN_COLUMN_GAP)
 
     if top_services:
         rows_n, cols = _grid(len(top_services), 2)
