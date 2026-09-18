@@ -161,7 +161,7 @@ Pure function in the new module `scripts/oci_topology.py`, applied after `migrat
 
 ### 7.2 Column order and constants
 
-Region-local x order (left to right): on-premises panel (`HUB_X=15`, `HUB_W=180`) -> `HUB_GAP=45` -> DRG column (width computed, see 7.4) -> `DRG_GAP=45` -> VCN columns (`VCN_COLUMN_GAP=45`) -> `OSN_GAP=45` -> OSN panel. Absent elements take no space. The on-premises panel, the DRG column and the OSN panel are all vertically aligned on the VCN stack: hub centred on the tallest VCN (existing), DRG clusters centred on `VCN_Y + ref_h / 2`, OSN panel `min_h = ref_h`.
+Region-local x order (left to right): on-premises panel (`HUB_X=15`, `HUB_W=180`) -> `HUB_GAP=45` -> DRG column (width computed, see 7.4) -> `DRG_GAP=45` -> VCN columns (`VCN_COLUMN_GAP=45`) -> `OSN_GAP=45` -> OSN panel. Absent elements take no space. The on-premises panel, the DRG column and the OSN panel are all vertically aligned on the VCN stack: hub centred on the tallest VCN (existing), DRG clusters centred on `VCN_Y + ref_h / 2`, OSN panel `min_h = ref_h`. The legacy region-level `OCI Services` panel (2+ VCNs with top-level VCN-resident services) sits between the VCN columns and the OSN panel and is height-matched the same way, `min_h = ref_h` (v1.3.1, spec `2026-09-18-v1.3.1-backlog-patch.md` A28).
 
 New constants in `oci_layout.py`:
 
