@@ -70,6 +70,14 @@ class RegionalTests(unittest.TestCase):
                     "vault", "kms", "object_storage", "ocir", "generative_ai", "data_safe", "connector_hub"):
             self.assertIn(key, ot.REGIONAL_ICON_KEYS, key)
 
+    def test_dns_resolver_is_vcn_resident_despite_dns_icon(self):
+        # spec section 6: "oci_dns_resolver is VCN-resident; the dns icon alone is regional"
+        self.assertFalse(ot.is_regional({"icon": "dns", "type": "oci_dns_resolver"}))
+        self.assertTrue(ot.is_regional({"icon": "dns", "type": "oci_dns_zone"}))
+        self.assertTrue(ot.is_regional({"icon": "dns"}))
+        # an explicit override still wins over the type-based carve-out
+        self.assertTrue(ot.is_regional({"icon": "dns", "type": "oci_dns_resolver", "regional": True}))
+
     def test_attachment_helpers(self):
         self.assertEqual(ot.attachment_type({"vcn": "a"}), "vcn")
         self.assertEqual(ot.attachment_type({"type": "IPSEC_TUNNEL"}), "ipsec")
@@ -143,6 +151,21 @@ class MigrationTests(unittest.TestCase):
         legacy["edges"].append({"source": "cpe", "target": "drg", "label": "IPSec VPN", "kind": "data"})
         m, _ = ot.migrate_legacy_model(legacy)
         self.assertEqual(sum(1 for e in m["edges"] if (e["source"], e["target"]) == ("cpe", "drg")), 1)
+
+    def test_duplicate_attachment_address_is_warned(self):
+        # spec section 5: "attachments[].address must be unique in the model" - migrate_legacy_model
+        # defensively flags this for hand-authored (schema-1 or schema-2) input before it ever
+        # reaches the builder, where a duplicate key would otherwise raise a bare ValueError.
+        v2 = {"vcns": [vcn("a"), vcn("b")],
+              "drgs": [drg(attachments=[{"type": "vcn", "vcn": "a", "address": "att"},
+                                        {"type": "vcn", "vcn": "b", "address": "att"}])]}
+        m, warnings = ot.migrate_legacy_model(v2)
+        self.assertTrue(any(w == "WARNING: model: attachments[].address duplicate: 'att'" for w in warnings), warnings)
+
+    def test_no_duplicate_warning_for_unique_addresses(self):
+        v2 = {"vcns": [vcn("a")], "drgs": [drg(attachments=[{"type": "vcn", "vcn": "a", "address": "att"}])]}
+        _, warnings = ot.migrate_legacy_model(v2)
+        self.assertEqual(warnings, [])
 
 
 if __name__ == "__main__":
