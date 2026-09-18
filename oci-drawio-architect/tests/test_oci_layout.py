@@ -766,5 +766,19 @@ class NsgBadgeTests(unittest.TestCase):
         bx, by, bw, bh = d.bbox(bid)
         self.assertEqual((bx + bw / 2, by + bh / 2), (sx + sw - db.BADGE_SIZE / 2, sy + db.BADGE_SIZE / 2))
 
+    def test_a_shared_route_table_resolves_to_the_first_badge(self):
+        """A26: a construct shared by two subnets registers the first badge drawn."""
+        rt = {"name": "rt-shared", "address": "rt-shared"}
+        model = {"subject": "shared", "region": "us-ashburn-1", "vcns": [{
+            "name": "a", "cidr": "10.0.0.0/16", "services": [], "gateways": [], "subnets": [
+                {"name": "sn-one", "cidr": "10.0.1.0/24", "tier": "app", "route_table": rt,
+                 "items": [{"icon": "vm", "label": "One", "address": "vm-one"}]},
+                {"name": "sn-two", "cidr": "10.0.2.0/24", "tier": "mgmt", "route_table": rt,
+                 "items": [{"icon": "vm", "label": "Two", "address": "vm-two"}]}]}],
+            "edges": [{"source": "vm-one", "target": "rt-shared", "label": "", "kind": "association"}]}
+        d = quiet(ol.build_diagram, model)
+        edge = [e for e in d._cells.values() if e["kind"] == "edge" and e.get("source") == "vm-one"][0]
+        self.assertEqual(edge["target"], "subnet-sn-one-rt")   # _slug() turns ':' into '-'
+
 if __name__ == "__main__":
     unittest.main()
