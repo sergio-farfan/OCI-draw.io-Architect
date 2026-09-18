@@ -474,9 +474,12 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
         _expect(errors, model["source"].get("path"), (str, type(None)), "source.path")
     if model.get("drg_style") not in DRG_STYLES:
         errors.append(f"drg_style: {model.get('drg_style')!r} not in {DRG_STYLES}")
+    # A41: check the container types before collecting addresses, which walks them.
+    drgs_ok = _expect(errors, model.get("drgs"), list, "drgs")
+    vcns_ok = _expect(errors, model.get("vcns"), list, "vcns")
     addresses = set(model_addresses(model))
-    vcn_keys = {v.get(k) for v in (model.get("vcns") or []) if isinstance(v, dict) for k in ("name", "address")}
-    if _expect(errors, model.get("drgs"), list, "drgs"):
+    vcn_keys = {v.get(k) for v in _entries(model.get("vcns")) if isinstance(v, dict) for k in ("name", "address")}
+    if drgs_ok:
         for di, drg in enumerate(model["drgs"]):
             dp = f"drgs[{di}]"
             if not _expect(errors, drg, dict, dp):
@@ -508,7 +511,7 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
             for i, item in enumerate(hub["items"]):
                 _validate_item(errors, item, f"hub.items[{i}]", False, keys)
 
-    if _expect(errors, model.get("vcns"), list, "vcns"):
+    if vcns_ok:
         for vi, vcn in enumerate(model["vcns"]):
             vp = f"vcns[{vi}]"
             if not _expect(errors, vcn, dict, vp):
@@ -580,33 +583,47 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
     return errors
 
 
+def _addr(entry) -> Optional[str]:
+    """``entry["address"]`` for a dict, else None - validate_model reports the bad type itself."""
+    return entry.get("address") if isinstance(entry, dict) else None
+
+
+def _entries(value) -> list:
+    """A list of entries; validate_model reports a bad container type itself."""
+    return value if isinstance(value, list) else []
+
+
 def model_addresses(model: dict) -> Iterator[str]:
     """Yield every address in the model (containers, items, gateways, hub items, DRGs)."""
-    hub = model.get("hub") or {}
-    for item in hub.get("items") or []:
-        if item.get("address"):
+    hub = model.get("hub") if isinstance(model.get("hub"), dict) else {}
+    for item in _entries(hub.get("items")):
+        if _addr(item):
             yield item["address"]
-    for drg in model.get("drgs") or []:
-        if drg.get("address"):
+    for drg in _entries(model.get("drgs")):
+        if _addr(drg):
             yield drg["address"]
-        for att in drg.get("attachments") or []:
-            if att.get("address"):
+        for att in (_entries(drg.get("attachments")) if isinstance(drg, dict) else []):
+            if _addr(att):
                 yield att["address"]
-    for vcn in model.get("vcns") or []:
-        if vcn.get("address"):
+    for vcn in _entries(model.get("vcns")):
+        if not isinstance(vcn, dict):
+            continue
+        if _addr(vcn):
             yield vcn["address"]
-        for sn in vcn.get("subnets") or []:
-            if sn.get("address"):
+        for sn in _entries(vcn.get("subnets")):
+            if not isinstance(sn, dict):
+                continue
+            if _addr(sn):
                 yield sn["address"]
-            for item in sn.get("items") or []:
-                if item.get("address"):
+            for item in _entries(sn.get("items")):
+                if _addr(item):
                     yield item["address"]
         for coll in ("services", "controls", "gateways"):
-            for item in vcn.get(coll) or []:
-                if item.get("address"):
+            for item in _entries(vcn.get(coll)):
+                if _addr(item):
                     yield item["address"]
-    for item in model.get("services") or []:
-        if item.get("address"):
+    for item in _entries(model.get("services")):
+        if _addr(item):
             yield item["address"]
 
 
