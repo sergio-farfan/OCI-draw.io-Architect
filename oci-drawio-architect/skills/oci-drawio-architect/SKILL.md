@@ -226,6 +226,13 @@ management, associations`. `layers: "auto"` turns on every layer a resource actu
 an explicit `[layer, ...]` list turns on exactly those; a layer nothing populates is never created,
 even if named. `hidden_layers` marks a created layer `visible="0"` without removing its content.
 
+Under `auto` the `detail` level chooses which of those layers start **visible** - `executive`: data
+flows; `application`: data flows and management paths; `network` and `engineering`: all of them -
+and the rest are created hidden. That is why `--detail application --layers auto` still **emits**
+the route-table and security badges and lets the reader switch them on, while the same level with
+layers off drops those cells altogether. A `purpose` names the layer set itself, and then its own
+`hidden_layers` carries the visibility.
+
 ### 4.4 Global-services bucket (`global_services`)
 
 `"osn"` (default) keeps IAM, Policies, Audit and public DNS in the regional Oracle Services Network

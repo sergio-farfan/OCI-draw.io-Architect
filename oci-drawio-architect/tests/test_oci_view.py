@@ -165,13 +165,31 @@ class ResolveViewTests(unittest.TestCase):
         self.assertEqual(v["layers"], ("routes", "security", "dataflow", "management"))
         self.assertEqual(v["hidden_layers"], ("routes", "security"))
 
-    def test_layers_auto_without_a_purpose_takes_the_detail_set(self):
-        self.assertEqual(ov.resolve_view({"detail": "application"}, layers="auto")["layers"],
-                         ("dataflow", "management"))
-        self.assertEqual(ov.resolve_view({}, layers="auto")["layers"], ov.VIEW_LAYERS)
+    def test_layers_auto_without_a_purpose_creates_every_layer_and_hides_the_rest(self):
+        """6.2: auto = every layer whose content exists; the detail row is the VISIBLE set."""
+        v = ov.resolve_view({"detail": "application"}, layers="auto")
+        self.assertEqual(v["layers"], ov.VIEW_LAYERS)
+        self.assertEqual(v["hidden_layers"], ("routes", "security", "iam", "associations"))
+        v = ov.resolve_view({"detail": "executive"}, layers="auto")
+        self.assertEqual(v["layers"], ov.VIEW_LAYERS)
+        self.assertEqual(v["hidden_layers"],
+                         ("routes", "security", "iam", "management", "associations"))
+        v = ov.resolve_view({}, layers="auto")
+        self.assertEqual(v["layers"], ov.VIEW_LAYERS)
+        self.assertEqual(v["hidden_layers"], ())
+
+    def test_layers_auto_at_an_elided_level_still_emits_the_badges(self):
+        """6.4 / V4: '--detail application --layers auto ... emitted and hidden'."""
+        v = ov.resolve_view({"detail": "application"}, layers="auto")
+        self.assertIs(v["badges_routes"], False)
+        self.assertIs(v["badges_security"], False)
+        self.assertTrue(ov.draws(v, "badges_routes"))
+        self.assertTrue(ov.draws(v, "badges_security"))
+        self.assertIn("routes", v["hidden_layers"])
+        self.assertIn("security", v["hidden_layers"])
 
     def test_a_gate_that_is_off_hides_its_layer_instead_of_dropping_it(self):
-        """V4: --detail application --layers auto emits the badges and hides them."""
+        """V4: an explicit --layers routes,security,dataflow emits the badges and hides them."""
         v = ov.resolve_view({"detail": "application"},
                             layers=["routes", "security", "dataflow"])
         self.assertEqual(v["layers_mode"], "explicit")

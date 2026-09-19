@@ -115,13 +115,25 @@ class DetailLevelTests(unittest.TestCase):
 
 class GateAndLayerTests(unittest.TestCase):
     def test_a_gate_that_is_off_hides_its_layer_instead_of_dropping_the_cells(self):
-        """V4: --detail application --layers auto emits the badges, hidden."""
+        """V4: an explicit --layers routes,security,dataflow emits the badges, hidden."""
         d = quiet(ol.build_diagram, MODEL, detail="application",
                   layers=["routes", "security", "dataflow"])
         self.assertIn("subnet-sn-web-rt", d._cells)
         self.assertIn("lb-nsg", d._cells)
         self.assertEqual(sorted(d.layout_info["layers"]["hidden"]), ["routes", "security"])
         self.assertEqual(d._cells["subnet-sn-web-rt"]["parent"], "layer-routes")
+
+    def test_layers_auto_at_an_elided_level_emits_the_badges_on_a_hidden_layer(self):
+        """6.4 / spec 12: badges present but on a hidden layer at --detail application --layers auto."""
+        d = quiet(ol.build_diagram, MODEL, detail="application", layers="auto")
+        self.assertIn("subnet-sn-web-rt", d._cells)
+        self.assertIn("lb-nsg", d._cells)
+        self.assertEqual(d._cells["subnet-sn-web-rt"]["parent"], "layer-routes")
+        self.assertEqual(d._cells["lb-nsg"]["parent"], "layer-security")
+        hidden = d.layout_info["layers"]["hidden"]
+        self.assertIn("routes", hidden)
+        self.assertIn("security", hidden)
+        self.assertNotIn("dataflow", hidden)
 
     def test_the_same_level_without_layers_drops_them(self):
         # The ids are slugged: "subnet-sn-web-rt", never "subnet:sn-web-rt".

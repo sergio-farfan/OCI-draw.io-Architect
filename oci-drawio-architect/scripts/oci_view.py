@@ -346,12 +346,24 @@ def resolve_view(model: Optional[dict] = None, **overrides) -> dict:
             raise ValueError(f"label_fields: {field!r} is not one of {LABEL_FIELDS}")
     label_fields = _dedupe(fields)
 
+    # 6.2: "auto" = every layer whose content exists - the layout creates only the
+    # non-empty ones (_planned_layers). A detail level's "auto_layers" row is
+    # therefore the VISIBLE set, not the layer set, which is what 6.4 means by
+    # "with --detail application --layers auto, the route and security badges are
+    # emitted and hidden": every layer is created and the level hides the ones it
+    # does not want. A purpose still names the layer SET itself (6.9), and then
+    # its own hidden_layers carry the visibility.
+    auto_hidden: Tuple[str, ...] = ()
     if layers_mode == "off":
         layers: Tuple[str, ...] = ()
     elif layers_mode == "explicit":
         layers = named or ()
+    elif pre_p.get("layers"):
+        layers = _dedupe(pre_p["layers"])
     else:
-        layers = _dedupe(pre_p.get("layers") or pre_d["auto_layers"])
+        layers = VIEW_LAYERS
+        visible = _as_tuple(pre_d["auto_layers"], "auto_layers")
+        auto_hidden = tuple(n for n in VIEW_LAYERS if n not in visible)
 
     view: Dict[str, object] = {
         "purpose": purpose,
@@ -406,6 +418,10 @@ def resolve_view(model: Optional[dict] = None, **overrides) -> dict:
     for name in hidden:
         if name not in VIEW_LAYERS:
             raise ValueError(f"hidden_layers: {name!r} is not one of {VIEW_LAYERS}")
+    # Under "auto" the detail level's visible set hides the rest (6.2 / 6.4). It
+    # is added to an explicit hidden_layers rather than replaced by it, exactly
+    # as the gate-driven hiding below is.
+    hidden.extend(n for n in auto_hidden if n not in hidden)
     for gate, layer in GATE_LAYERS.items():
         if layer in layers and not view[gate] and layer not in hidden:
             hidden.append(layer)
