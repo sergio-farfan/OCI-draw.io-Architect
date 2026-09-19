@@ -1162,12 +1162,24 @@ def _hcl_tags(ctx: ds.TerraformContext, raw_attrs: Dict[str, str]):
     A tag whose value is a ``var.`` / ``local.`` reference the parser cannot
     evaluate is skipped and reported: a filter that silently matches nothing is
     worse than one that says why.
+
+    The whole attribute is followed first, so the common real-world idioms
+    ``freeform_tags = local.common_tags`` and ``= var.tags`` resolve to their
+    literal map and are read like an inline one. A value that is still not a
+    map after following (``merge(local.tags, {...})``, a conditional, an
+    unknown variable) is reported under the attribute's own name instead of
+    being dropped in silence.
     """
     tags = {"freeform": {}, "defined": {}}
     unresolved: List[str] = []
     for key in TAG_ATTR_KEYS:
         raw = raw_attrs.get(key)
+        if not raw or not raw.strip():
+            continue
+        if raw.lstrip()[:1] != "{":
+            raw = _follow(ctx, raw)
         if not raw or raw.lstrip()[:1] != "{":
+            unresolved.append(key)
             continue
         bucket = "freeform" if key == "freeform_tags" else "defined"
         for tag_key, tag_raw in _map_entries(raw):
