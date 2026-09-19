@@ -1624,6 +1624,26 @@ class TestBadges(TempDirMixin, unittest.TestCase):
         self.assertEqual(len(msgs), 1, msgs)
         self.assertIn("sn-shared-services-management", msgs[0])
 
+    def test_badged_container_title_on_two_deliberate_lines_is_not_warned(self):
+        """Oracle's canonical subnet label is name over CIDR: two lines that
+        both fit are the author's own layout, not a title under the badges."""
+        d = DrawioBuilder()
+        s = d.add_group("Subnet A\n10.0.30.0/24", 0, 0, 400, 200,
+                        group_type="subnet", key="sn")
+        d.add_badge("route_table", 400, 0, parent=s, host=s, key="sn-rt")
+        self.assertEqual([m for m in d.validate() if "its badges leave" in m], [])
+
+    def test_badged_container_title_warns_when_a_line_wraps_under_the_badges(self):
+        """The same two-line title in a narrow container: the first line no
+        longer fits in what the badges leave, so it wraps and must warn."""
+        d = DrawioBuilder()
+        s = d.add_group("sn-shared-services-management\n10.0.240.0/24", 0, 0, 180, 200,
+                        group_type="subnet", key="sn")
+        d.add_badge("route_table", 180, 0, parent=s, host=s, key="sn-rt")
+        msgs = [m for m in d.validate() if "its badges leave" in m]
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertIn("sn-shared-services-management", msgs[0])
+
     def test_add_badge_rejects_bad_input_and_constants_are_exported(self):
         d = DrawioBuilder()
         with self.assertRaises(ValueError):
