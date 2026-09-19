@@ -639,15 +639,18 @@ STYLE_PROFILES = {
     # labels; dashPattern 6 3 keeps dashed edges distinct from dashed borders.
     "default": dict(spacing_left=5, container_font=12, vcn_font=12, subnet_font=11,
                     arc_region=1, arc_ad=1, arc_fd=3, edge_width=1.5, edge_rounded=1,
-                    edge_font=12, dash_pattern="6 3", dashed_arrow="none"),
+                    edge_font=12, dash_pattern="6 3", dashed_arrow="none",
+                    attachment_style="solid"),
     # Strict OCI Architecture Diagram Toolkit v24.2 values.
     "official": dict(spacing_left=5, container_font=12, vcn_font=12, subnet_font=12,
                      arc_region=1, arc_ad=8, arc_fd=7, edge_width=1, edge_rounded=0,
-                     edge_font=10.5, dash_pattern=None, dashed_arrow="open"),
+                     edge_font=10.5, dash_pattern=None, dashed_arrow="open",
+                     attachment_style="solid"),
     # Byte-for-byte v1.0.0 sample styling.
     "v1.0": dict(spacing_left=3, container_font=12, vcn_font=13, subnet_font=11,
                  arc_region=1, arc_ad=1, arc_fd=3, edge_width=1.5, edge_rounded=1,
-                 edge_font=12, dash_pattern="6 3", dashed_arrow="none"),
+                 edge_font=12, dash_pattern="6 3", dashed_arrow="none",
+                 attachment_style="solid"),
 }
 STYLE_PROFILES["sample"] = STYLE_PROFILES["v1.0"]
 
@@ -661,6 +664,24 @@ EDGE_KIND_STYLES = {
     "association": dict(dashed=True,  arrow="none", width=None, dash_pattern="1 3"),
     "attachment":  dict(dashed=False, arrow="none", width=1,    dash_pattern=None),
 }
+
+# L3: an attachment connector is thin solid with no arrowhead (the
+# hub-and-spoke reference architectures and the A-Team figure) or dotted (the
+# CIS landing zone, and the team's guidelines' "dotted = association"). The
+# form is a property of the document, chosen by the style profile or by
+# DrawioBuilder(attachment_style=...).
+ATTACHMENT_STYLES = ("solid", "dotted")
+
+
+def attachment_kind_style(style: str) -> dict:
+    """``EDGE_KIND_STYLES["attachment"]`` in its ``solid`` (default) or ``dotted`` form."""
+    name = str(style or "solid").strip().lower()
+    if name not in ATTACHMENT_STYLES:
+        raise ValueError(f"attachment_style must be one of {ATTACHMENT_STYLES}, not {style!r}")
+    if name == "dotted":
+        return dict(dashed=True, arrow="none", width=1, dash_pattern="1 3")
+    return dict(EDGE_KIND_STYLES["attachment"])
+
 
 # Legend-only legacy spellings of the connector kinds (pre-1.3.0 callers).
 _LEGACY_LEGEND_ALIASES = {"solid": "data", "dashed": "control", "accent": "data",
@@ -1116,6 +1137,8 @@ def _is_drg_icon(entry: dict) -> bool:
 # security lists) or laid over the top-right of a host icon's slot (NSG).
 BADGE_SIZE = 22
 BADGE_GAP = 4
+# A 22 px badge does not fit a 22 px legend row; B07 draws it at 16 px.
+LEGEND_BADGE_SIZE = 16
 # Title width a badged container must leave free. Conservative: the badges
 # straddle the border, so the real intrusion is only
 # BADGE_SIZE / 2 + BADGE_SIZE + BADGE_GAP = 37 px.
@@ -1140,15 +1163,24 @@ def _attach_captions(registry: dict, boxes: dict) -> None:
         if _badge_host(e) is not None:
             continue                      # badges have no caption
         ib = boxes[cid]
-        best = None
+        best = above_best = None
         for tid, te in texts:
             if te.get("parent") != e.get("parent"):
                 continue
             tb = boxes[tid]
-            if tb.x - 1 <= ib.cx <= tb.right + 1 and -2 <= tb.y - ib.bottom <= 40:
-                gap = tb.y - ib.bottom
-                if best is None or gap < best[0]:
-                    best = (gap, te)
+            if not (tb.x - 1 <= ib.cx <= tb.right + 1):
+                continue
+            # a caption sits below its glyph; an above-caption is only used when
+            # the icon has none below it (add_icon(caption_above=True), slide 31)
+            below = tb.y - ib.bottom
+            if -2 <= below <= 40:
+                if best is None or below < best[0]:
+                    best = (below, te)
+                continue
+            above = ib.y - tb.bottom
+            if -2 <= above <= 40 and (above_best is None or above < above_best[0]):
+                above_best = (above, te)
+        best = best or above_best
         if best is not None:
             _, te = best
             e["caption"] = re.sub(r"\s+", " ", _html.unescape(_TAG_RE.sub(" ", te.get("value", "")))).strip()
@@ -1531,11 +1563,15 @@ class DrawioBuilder:
     _PORTS = {"R": (1.0, 0.5), "L": (0.0, 0.5), "T": (0.5, 0.0), "B": (0.5, 1.0)}
 
     def __init__(self, page_name="Architecture", width=1600, height=1100,
-                 style_profile="default", font_family=None):
+                 style_profile="default", font_family=None, attachment_style=None):
         if style_profile not in STYLE_PROFILES:
             raise ValueError(f"Unknown style_profile {style_profile!r}; choose from {sorted(STYLE_PROFILES)}")
         self.profile_name = style_profile
         self.profile = STYLE_PROFILES[style_profile]
+        # L3: solid (default, every profile) or dotted; validated here so a bad
+        # value fails at construction, not at the first attachment edge.
+        self.attachment_style = str(attachment_style or self.profile["attachment_style"]).strip().lower()
+        attachment_kind_style(self.attachment_style)
         self.font = font_family or FONT_STACK
         self._group_styles = _build_group_styles(self.profile, self.font)
         self._cell_id = 1
@@ -1834,7 +1870,8 @@ class DrawioBuilder:
     # -- icons ----------------------------------------------------------------
     def add_icon(self, label, icon_key, x, y, parent="1", w=None, h=None,
                  metadata=None, tooltip=None, key=None, label_w=None, label_h=None,
-                 raw_html=False, font_size=None, link=None, label_fill=None) -> str:
+                 raw_html=False, font_size=None, link=None, label_fill=None,
+                 caption_above=False) -> str:
         """Add an OCI icon with a caption below. Returns the icon cell id.
 
         (x, y) is the top-left of a ICON_W x ICON_H slot; the glyph is fitted
@@ -1846,6 +1883,8 @@ class DrawioBuilder:
 
         label_fill: opaque caption background (e.g. COLORS["region_fill"])
         for icons that straddle a dashed border.
+        caption_above: put the caption over the slot instead of under it
+        (deck slide 31 draws a top-border gateway that way).
         """
         parent = self._check_parent(parent, "add_icon")
         data_uri, nw, nh = _load_svg(icon_key)
@@ -1891,7 +1930,7 @@ class DrawioBuilder:
             lh = label_h if label_h is not None else max(LABEL_H, lines * LABEL_LINE_H + 4)
             slot_cx = slot[0] + slot[2] / 2
             label_x = round(slot_cx - lw / 2)
-            label_y = slot[1] + slot[3] + LABEL_GAP
+            label_y = (slot[1] - LABEL_GAP - lh) if caption_above else (slot[1] + slot[3] + LABEL_GAP)
             lid = self._new_id(f"{cid}-label" if key is not None else None)
             label_style = (
                 f"text;html=1;strokeColor=none;fillColor={label_fill or 'none'};align=center;"
@@ -2131,10 +2170,11 @@ class DrawioBuilder:
                    key=None) -> str:
         """Add a legend box explaining edge styles and container types.
 
-        entries: list of ("edge", <style>, text) or ("group", <group_type>, text)
-        where <style> is one of the EDGE_KIND_STYLES names ("data", "control",
-        "association", "attachment") or a legacy alias ("solid", "dashed",
-        "accent", "purple", "dotted", "thin").
+        entries: list of ("edge", <style>, text), ("group", <group_type>, text)
+        or ("badge", <icon key>, text) where <style> is one of the
+        EDGE_KIND_STYLES names ("data", "control", "association", "attachment")
+        or a legacy alias ("solid", "dashed", "accent", "purple", "dotted",
+        "thin"). A badge row draws the glyph at LEGEND_BADGE_SIZE.
         """
         parent = self._check_parent(parent, "add_legend")
         if entries is None:
@@ -2158,7 +2198,7 @@ class DrawioBuilder:
                 kind_name = _LEGACY_LEGEND_ALIASES.get(spec, spec)
                 if kind_name not in EDGE_KIND_STYLES:
                     raise ValueError(f"add_legend: unknown edge style {spec!r}")
-                ks = EDGE_KIND_STYLES[kind_name]
+                ks = self._kind_style(kind_name)
                 color = {"accent": COLORS["edge_accent"], "purple": COLORS["edge_purple"]}.get(spec, COLORS["edge_color"])
                 # A legacy alias stands for a pre-kind add_edge(dashed=True) call, which takes
                 # the profile's arrow; the canonical kind name keeps EDGE_KIND_STYLES' arrow.
@@ -2176,6 +2216,10 @@ class DrawioBuilder:
                 self._cells[eid] = {"kind": "edge", "x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0,
                                     "parent": gid, "page": self._page_idx, "label": "",
                                     "source": None, "target": None}
+            elif kind == "badge":
+                # B07: the security-construct badges the recipe draws, at a size
+                # that fits a 22 px row, on the swatch's x centre.
+                self.add_badge(spec, 32, ry + row_h / 2, parent=gid, size=LEGEND_BADGE_SIZE)
             else:
                 gstyle = self._group_styles.get(spec, self._group_styles["other"])
                 tokens = _style_tokens(gstyle)
@@ -2188,6 +2232,15 @@ class DrawioBuilder:
         return gid
 
     # -- edges -----------------------------------------------------------------
+    def _kind_style(self, kind: str) -> dict:
+        """``EDGE_KIND_STYLES`` entry for ``kind``, with this document's attachment form."""
+        if kind == "attachment":
+            return attachment_kind_style(self.attachment_style)
+        spec = EDGE_KIND_STYLES.get(kind)
+        if spec is None:
+            raise ValueError(f"unknown kind {kind!r}; choose from {sorted(EDGE_KIND_STYLES)}")
+        return dict(spec)
+
     def _arrow_fragment(self, dashed: bool, arrow=None, dash_pattern=None) -> str:
         if arrow is None:
             arrow = self.profile["dashed_arrow"] if dashed else "open"
@@ -2246,9 +2299,10 @@ class DrawioBuilder:
         """
         width = dash_pattern = None
         if kind is not None:
-            spec = EDGE_KIND_STYLES.get(kind)
-            if spec is None:
-                raise ValueError(f"add_edge: unknown kind {kind!r}; choose from {sorted(EDGE_KIND_STYLES)}")
+            try:
+                spec = self._kind_style(kind)
+            except ValueError as exc:
+                raise ValueError(f"add_edge: {exc}") from None
             dashed = spec["dashed"]
             arrow = spec["arrow"] if arrow is None else arrow
             width, dash_pattern = spec["width"], spec["dash_pattern"]
@@ -2862,7 +2916,8 @@ __all__ = [
     "DrawioBuilder", "COLORS", "FONT_STACK", "ICON_MAP", "ICON_ALIASES", "GROUP_TYPES",
     "STYLE_PROFILES", "EDGE_KIND_STYLES", "ICON_W", "ICON_H", "GLYPH_W", "GLYPH_H", "LABEL_GAP", "LABEL_W",
     "LABEL_H", "LABEL_FONT_SIZE", "LABEL_LINE_H", "WRAP_HINT", "CHAR_W_RATIO", "ICON_FOOTPRINT_H",
-    "BADGE_SIZE", "BADGE_GAP", "BADGE_RESERVE",
+    "BADGE_SIZE", "BADGE_GAP", "BADGE_RESERVE", "LEGEND_BADGE_SIZE",
+    "ATTACHMENT_STYLES", "attachment_kind_style",
     "PAD", "ROW1_Y",
     "COL_W", "ROW_H", "GAP", "BOX_STYLE", "DRG_ICON_STEM",
     "STRADDLE_TOL", "FOREIGN_TOL",

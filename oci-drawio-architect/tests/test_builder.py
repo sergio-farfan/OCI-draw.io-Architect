@@ -429,6 +429,52 @@ class TestAddIconGeometry(TempDirMixin, unittest.TestCase):
         with self.assertRaises(ValueError):
             self.d.add_group("g", 0, 0, 10, 10, key="dup")
 
+    def test_caption_above_places_the_caption_over_the_slot(self):
+        """B02 / slide 31: a top-border gateway carries its caption above the glyph."""
+        d = DrawioBuilder()
+        below = d.add_icon("Internet\nGateway", "internet_gateway", 0, 300)
+        above = d.add_icon("Internet\nGateway", "internet_gateway", 400, 300, caption_above=True)
+        lb = d._cells[d._cells[below]["label_id"]]
+        la = d._cells[d._cells[above]["label_id"]]
+        self.assertEqual(lb["y"], 300 + db.ICON_H + db.LABEL_GAP)
+        self.assertEqual(la["y"], 300 - db.LABEL_GAP - la["h"])
+        self.assertEqual((la["w"], la["h"]), (lb["w"], lb["h"]))
+        self.assertEqual(la["x"] - 400, lb["x"])                       # same centring on the slot
+        fx, fy, fw, fh = d.footprint(above)
+        self.assertEqual((fy, fy + fh), (la["y"], 300 + db.ICON_H))
+
+    def test_caption_above_is_bound_to_its_icon_in_a_written_file(self):
+        """The validator re-derives the caption owner from geometry; it must find one above too."""
+        d = DrawioBuilder()
+        r = d.add_group("us-ashburn-1", 0, 0, 900, 600, group_type="region")
+        v = d.add_group("VCN: a (10.0.0.0/16)", 40, 100, 600, 400, parent=r, group_type="vcn")
+        d.add_icon("Internet\nGateway", "internet_gateway", 500, 60, parent=r, caption_above=True,
+                   label_fill=db.COLORS["region_fill"], key="igw")
+        self.assertEqual(only_errors(d.validate()), [])
+        path = quiet_write(d, self.tmp / "caption_above.drawio")
+        errors, _warnings, _pages, _containers = db.validate_file(path)
+        self.assertEqual([e for e in errors if not db.is_warning(e)], [])
+        registry = db.build_cell_registry(ET.parse(path).getroot().find("diagram/mxGraphModel/root"))
+        db._attach_captions(registry, db._abs_boxes(registry))
+        self.assertEqual(registry["igw"]["caption"], "Internet Gateway")
+        self.assertEqual(registry["igw-label"]["owner"], "igw")
+
+    def test_a_stacked_icon_column_keeps_each_caption_with_its_own_icon(self):
+        """Regression guard for Step 8: in a stacked column the caption above the
+        next icon is exactly as close as that icon's own caption below it, so the
+        below-candidate must always win."""
+        d = DrawioBuilder()
+        sid = d.add_group("Subnet", 0, 0, 200, 500, group_type="subnet")
+        d.add_icon("ADB prod\nAutonomous\nDatabase", "autonomous_db", 20, 40, parent=sid, key="adb")
+        d.add_icon("GenAI\nInference\nService", "generative_ai", 20, 200, parent=sid, key="genai")
+        path = quiet_write(d, self.tmp / "stacked_column.drawio")
+        registry = db.build_cell_registry(ET.parse(path).getroot().find("diagram/mxGraphModel/root"))
+        db._attach_captions(registry, db._abs_boxes(registry))
+        self.assertTrue(registry["adb"]["caption"].startswith("ADB prod"))
+        self.assertTrue(registry["genai"]["caption"].startswith("GenAI"))
+        self.assertEqual(registry["adb-label"]["owner"], "adb")
+        self.assertEqual(registry["genai-label"]["owner"], "genai")
+
 
 # ---------------------------------------------------------------------------
 # 3. Escaping
@@ -689,6 +735,32 @@ class TestStyles(TempDirMixin, unittest.TestCase):
     def test_edge_kind_attachment_is_thin_solid_without_arrowhead(self):
         tok = tokens(self._edge_style("default", kind="attachment"))
         self.assertEqual((tok["dashed"], tok["endArrow"], tok["strokeWidth"]), ("0", "none", "1"))
+
+    def test_attachment_style_is_solid_in_every_profile(self):
+        for profile in ("default", "official", "v1.0"):
+            self.assertEqual(db.STYLE_PROFILES[profile]["attachment_style"], "solid", profile)
+            tok = tokens(self._edge_style(profile, kind="attachment"))
+            self.assertEqual((tok["dashed"], tok["endArrow"], tok["strokeWidth"]), ("0", "none", "1"), profile)
+
+    def test_attachment_style_dotted_overrides_the_profile(self):
+        """L3: the landing-zone / team-guidelines form, opt-in per document."""
+        d = DrawioBuilder(attachment_style="dotted")
+        a = d.add_icon("A", "vm", 0, 0)
+        b = d.add_icon("B", "vm", 300, 0)
+        tok = tokens(cell(d.root, d.add_edge(a, b, "x", route="direct", kind="attachment")).get("style"))
+        self.assertEqual((tok["dashed"], tok["dashPattern"], tok["endArrow"], tok["strokeWidth"]),
+                         ("1", "1 3", "none", "1"))
+        # the other three kinds are untouched
+        tok = tokens(cell(d.root, d.add_edge(a, b, "y", route="direct", kind="data")).get("style"))
+        self.assertEqual((tok["dashed"], tok["endArrow"]), ("0", "open"))
+
+    def test_attachment_kind_style_validates_its_argument(self):
+        self.assertEqual(db.attachment_kind_style("solid"), db.EDGE_KIND_STYLES["attachment"])
+        self.assertIsNot(db.attachment_kind_style("solid"), db.EDGE_KIND_STYLES["attachment"])  # a copy
+        self.assertEqual(db.attachment_kind_style("DOTTED")["dash_pattern"], "1 3")
+        with self.assertRaises(ValueError) as cm:
+            DrawioBuilder(attachment_style="squiggly")
+        self.assertIn("attachment_style", str(cm.exception))
 
     def test_edge_kind_keeps_colour_override_and_rejects_unknown(self):
         tok = tokens(self._edge_style("default", kind="data", color=db.COLORS["edge_accent"]))
@@ -1904,6 +1976,36 @@ class TestHelpers(TempDirMixin, unittest.TestCase):
         self.assertEqual(edges[5]["strokeColor"], db.COLORS["edge_accent"])   # A06: 'accent' -> data, accent colour
         with self.assertRaises(ValueError):
             self.d.add_legend(20, 300, entries=[("edge", "zigzag", "x")])
+
+    def test_add_legend_badge_row_draws_a_half_size_glyph(self):
+        gid = self.d.add_legend(20, 20, entries=[("badge", "route_table", "Route table"),
+                                                 ("badge", "nsg", "Network security group")])
+        kids = [(cid, c) for cid, c, _ in iter_cells(self.d.root) if c.get("parent") == gid]
+        badges = [(cid, c) for cid, c in kids if "shape=image" in c.get("style", "")]
+        self.assertEqual(len(badges), 2)
+        for i, (cid, c) in enumerate(badges):
+            g = geom(c)
+            self.assertEqual((g["width"], g["height"]), (db.LEGEND_BADGE_SIZE, db.LEGEND_BADGE_SIZE))
+            self.assertEqual(g["x"] + db.LEGEND_BADGE_SIZE / 2, 32)          # same x centre as a swatch
+            self.assertEqual(g["y"] + db.LEGEND_BADGE_SIZE / 2, 30 + i * 22 + 11)
+        texts = [c.get("value") for _, c in kids if "text" in tokens(c.get("style"))]
+        self.assertEqual(texts, ["Route table", "Network security group"])
+        self.assertEqual(self.d.validate(), [])
+
+    def test_add_legend_badge_rows_do_not_change_the_row_height(self):
+        four = self.d.add_legend(20, 20, entries=[("edge", "data", "A"), ("group", "vcn", "B"),
+                                                  ("badge", "security_list", "C"), ("badge", "nsg", "D")])
+        badges = [c for _, c, _ in iter_cells(self.d.root)
+                  if c.get("parent") == four and "ociRole=badge" in (c.get("style") or "")]
+        self.assertEqual(len(badges), 2)                       # fails first: the else branch draws swatches
+        self.assertEqual(geom(cell(self.d.root, four))["height"], 30 + 22 * 4 + 8)
+
+    def test_add_legend_attachment_row_follows_the_documents_attachment_style(self):
+        d = DrawioBuilder(attachment_style="dotted")
+        gid = d.add_legend(20, 20, entries=[("edge", "attachment", "Attachment / association (structural)")])
+        edge = [c for _, c, _ in iter_cells(d.root) if c.get("parent") == gid and c.get("edge") == "1"][0]
+        tok = tokens(edge.get("style"))
+        self.assertEqual((tok["dashed"], tok["dashPattern"], tok["endArrow"]), ("1", "1 3", "none"))
 
     def test_legacy_control_aliases_share_the_profile_arrow(self):
         """A05: 'dashed' and 'purple' both mean control, so both follow profile['dashed_arrow']."""
