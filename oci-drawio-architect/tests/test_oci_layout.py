@@ -1744,5 +1744,77 @@ class GroupBoxTests(unittest.TestCase):
         self.assertEqual(quiet(self.d.check_overlaps, True), [])
 
 
+class DrgRouteTableTests(unittest.TestCase):
+    def _model(self, route_table, **kw):
+        model = {"subject": "drg-rt", "region": "eu-frankfurt-1", "locations": "nested",
+                 "drgs": [{"name": "drg", "address": "drg", "label": "DRG\ndrg",
+                           "route_table": route_table, "attachments": [
+                               {"type": "vcn", "vcn": "hub", "address": "att-hub",
+                                "label": "VCN attachment\nhub"}]}],
+                 "vcns": [simple_vcn("hub")]}
+        model.update(kw)
+        return model
+
+    def test_one_route_table_is_one_badge_under_the_drg_caption(self):
+        d = quiet(ol.build_diagram, self._model({"name": "drg-rt-vcn", "address": "drg-rt-vcn"}))
+        bx, by, bw, bh = d.bbox("drg-rt")
+        slot_x, slot_y = d._cells["drg"]["slot_x"], d._cells["drg"]["slot_y"]
+        self.assertEqual((bw, bh), (db.BADGE_SIZE, db.BADGE_SIZE))
+        self.assertEqual(bx + bw / 2, slot_x + db.ICON_W / 2)
+        self.assertEqual(by + bh / 2, slot_y + db.ICON_FOOTPRINT_H + ol.DRG_RT_GAP + db.BADGE_SIZE / 2)
+        self.assertEqual(badge_style(d, "drg-rt")["ociHost"], "drg")
+        self.assertNotIn("drg-rt2", d._cells)
+        self.assertEqual(errors_of(d), [])
+
+    def test_two_route_tables_render_as_a_two_glyph_strip(self):
+        """Decision 8: Oracle creates one table for VCN attachments and one for the rest."""
+        d = quiet(ol.build_diagram, self._model([{"name": "drg-rt-vcn", "address": "rt1"},
+                                                 {"name": "drg-rt-other", "address": "rt2"}]))
+        first, second = d.bbox("drg-rt"), d.bbox("drg-rt2")
+        self.assertEqual(second[0] - first[0], db.BADGE_SIZE + db.BADGE_GAP)
+        self.assertEqual(first[1], second[1])
+        strip_cx = (first[0] + second[0] + db.BADGE_SIZE) / 2
+        self.assertEqual(strip_cx, d._cells["drg"]["slot_x"] + db.ICON_W / 2)
+        self.assertEqual(errors_of(d), [])
+        self.assertEqual(quiet(d.check_overlaps, True), [])
+
+    def test_a_third_route_table_is_dropped_with_a_warning(self):
+        d = quiet(ol.build_diagram, self._model(["a", "b", "c"]))
+        self.assertNotIn("drg-rt3", d._cells)
+        self.assertIn("WARNING: DRG 'drg' has 3 route tables; only the first 2 are drawn",
+                      d.layout_info["warnings"])
+
+    def test_the_badge_is_hosted_by_the_drg_and_carries_the_names_in_its_tooltip(self):
+        d = quiet(ol.build_diagram, self._model({"name": "drg-rt-vcn", "address": "drg-rt-vcn"}))
+        self.assertEqual(d._cells["drg-rt"]["host"], "drg")
+        # the registry does not copy the <object> wrapper's tooltip, so read it
+        # off the wrapper itself (as BadgeLayoutTests does)
+        tips = {el.get("id"): el.get("tooltip") for el in d.root
+                if el.tag == "object" and el.get("tooltip")}
+        self.assertIn("drg-rt-vcn", tips.get("drg-rt", ""))
+
+    def test_the_legend_gains_a_drg_route_table_row(self):
+        d = quiet(ol.build_diagram, self._model("drg-rt-vcn"), legend=True)
+        gid = next(cid for cid, e in d._cells.items()
+                   if e["kind"] == "group" and e.get("label") == "Legend")
+        texts = [e["label"] for e in d._cells.values() if e["parent"] == gid and e["kind"] == "text"]
+        self.assertEqual(texts[-1], "DRG route table")
+
+    def test_the_box_style_keeps_the_badge_inside_the_drg_group(self):
+        d = quiet(ol.build_diagram, self._model("drg-rt-vcn"), drg_style="box")
+        self.assertEqual(d._cells["drg-rt"]["parent"], d._cells["drg"]["parent"])
+        self.assertTrue(d._cells["drg"]["parent"].startswith("drgbox"))
+        _bx, by, _bw, bh = d.bbox("drg-rt")
+        _gx, _gy, _gw, gh = d.bbox(d._cells["drg"]["parent"])
+        self.assertLessEqual(by + bh, gh)                  # the strip is inside the box
+        self.assertEqual(errors_of(d), [])
+
+    def test_the_cluster_grew_so_the_attachment_stack_stays_centred(self):
+        without = ol._drg_cluster_geometry({"attachments": []}, "icon")
+        with_rt = ol._drg_cluster_geometry({"attachments": [], "route_table": "rt"}, "icon")
+        self.assertEqual(with_rt["cluster_h"] - without["cluster_h"], ol.DRG_RT_GAP + db.BADGE_SIZE)
+        self.assertEqual(len(with_rt["rt"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
