@@ -195,20 +195,38 @@ oci-drawio-architect/
 │   ├── parse_terraform.py             # HCL dir / plan JSON / state JSON -> model (--vcn, --out)
 │   ├── query_tenancy.py               # Experimental: live tenancy -> model via OCI CLI
 │   ├── oci_topology.py                # Topology classification, view modes, model helpers, legacy-model migration
+│   ├── oci_view.py                    # View resolution, caption rendering, filter / participating (stdlib only)
 │   ├── build_icon_catalog.py          # Regenerate / --check references/icon-catalog.md
 │   └── smoke_test.sh                  # Demo -> overlap gate -> PNG (if draw.io present)
 ├── examples/
-│   ├── generate_demo_diagram.py       # Four-page demo: recipe on a hybrid model, both DRG styles, all four edge kinds, legend, plus a custom-API NSG table page
+│   ├── generate_demo_diagram.py       # Six-page demo: recipe on a hybrid model, both DRG styles, all four edge kinds, legend, a custom-API NSG table page, plus the executive and engineering views
 │   ├── generate_reference_layout.py   # Rebuilds the reference sample from a MODEL dict
 │   └── make_screenshots.py            # Regenerates the README screenshots from the reference example
 ├── tests/
 │   ├── test_builder.py                # DrawioBuilder: styles, routing, validation, helpers
+│   ├── test_builder_layers.py         # add_layer, set_base_layer_name, reparent onto a layer
 │   ├── test_oci_layout.py             # Layout recipe: DRG column, border gateways, OSN panel, edge kinds
 │   ├── test_oci_topology.py           # classify_topology, migrate_legacy_model, is_regional, choose_drg_style
+│   ├── test_oci_view.py               # resolve_view precedence, presets, render_caption
+│   ├── test_detail_levels.py          # The four detail levels and their content gates
+│   ├── test_layout_label_modes.py     # Caption modes, subnet titles, badge tooltips
+│   ├── test_view_layers.py            # Layer assignment, z-order, hidden layers, geometry invariance
+│   ├── test_filter_model.py           # Filter predicate, participating mode, dangling pruning
+│   ├── test_layout_filtering.py       # The same through the layout, plus discovery provenance
+│   ├── test_layout_purposes.py        # The six purpose presets and the legend's new rows
+│   ├── test_global_services.py        # Service scope and the tenancy bucket
+│   ├── test_layout_global_bucket.py   # Bucket placement, compartment list, no connector
+│   ├── test_parse_terraform.py        # Parser: HCL / plan / state -> model
+│   ├── test_parse_terraform_views.py  # Tags, caption metadata, discovery, the new CLI flags
+│   ├── test_query_tenancy.py          # Live-tenancy reader over tests/fixtures/tenancy/*
+│   ├── test_query_tenancy_views.py    # VNIC IPs, route-edge provenance, client-side filtering
 │   ├── test_detect_settings.py        # Settings probe over tests/fixtures/detect/*
+│   ├── test_detect_purpose.py         # The persisted purpose setting
+│   ├── test_examples_views.py         # The demo and reference examples at every view
 │   ├── test_icons.py                  # SVG integrity, viewBox, aliases, ICON_MAP
 │   └── fixtures/
-│       └── terraform/hub_spoke/       # Two VCNs, one DRG with four attachments, an LPG pair, a regional log group
+│       ├── terraform/hub_spoke/       # Two VCNs, one DRG with four attachments, an LPG pair, a regional log group
+│       └── terraform/tagged_app/      # Two applications and two environments in one VCN, freeform and defined tags, a state JSON
 ├── icons/                             # 159 OCI SVG icons in 12 category dirs + NOTICE
 ├── LICENSE                            # MIT (plugin code)
 ├── install.sh                         # Installer / --uninstall
@@ -224,15 +242,21 @@ python3 -m unittest discover -s tests          # builder, settings detection, ic
 scripts/smoke_test.sh                          # demo -> check_overlaps -> PNG (SMOKE_SKIP_PNG=1 to skip)
 python3 examples/generate_reference_layout.py out.drawio --render
 python3 scripts/parse_terraform.py <tf_dir> [--vcn NAME] [--plan-json F | --state-json F] --out model.json
+                              [--filter EXPR] [--tag K=V] [--compartment NAME] [--subnet NAME] [--resource-type TYPE]
+                              [--mode all|participating] [--discovery K,K] [--relationships FILE] [--no-inferred-edges]
 python3 scripts/check_overlaps.py --strict out.drawio
 python3 scripts/oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo f] [--render png] [--drg-style auto|icon|box]
-                              [--locations outside|nested] [--gateway-edge auto|internet|top|bottom] [--subnet-label twoline|inline]
+                              [--locations outside|nested] [--gateway-edge auto|internet|top|bottom] [--subnet-label twoline|inline|name]
                               [--attachment-style solid|dotted] [--show-compartments]
+                              [--purpose network|dataflow|security|inventory|dependency|ha] [--detail executive|application|network|engineering]
+                              [--label-mode minimal|network|detailed] [--label-fields F,F] [--label-tag-keys K,K]
+                              [--layers off|auto|L,L] [--hidden-layers L,L] [--filter EXPR] [--mode all|participating]
+                              [--discovery K,K] [--annotate-discovery] [--global-services osn|bucket] [--no-edges]
 python3 scripts/build_icon_catalog.py --check   # after touching icons/
 ./pack.sh [/output/dir]                         # oci-drawio-architect-v1.5.0.tar.gz + SHA256
 ```
 
-Generated files weigh roughly 7-13 KB per embedded icon (the four-page demo with 59 icons is about 550 KB; the reference sample with 27 icons and 4 badges about 280 KB).
+Generated files weigh roughly 7-13 KB per embedded icon (the six-page demo with 95 icons is about 910 KB; the reference sample with 27 icons and 4 badges about 280 KB).
 
 ## Icon licensing
 
