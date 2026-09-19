@@ -507,9 +507,11 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
     hub = model.get("hub")
     if hub is not None and _expect(errors, hub, dict, "hub"):
         kind = hub.get("kind")
-        # hub_kind() normalises case and whitespace and reads an absent or empty
-        # value as "onprem"; the validator accepts exactly what it accepts.
-        if "kind" in hub and kind not in (None, "") and (
+        # hub_kind() normalises case and whitespace and reads an absent, empty or
+        # whitespace-only value as "onprem"; the validator accepts exactly what it
+        # accepts, so it must strip before treating a value as "present".
+        kind_present = kind.strip() if isinstance(kind, str) else kind
+        if "kind" in hub and kind_present not in (None, "") and (
                 not isinstance(kind, str) or kind.strip().lower() not in HUB_KINDS):
             errors.append(f"hub.kind: {kind!r} not in {HUB_KINDS}")
         _expect(errors, hub.get("name"), str, "hub.name")
