@@ -1,0 +1,27 @@
+{
+  "_comment": "Two VCNs peered by a Local Peering Gateway each; only the requestor declares peer-id, exactly as the OCI API reports it before the peering is accepted.",
+  "vcn_topology": {
+    "data": {
+      "type": "VCN",
+      "time-created": "2026-02-01T09:00:00.000Z",
+      "entities": [
+        {"type": "Vcn", "id": "ocid1.vcn.oc1.eu-frankfurt-1.amaaaaaavcnhub000001",
+         "display-name": "vcn-hub", "cidr-block": "10.0.0.0/16",
+         "compartment-id": "ocid1.compartment.oc1..aaaaaaaaprod00000001", "lifecycle-state": "AVAILABLE"},
+        {"type": "Vcn", "id": "ocid1.vcn.oc1.eu-frankfurt-1.amaaaaaavcnspoke00001",
+         "display-name": "vcn-spoke", "cidr-block": "10.1.0.0/16",
+         "compartment-id": "ocid1.compartment.oc1..aaaaaaaaprod00000001", "lifecycle-state": "AVAILABLE"},
+        {"type": "LocalPeeringGateway", "id": "ocid1.localpeeringgateway.oc1.eu-frankfurt-1.aaaaaaaalpghub00001",
+         "display-name": "lpg-hub", "vcn-id": "ocid1.vcn.oc1.eu-frankfurt-1.amaaaaaavcnhub000001",
+         "peer-id": "ocid1.localpeeringgateway.oc1.eu-frankfurt-1.aaaaaaaalpgspoke001",
+         "lifecycle-state": "AVAILABLE"},
+        {"type": "LocalPeeringGateway", "id": "ocid1.localpeeringgateway.oc1.eu-frankfurt-1.aaaaaaaalpgspoke001",
+         "display-name": "lpg-spoke", "vcn-id": "ocid1.vcn.oc1.eu-frankfurt-1.amaaaaaavcnspoke00001",
+         "lifecycle-state": "AVAILABLE"}
+      ],
+      "relationships": []
+    }
+  },
+  "networking_topology": [],
+  "search": []
+}
