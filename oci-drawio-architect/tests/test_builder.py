@@ -949,6 +949,54 @@ class TestRouterQuality(TempDirMixin, unittest.TestCase):
         self.assertEqual((tok["entryX"], tok["entryY"]), ("0", "0.5"))
         self.assertEqual(d._cells[eid]["points"], [])
 
+    def test_narrow_glyphs_dock_right_to_left_at_any_page_offset(self):
+        """A glyph narrower than ICON_W leaves padding inside its own slot.
+        That padding must not tax the shape's own ports, otherwise the docking
+        side flips with the absolute page offset (where the lattice cuts it)."""
+        for dx in (0, 7, 15, 23):
+            with self.subTest(offset=dx):
+                d = DrawioBuilder()
+                r = d.add_group("R", 0, 0, 700, 600)
+                sn = d.add_group("S", 40 + dx, 60, 500, 250, parent=r, group_type="subnet")
+                a = d.add_icon("OAC", "big_data", 30, 60, parent=sn)
+                b = d.add_icon("PAC", "data_science", 170, 60, parent=sn)
+                eid = d.add_edge(a, b)
+                self.assertEqual(only_errors(d.validate()), [])
+                self.assertLess(d._cells[b]["w"], db.ICON_W, "expected a narrow glyph")
+                tok = tokens(cell(d.root, eid).get("style"))
+                self.assertEqual((tok["exitX"], tok["exitY"]), ("1", "0.5"))
+                self.assertEqual((tok["entryX"], tok["entryY"]), ("0", "0.5"))
+                self.assertEqual(d._cells[eid]["points"], [])
+                # and it is free of obstacle tax, so the side stays the
+                # cheapest option however the lattice cuts the padding
+                self.assertLess(d._cells[eid]["route_cost"], db.DrawioBuilder._OBSTACLE_COST)
+
+    def test_two_connectors_into_one_icon_take_different_docking_points(self):
+        """C11/C13: connectors must not share a docking point, or their stubs
+        overlap and read as one arrow."""
+        d = DrawioBuilder()
+        sn = d.add_group("S", 0, 0, 620, 420, group_type="subnet")
+        hub = d.add_icon("ADB", "adb", 250, 60, parent=sn)
+        a = d.add_icon("App", "vm", 40, 60, parent=sn)
+        b = d.add_icon("Worker", "vm", 460, 60, parent=sn)
+        c = d.add_icon("Analytics", "big_data", 250, 250, parent=sn)
+        eids = [d.add_edge(src, hub, "1522") for src in (a, b, c)]
+        self.assertEqual(only_errors(d.validate()), [])
+        docks = [tuple(tokens(cell(d.root, eid).get("style"))[k] for k in ("entryX", "entryY"))
+                 for eid in eids]
+        self.assertEqual(len(set(docks)), len(docks), f"shared docking point: {docks}")
+
+    def test_an_edge_never_runs_under_its_own_glyph(self):
+        """Dropping the endpoint's slot obstacle must not open the band
+        between a glyph and its caption to that endpoint's own connector."""
+        d = DrawioBuilder()
+        r = d.add_group("R", 0, 0, 700, 600)
+        src = d.add_icon("Load Balancer", "lb", 20, 50, parent=r)
+        tgt = d.add_icon("ADB", "adb", 400, 400, parent=r)
+        eid = d.add_edge(src, tgt, "1521")
+        self.assertEqual(only_errors(d.validate()), [])
+        self._assert_no_segment_in_caption_gap(d, eid)
+
     def test_routed_waypoints_are_in_parent_coordinates(self):
         eid = self.ids["edges"]["web_db"]
         pts = self.d._cells[eid]["points"]

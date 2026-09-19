@@ -98,7 +98,9 @@ edge in the wrong place.
   sides and gutter waypoints on an orthogonal lattice so the connector avoids icons,
   captions and foreign containers. Routes are computed **lazily at `validate()` / `write()`
   / `route_edges()`**, once - so add every container and icon before the first `validate()`,
-  or an icon added afterwards will not be avoided.
+  or an icon added afterwards will not be avoided. A docking point another connector
+  already uses costs extra, so two connectors on one shape take different sides unless
+  every free side is a long detour away; add the edge you care about most first.
 - `route="direct"`: draw.io's own orthogonal router, no pins. Use it for short
   neighbour-to-neighbour links where you want the editor to keep re-routing when a user
   drags shapes.

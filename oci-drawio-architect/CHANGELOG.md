@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [1.3.1] - 2026-09-18
 
-Patch release: the post-release review backlog. No schema change (one optional `hub.kind` field), no new feature, no intentional geometry change. Design: `docs/superpowers/specs/2026-09-18-v1.3.1-backlog-patch.md`.
+Patch release: the post-release review backlog. No schema change (one optional `hub.kind` field) and no new feature. Container geometry is unchanged apart from the two sizing fixes below; connector docking changes where the router now has a free side to use. Design: `docs/superpowers/specs/2026-09-18-v1.3.1-backlog-patch.md`.
 
 ### Fixed
 - Two DRGs without a `name` no longer abort the build with `ValueError: Duplicate cell key 'drg:DRG'`: an unnamed DRG takes its name from the second line of its label, then its address, then its position, and never the bare word `DRG`.
@@ -13,6 +13,8 @@ Patch release: the post-release review backlog. No schema change (one optional `
 - Validator rule 7: a DRG caption that lies inside a VCN whose border the glyph only straddles is reported (it was skipped unconditionally), and a leaf inside nested foreign containers is reported once, against the innermost one.
 - The NSG badge is positioned from the host icon's actual slot width instead of the module constant `ICON_W`.
 - A badged subnet reserves `2 * (BADGE_SIZE + BADGE_GAP)` of title width for its corner badges, and the validator warns when a badged container's title does not fit in what its badges leave.
+- The auto-router no longer charges an edge for the padding inside its own endpoints' icon slots. A glyph narrower or shorter than the 75x95 slot sits inside that padding, so every port of such an icon carried an obstacle penalty whose size depended on where the routing lattice happened to cut the padding - a pure translation of the diagram could flip a straight same-row connector to a three-bend detour. The band between a glyph and its caption stays closed to every connector, including its own.
+- The auto-router charges `_PORT_SHARE_COST` for docking where another connector already docks, so two connectors on the same shape take different sides whenever a free side is within a couple of bends (the team's diagram guidelines: one docking point per connector). `add_edge(route="auto")` records the chosen path's lattice cost in the edge cell's `route_cost`.
 - The gap between two VCN columns is sized from both facing borders, so a left-border gateway in the next column no longer puts its caption inside the previous VCN.
 - A DRG cluster with no attachment box on one side reserves the 15 px its caption overhangs the icon slot, restoring the documented 45 px gap.
 - A gateway with a `link` keeps its hyperlink when it is placed on the VCN border.
@@ -26,7 +28,7 @@ Patch release: the post-release review backlog. No schema change (one optional `
 - `attachment_type()`, `is_regional()` and the legacy single-DRG match warn once to stderr on an unknown attachment type, a non-boolean `regional` value and a name mismatch; `is_regional()` also accepts the JSON string forms `"true"` / `"false"`; `has_onprem` follows the spec's CPE / IPSec / virtual-circuit rule.
 - `DrawioBuilder.layout_info` is declared and documented on the class instead of being attached by the recipe; `VNIC_ATTACHMENT_TYPES` drops `oci_core_vnic` (a data source, never a managed resource); `HUB_TYPES` is a `frozenset`.
 - Docs: the builder module docstring lists the `drg` group type and `add_box()`; the command lists the `osn`, `drg:<name>` and attachment-address edge endpoints, and SKILL.md records the badge first-wins rule for a shared construct; SKILL.md, the command and `references/gotchas.md` document the new `WARNING: title ... its badges leave`.
-- Tests: ~20 new cases (legend aliases, pinned-route edge kinds, `add_box` error paths, the `FOREIGN_TOL` boundary, rule 6's badge exclusion, one OSN panel for two VCNs, `_resolve_attachment_target`, the topology helpers and exported tuples, `REGIONAL_TYPE_PREFIXES`, a reference-backed edge under `--no-inferred-edges`, indexed-instance VNIC NSG badges in plan JSON and a two-LPG tenancy fixture).
+- Tests: ~23 new cases (router docking on narrow glyphs at four page offsets, one docking point per connector, no connector under its own glyph, legend aliases, pinned-route edge kinds, `add_box` error paths, the `FOREIGN_TOL` boundary, rule 6's badge exclusion, one OSN panel for two VCNs, `_resolve_attachment_target`, the topology helpers and exported tuples, `REGIONAL_TYPE_PREFIXES`, a reference-backed edge under `--no-inferred-edges`, indexed-instance VNIC NSG badges in plan JSON and a two-LPG tenancy fixture).
 
 ## [1.3.0] - 2026-09-17
 
