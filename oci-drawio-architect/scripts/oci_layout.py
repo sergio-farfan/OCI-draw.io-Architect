@@ -130,6 +130,17 @@ SUBNET_BOTTOM_PAD = 28
 HUB_X = 15
 HUB_W = 180
 HUB_GAP = 45
+# L1 / G1-G2: the Location Canvas. On-Premises is a page-level sibling of the
+# region, LOC_W wide and the region's height; the left gutter has to hold the
+# Site-to-Site VPN / FastConnect label (slide 27: 68.2 pt), the right one is
+# the toolkit's 10 px. Internet takes 45% of the right column when a 3rd Party
+# Cloud box shares it (toolkit Template 1: 210 / 250).
+LOC_W = HUB_W
+LOC_GAP_MIN = 70
+LOC_GAP_RIGHT = 10
+LOC_STACK_GAP = 10
+LOC_MIN_H = 160
+INTERNET_SPLIT = 0.45
 HUB_ATT_LABEL_PAD = 12           # clearance each side of a hub-side attachment label in the gutter
 HUB_ICON_Y0 = 70
 HUB_PITCH = 200
@@ -600,15 +611,44 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
     return vid, w, h
 
 
-def _layout_hub(d: DrawioBuilder, region_id, hub: dict, vcn_y, vcn_h, reg, explicit_pairs=frozenset()):
-    items = list(hub.get("items") or [])
-    n = max(1, len(items))
-    hub_h = HUB_ICON_Y0 + (n - 1) * HUB_PITCH + ICON_FOOTPRINT_H + 30
-    hub_y = max(VCN_Y, int(round((vcn_y + (vcn_h - hub_h) / 2) / 10.0) * 10))
-    title = hub.get("name") or HUB_TITLES[hub_kind(hub)]
-    hid = d.add_group(title, HUB_X, hub_y, HUB_W, hub_h,
-                      parent=region_id, group_type="onprem", key="hub")
-    reg.containers["hub"] = hid
+def _recentre(d: DrawioBuilder, ids, dy: int) -> None:
+    """Translate the given cells vertically. Their children follow for free."""
+    if not dy:
+        return
+    for cid in ids:
+        if cid in d._cells:
+            d.move(cid, dy=dy)
+
+
+def _region_children(d: DrawioBuilder, rid: str) -> list:
+    """Every non-edge cell parented directly on the region, in insertion order."""
+    return [cid for cid, e in d._cells.items()
+            if e["parent"] == rid and e["kind"] not in ("edge", "layer")]
+
+
+def _split_evenly(total: int, n: int) -> list:
+    """``n`` integer heights summing to exactly ``total`` (the remainder goes to the first)."""
+    if n <= 0:
+        return []
+    base, extra = divmod(int(total), n)
+    return [base + (1 if i < extra else 0) for i in range(n)]
+
+
+def _hub_item_x(item: dict, straddle: bool, box_w: int) -> int:
+    """Slot x of one on-premises item inside its box.
+
+    Decision 5 (toolkit Template 1: the CPE's centre is exactly the box's right
+    edge): under the Location Canvas a CPE / IPSec endpoint / virtual circuit
+    straddles the region-facing border, mirroring the DRG on the VCN border.
+    Everything else (an RPC peer, a firewall, a generic box) keeps the centred
+    interior column.
+    """
+    if straddle and is_onprem_item(item):
+        return box_w - GW_SIDE_DX
+    return int(round((box_w - ICON_W) / 2 / 10.0) * 10)
+
+
+def _place_hub_items(d: DrawioBuilder, hid, items, y0, reg, straddle=False, box_w=HUB_W) -> list:
     ids = []
     for i, it in enumerate(items):
         spec = {"label": it.get("label", ""), "icon": it.get("icon", "cpe")}
@@ -617,19 +657,144 @@ def _layout_hub(d: DrawioBuilder, region_id, hub: dict, vcn_y, vcn_h, reg, expli
         for k in ("metadata", "tooltip"):
             if it.get(k):
                 spec[k] = it[k]
-        got, _ = d.place_icons(hid, [spec], cols=1,
-                               x0=int(round((HUB_W - ICON_W) / 2 / 10.0) * 10),
-                               y0=HUB_ICON_Y0 + i * HUB_PITCH)
+        kwargs = {}
+        if straddle and is_onprem_item(it):
+            kwargs["label_fill"] = COLORS["region_fill"]      # the caption crosses the border
+        got, _ = d.place_icons(hid, [spec], cols=1, x0=_hub_item_x(it, straddle, box_w),
+                               y0=y0 + i * HUB_PITCH, **kwargs)
         ids.extend(got)
         reg.add_item(it, got[0])
+    return ids
+
+
+def _hub_links(d: DrawioBuilder, hid, hub: dict, items, ids, explicit_pairs) -> None:
+    if hub.get("link_label") is None or len(ids) < 2:
+        return
+    for (ia, a), (ib, b) in zip(zip(items, ids), zip(items[1:], ids[1:])):
+        pair = (str(ia.get("address")), str(ib.get("address")))
+        if pair in explicit_pairs or pair[::-1] in explicit_pairs:
+            continue  # the model already connects these two hub items
+        d.add_edge(a, b, hub.get("link_label") or "", parent=hid)
+
+
+def _layout_hub(d: DrawioBuilder, region_id, hub: dict, vcn_y, vcn_h, reg, explicit_pairs=frozenset()):
+    """The v1.3.0 nested on-premises panel: a child of the region, left of the DRG column."""
+    items = list(hub.get("items") or [])
+    n = max(1, len(items))
+    hub_h = HUB_ICON_Y0 + (n - 1) * HUB_PITCH + ICON_FOOTPRINT_H + 30
+    hub_y = max(VCN_Y, int(round((vcn_y + (vcn_h - hub_h) / 2) / 10.0) * 10))
+    title = hub.get("name") or HUB_TITLES[hub_kind(hub)]
+    hid = d.add_group(title, HUB_X, hub_y, HUB_W, hub_h,
+                      parent=region_id, group_type="onprem", key="hub")
+    reg.containers["hub"] = hid
+    ids = _place_hub_items(d, hid, items, HUB_ICON_Y0, reg)
     d.fit_to_children(hid, pad=PAD, min_w=HUB_W, min_h=hub_h)
-    if hub.get("link_label") is not None and len(ids) >= 2:
-        for (ia, a), (ib, b) in zip(zip(items, ids), zip(items[1:], ids[1:])):
-            pair = (str(ia.get("address")), str(ib.get("address")))
-            if pair in explicit_pairs or pair[::-1] in explicit_pairs:
-                continue  # the model already connects these two hub items
-            d.add_edge(a, b, hub.get("link_label") or "", parent=hid)
+    _hub_links(d, hid, hub, items, ids, explicit_pairs)
     return hid
+
+
+def _hub_block_h(items) -> int:
+    """Height of the on-premises item column (icons plus their captions)."""
+    return (max(1, len(items)) - 1) * HUB_PITCH + ICON_FOOTPRINT_H
+
+
+def _layout_location_hub(d: DrawioBuilder, hub: dict, x, y, w, h, centre_y, reg,
+                         explicit_pairs=frozenset()) -> str:
+    """L1: On-Premises as a page-level sibling of the region, its items centred on the VCN stack."""
+    items = list(hub.get("items") or [])
+    title = hub.get("name") or HUB_TITLES[hub_kind(hub)]
+    hid = d.add_group(title, x, y, w, h, parent="1", group_type="onprem", key="hub")
+    reg.containers["hub"] = hid
+    y0 = max(HUB_ICON_Y0, int(round((centre_y - y - _hub_block_h(items) / 2) / 10.0) * 10))
+    ids = _place_hub_items(d, hid, items, y0, reg, straddle=True, box_w=w)
+    _hub_links(d, hid, hub, items, ids, explicit_pairs)
+    return hid
+
+
+def _layout_right_column(d: DrawioBuilder, ctx: dict, x, y, h, reg) -> list:
+    """G1: Internet on top, one 3rd Party Cloud box per entry below it, together as tall as
+    the region (toolkit Template 1: 210 + 10 + 250 = 470 = the region's height)."""
+    boxes = []
+    if ctx["internet"]:
+        boxes.append(("internet", ctx["internet"], "internet"))
+    for i, tp in enumerate(ctx["third_party"]):
+        boxes.append((f"thirdparty:{i}", tp, "third_party_cloud"))
+    if not boxes:
+        return []
+    n = len(boxes)
+    gaps = LOC_STACK_GAP * (n - 1)
+    avail = int(h) - gaps
+    if n == 1:
+        heights = [int(h)]
+    else:
+        first = int(round(avail * INTERNET_SPLIT))
+        heights = [first] + _split_evenly(avail - first, n - 1)
+        if min(heights) < LOC_MIN_H:
+            # Decision 6: the column is recomputed at the LOC_MIN_H floor. The
+            # caller has already grown the region to _right_column_min_h(), so
+            # an even split of avail gives every box at least LOC_MIN_H.
+            heights = _split_evenly(avail, n)
+    ids = []
+    top = y
+    for (key, spec, gtype), bh in zip(boxes, heights):
+        name = spec.get("name") or ("Internet" if gtype == "internet" else "3rd Party Cloud")
+        bid = d.add_group(name, x, top, LOC_W, bh, parent="1", group_type=gtype, key=key)
+        reg.containers[key] = bid
+        items = list(spec.get("items") or [])
+        if items:
+            y0 = max(HUB_ICON_Y0, int(round((bh - _hub_block_h(items)) / 2 / 10.0) * 10))
+            _place_hub_items(d, bid, items, y0, reg, box_w=LOC_W)
+        ids.append(bid)
+        top += bh + LOC_STACK_GAP
+    return ids
+
+
+def _right_column_min_h(ctx: dict) -> int:
+    n = (1 if ctx["internet"] else 0) + len(ctx["third_party"])
+    return 0 if not n else n * LOC_MIN_H + LOC_STACK_GAP * (n - 1)
+
+
+def _layout_locations(d: DrawioBuilder, rid, ctx: dict, hub, drgs, stack_y, stack_h, reg,
+                      explicit_pairs=frozenset()) -> dict:
+    """B03: translate the fitted region and emit the sibling location boxes.
+
+    Runs after ``fit_to_children(region)`` and before every edge that is routed
+    from cell ids, so the translation is invisible to the router (spec 6.2).
+    Step 6: the right column is floored at LOC_MIN_H first; only if the floor
+    still does not fit does the region grow, and then every region child moves
+    down by half the growth so the VCN stack - and the DRG column and the
+    on-premises items centred on it - stays centred (decision 6).
+    """
+    out = {"left_w": 0, "right_w": 0, "dy": 0, "hub": None, "internet": None, "third_party": []}
+    if ctx["locations"] != "outside":
+        return out
+    rx, ry, rw, rh = d.bbox(rid)
+    left_gap = max(LOC_GAP_MIN, _hub_gutter(drgs, d.profile["edge_font"])) if drgs else LOC_GAP_MIN
+    # Decision 5 puts a straddling item's glyph centre ON the region-facing
+    # border, so the half slot that used to sit inside the panel now eats into
+    # the gutter _hub_gutter sized for the hybrid label. Give that width back.
+    if hub and any(is_onprem_item(it) for it in (hub.get("items") or [])):
+        left_gap += ICON_W - GW_SIDE_DX
+    left_w = (LOC_W + left_gap) if hub else 0
+    right_w = (LOC_W + LOC_GAP_RIGHT) if (ctx["internet"] or ctx["third_party"]) else 0
+    need_h = max(_right_column_min_h(ctx),
+                 (HUB_ICON_Y0 + _hub_block_h(list((hub or {}).get("items") or [])) + PAD) if hub else 0)
+    dy = 0
+    if need_h > rh:
+        dy = int((need_h - rh) // 2)
+        d.resize(rid, h=need_h)
+        _recentre(d, _region_children(d, rid), dy)
+        rh = need_h
+    d.resize(rid, x=rx + left_w)
+    centre_y = ry + stack_y + dy + stack_h / 2
+    if hub:
+        out["hub"] = _layout_location_hub(d, hub, rx, ry, LOC_W, rh, centre_y, reg, explicit_pairs)
+    if right_w:
+        ids = _layout_right_column(d, ctx, rx + left_w + rw + LOC_GAP_RIGHT, ry, rh, reg)
+        out["internet"] = ids[0] if ctx["internet"] else None
+        out["third_party"] = ids[1:] if ctx["internet"] else ids
+    out.update(left_w=left_w, right_w=right_w, dy=dy)
+    return out
 
 
 def _drg_attachments(drg: dict) -> list:
@@ -880,11 +1045,14 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         vcns[0]["services"] = list(vcns[0].get("services") or []) + top_services
         top_services = []
 
-    # Column order: on-premises panel | DRG column | VCN columns | OCI Services | Oracle Services Network
-    x = HUB_X + HUB_W + HUB_GAP if hub else PAD
+    # Column order inside the region: [nested on-premises panel] | DRG column | VCN columns |
+    # OCI Services | Oracle Services Network. Under the Location Canvas (L1) the on-premises
+    # panel is not a region child at all, so the region starts at PAD.
+    nested_hub = hub if ctx["locations"] == "nested" else None
+    x = HUB_X + HUB_W + HUB_GAP if nested_hub else PAD
     drg_col_x = x
     if drgs:
-        if hub:
+        if nested_hub:
             drg_col_x = max(drg_col_x, HUB_X + HUB_W + _hub_gutter(drgs, d.profile["edge_font"]))
         x = drg_col_x + _drg_column_width(drgs, requested) + DRG_GAP
 
@@ -947,9 +1115,9 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
             if _name and not (_vcn.get("services") or []):
                 reg.containers.setdefault("services:%s" % _name, osn_id)
 
-    if hub:
-        pairs = {(str(e.get("source")), str(e.get("target"))) for e in (model.get("edges") or [])}
-        _layout_hub(d, rid, hub, VCN_Y, ref_h, reg, explicit_pairs=pairs)
+    pairs = {(str(e.get("source")), str(e.get("target"))) for e in (model.get("edges") or [])}
+    if nested_hub:
+        _layout_hub(d, rid, nested_hub, VCN_Y, ref_h, reg, explicit_pairs=pairs)
 
     pending = []
     if drgs:
@@ -957,6 +1125,9 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                                      d.layout_info["drg_style"])
 
     d.fit_to_children(rid, pad=PAD)
+    canvas = _layout_locations(d, rid, ctx, hub if not nested_hub else None, drgs, VCN_Y, ref_h,
+                               reg, explicit_pairs=pairs)
+    d.layout_info["canvas"] = canvas
 
     if osn_id is not None:
         for _i, side, g, gid in edge_gateways:

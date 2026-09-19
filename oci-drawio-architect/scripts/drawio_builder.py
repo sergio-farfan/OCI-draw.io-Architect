@@ -2839,6 +2839,22 @@ class DrawioBuilder:
                 e[name] = float(val)
         self._set_geometry(cid, x=e["x"], y=e["y"], width=e["w"], height=e["h"])
 
+    def move(self, cid, dx=0, dy=0) -> None:
+        """Translate a cell inside its parent. An icon carries its slot with it.
+
+        ``resize(x=, y=)`` cannot be used to move an icon: the slot the layout
+        reasons about (``slot_x`` / ``slot_y``) is recorded separately from the
+        image cell and would stay behind. Children move for free - child
+        geometry is parent-relative.
+        """
+        e = self._cells[cid]
+        e["x"] += float(dx)
+        e["y"] += float(dy)
+        if e["kind"] == "icon":
+            e["slot_x"] += float(dx)
+            e["slot_y"] += float(dy)
+        self._set_geometry(cid, x=e["x"], y=e["y"], width=e["w"], height=e["h"])
+
     def content_bbox(self, page_idx=None) -> tuple:
         """Absolute (x, y, right, bottom) of everything on a page."""
         page_idx = self._page_idx if page_idx is None else page_idx
