@@ -1202,6 +1202,33 @@ class TestRouterQuality(TempDirMixin, unittest.TestCase):
         self.assertNotEqual(tokens(cell(d.root, eid).get("style")).get("exitY"), "1")
         self._assert_no_segment_in_caption_gap(d, eid)
 
+    def test_edge_does_not_travel_along_a_foreign_containers_border(self):
+        """A gateway glyph straddles its container's border, so its docking
+        point sits exactly on the border line and the lattice offers a free
+        lane down the whole of the NEXT container's border too. The router
+        must pay for that lane and cross the border instead of riding it."""
+        d = DrawioBuilder()
+        page = d.add_group("Region", 0, 0, 1000, 500, group_type="region")
+        left = d.add_group("Left", 40, 120, 300, 300, parent=page, group_type="vcn")
+        right = d.add_group("Right", 420, 120, 300, 300, parent=page, group_type="vcn")
+        d.add_icon("Web", "vm", 60, 60, parent=right)
+        # the gateway straddles Left's top border, exactly like an IGW
+        gw = d.add_icon("Internet\nGateway", "internet_gateway", 240, 80,
+                        parent=page, caption_above=True)
+        far = d.add_icon("Customers", "user", 820, 60, parent=page)
+        eid = d.add_edge(gw, far, "", kind="attachment")
+        d.validate()
+        poly = d._cells[eid]["polyline"]
+        rx, ry, rw, _rh = d.abs_bbox(right)
+        for (x0, y0), (x1, y1) in zip(poly, poly[1:]):
+            if abs(y0 - y1) > 0.01:
+                continue                                   # vertical run
+            on_border = abs(y0 - ry) <= DrawioBuilder._LANE_TOL
+            overlaps = min(x0, x1) < rx + rw and max(x0, x1) > rx
+            self.assertFalse(on_border and overlaps,
+                             f"segment {(x0, y0)}->{(x1, y1)} rides the top border of {right}")
+        self.assertEqual([w for w in d.validate() if w.startswith("ERROR")], [])
+
     def _assert_no_segment_in_caption_gap(self, d, eid):
         """No horizontal run of the edge may sit between an endpoint's glyph
         and that endpoint's caption (the builder's stated routing intent)."""

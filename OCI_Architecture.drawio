@@ -222,10 +222,10 @@
         <mxCell id="internet" value="Internet" style="whiteSpace=wrap;html=1;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;verticalAlign=top;rounded=1;arcSize=1;strokeWidth=1;fillColor=#F5F4F2;strokeColor=#9E9892;fontSize=12;fontStyle=1;fontColor=#312D2A;align=center;spacingRight=5;ociGroup=internet;container=1;collapsible=0;expand=0;recursiveResize=0;" vertex="1" parent="1">
           <mxGeometry x="1722" y="75" width="180" height="1337" as="geometry" />
         </mxCell>
-        <mxCell id="sgw-osn" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1;dashed=0;endArrow=none;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="region" source="sgw" target="osn">
+        <mxCell id="sgw-osn" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1;dashed=0;endArrow=none;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="region" source="sgw" target="osn">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="270" y="950" />
+              <mxPoint x="270" y="984" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -308,28 +308,29 @@
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="790" y="600" />
-              <mxPoint x="790" y="1097" />
-              <mxPoint x="587" y="1097" />
+              <mxPoint x="790" y="1087" />
+              <mxPoint x="587" y="1087" />
             </Array>
           </mxGeometry>
         </mxCell>
         <mxCell id="12" value="OCI APIs" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=1;dashPattern=6 3;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="region" source="app-vm" target="sgw">
-          <mxGeometry relative="1" as="geometry" x="-0.2" y="0">
+          <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="735" y="180" />
-              <mxPoint x="735" y="506" />
-              <mxPoint x="290" y="506" />
-              <mxPoint x="290" y="915" />
+              <mxPoint x="735" y="500" />
+              <mxPoint x="285" y="500" />
+              <mxPoint x="285" y="915" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="13" value="OCI APIs (via DRG)" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=1;dashPattern=6 3;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="region" source="worker-vm" target="sgw">
+        <mxCell id="13" value="OCI APIs (via DRG)" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=1;dashPattern=6 3;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="region" source="worker-vm" target="sgw">
           <mxGeometry relative="1" as="geometry" x="-0.2" y="0">
             <Array as="points">
               <mxPoint x="940" y="145" />
-              <mxPoint x="940" y="500" />
-              <mxPoint x="287" y="500" />
-              <mxPoint x="287" y="984" />
+              <mxPoint x="940" y="495" />
+              <mxPoint x="280" y="495" />
+              <mxPoint x="280" y="940" />
+              <mxPoint x="292" y="940" />
             </Array>
           </mxGeometry>
         </mxCell>

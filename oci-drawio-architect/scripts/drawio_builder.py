@@ -2407,6 +2407,13 @@ class DrawioBuilder:
     _OBSTACLE_COST = 1000.0   # crossing an icon / caption / text cell
     _FOREIGN_COST = 250.0     # running through a container that is not an ancestor
     _BEND_COST = 45.0         # each change of direction
+    # running ALONG a container border instead of crossing it: a gateway icon
+    # straddles the border, so its docking point sits exactly on the border
+    # line and the lattice offers a free lane down the whole of it. Charging
+    # the lane keeps connectors in the gutters and makes them cross a border
+    # perpendicularly, as the Oracle canvases draw them.
+    _LANE_COST = 150.0
+    _LANE_TOL = STRADDLE_TOL  # how close to a border counts as "on" it
     _LINE_MARGIN = 10.0       # corridor distance from container borders
 
     def _routing_shapes(self, page_idx):
@@ -2506,28 +2513,44 @@ class DrawioBuilder:
         grp_items = list(groups.items())
         h_obs = [[()] * max(nx - 1, 0) for _ in range(ny)]
         h_grp = [[()] * max(nx - 1, 0) for _ in range(ny)]
+        h_lane = [[()] * max(nx - 1, 0) for _ in range(ny)]
         v_obs = [[()] * max(ny - 1, 0) for _ in range(nx)]
         v_grp = [[()] * max(ny - 1, 0) for _ in range(nx)]
+        v_lane = [[()] * max(ny - 1, 0) for _ in range(nx)]
+        tol = self._LANE_TOL
         for j, y in enumerate(ys):
             row_obs = [(oid, b) for oid, b in obs_items if b.y + 0.5 < y < b.bottom - 0.5]
             row_grp = [(gid, b) for gid, b in grp_items if b.y + 0.5 < y < b.bottom - 0.5]
+            # a horizontal line within tol of a container's top or bottom edge
+            # runs along that border rather than across it
+            row_lane = [(gid, b) for gid, b in grp_items
+                        if abs(y - b.y) <= tol or abs(y - b.bottom) <= tol]
             for i in range(nx - 1):
                 x0, x1 = xs[i], xs[i + 1]
                 if row_obs:
                     h_obs[j][i] = tuple(oid for oid, b in row_obs if x1 > b.x + 0.5 and x0 < b.right - 0.5)
                 if row_grp:
                     h_grp[j][i] = tuple(gid for gid, b in row_grp if x0 >= b.x - 0.5 and x1 <= b.right + 0.5)
+                if row_lane:
+                    h_lane[j][i] = tuple(gid for gid, b in row_lane
+                                         if x1 > b.x + 0.5 and x0 < b.right - 0.5)
         for i, x in enumerate(xs):
             col_obs = [(oid, b) for oid, b in obs_items if b.x + 0.5 < x < b.right - 0.5]
             col_grp = [(gid, b) for gid, b in grp_items if b.x + 0.5 < x < b.right - 0.5]
+            col_lane = [(gid, b) for gid, b in grp_items
+                        if abs(x - b.x) <= tol or abs(x - b.right) <= tol]
             for j in range(ny - 1):
                 y0, y1 = ys[j], ys[j + 1]
                 if col_obs:
                     v_obs[i][j] = tuple(oid for oid, b in col_obs if y1 > b.y + 0.5 and y0 < b.bottom - 0.5)
                 if col_grp:
                     v_grp[i][j] = tuple(gid for gid, b in col_grp if y0 >= b.y - 0.5 and y1 <= b.bottom + 0.5)
+                if col_lane:
+                    v_lane[i][j] = tuple(gid for gid, b in col_lane
+                                         if y1 > b.y + 0.5 and y0 < b.bottom - 0.5)
         return {"xs": xs, "ys": ys, "xi": xi, "yi": yi, "h_obs": h_obs, "h_grp": h_grp,
-                "v_obs": v_obs, "v_grp": v_grp, "groups": groups, "obstacles": obstacles}
+                "h_lane": h_lane, "v_obs": v_obs, "v_grp": v_grp, "v_lane": v_lane,
+                "groups": groups, "obstacles": obstacles}
 
     def _ancestors(self, cid):
         out = set()
@@ -2555,8 +2578,10 @@ class DrawioBuilder:
         xs, ys = lat["xs"], lat["ys"]
         nx, ny = len(xs), len(ys)
         h_obs, h_grp, v_obs, v_grp = lat["h_obs"], lat["h_grp"], lat["v_obs"], lat["v_grp"]
+        h_lane, v_lane = lat["h_lane"], lat["v_lane"]
         used = lat.setdefault("used", {})
         OB, FO, BE, SH = self._OBSTACLE_COST, self._FOREIGN_COST, self._BEND_COST, self._SHARED_COST
+        LA = self._LANE_COST
 
         def seg_cost(i, j, horizontal, step):
             if horizontal:
@@ -2564,6 +2589,7 @@ class DrawioBuilder:
                 length = xs[ii + 1] - xs[ii]
                 obs = h_obs[j][ii]
                 grp = h_grp[j][ii]
+                lane = h_lane[j][ii]
                 mid = ((xs[ii] + xs[ii + 1]) / 2, ys[j])
                 shared = used.get(("h", j, ii), 0)
             else:
@@ -2571,6 +2597,7 @@ class DrawioBuilder:
                 length = ys[jj + 1] - ys[jj]
                 obs = v_obs[i][jj]
                 grp = v_grp[i][jj]
+                lane = v_lane[i][jj]
                 mid = (xs[i], (ys[jj] + ys[jj + 1]) / 2)
                 shared = used.get(("v", i, jj), 0)
             cost = length + SH * shared
@@ -2580,6 +2607,9 @@ class DrawioBuilder:
             for g in grp:
                 if g not in allowed:
                     cost += FO
+            for g in lane:
+                if g not in exclude_ids:
+                    cost += LA
             for b in endpoint_boxes:   # never tunnel through the endpoints themselves
                 if b.x + 0.5 < mid[0] < b.right - 0.5 and b.y + 0.5 < mid[1] < b.bottom - 0.5:
                     cost += OB
