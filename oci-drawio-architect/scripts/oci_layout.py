@@ -85,6 +85,7 @@ Usage (CLI):
                           [--show-compartments]
                           [--label-mode minimal|network|detailed] [--label-fields F,F]
                           [--label-tag-keys K,K] [--layers off|auto|L,L] [--hidden-layers L,L]
+                          [--detail executive|application|network|engineering] [--no-edges]
 
 Usage (Python):
     from oci_layout import build_diagram, write_diagram
@@ -341,7 +342,7 @@ def _edge_label(text, view: dict) -> str:
 def _view_ctx(model: dict, locations=None, gateway_edge=None, subnet_label=None,
               attachment_style=None, show_compartments=None,
               label_mode=None, label_fields=None, label_tag_keys=None,
-              layers=None, hidden_layers=None) -> dict:
+              layers=None, hidden_layers=None, detail=None, show_edges=None) -> dict:
     """The view choices of one diagram: model keys, with the build_diagram kwargs winning.
 
     ``internet`` is synthesised with no items when the canvas is the Location
@@ -368,7 +369,7 @@ def _view_ctx(model: dict, locations=None, gateway_edge=None, subnet_label=None,
     # oci_topology.subnet_label_mode exactly for every 1.4.0 value.
     view = ov.resolve_view(m, label_mode=label_mode, label_fields=label_fields,
                            label_tag_keys=label_tag_keys, layers=layers,
-                           hidden_layers=hidden_layers)
+                           hidden_layers=hidden_layers, detail=detail, show_edges=show_edges)
     for note in view["notes"]:
         print(note, file=sys.stderr)
     return {"locations": mode,
@@ -710,8 +711,11 @@ def _add_subnet_badges(d: DrawioBuilder, sid: str, subnet: dict, width, reg, vie
     """
     ids = []
     cx = width
-    detailed = (view or _DEFAULT_VIEW).get("label_mode") == "detailed"
-    rt = _badge_refs(subnet.get("route_table"))
+    view = view or _DEFAULT_VIEW
+    detailed = view.get("label_mode") == "detailed"
+    # 6.4 / V4: a gate that is off still draws when its layer is enabled - the
+    # layer then carries the visibility, which is the whole point of the feature.
+    rt = _badge_refs(subnet.get("route_table")) if ov.draws(view, "badges_routes") else []
     if rt:
         bid = d.add_badge("route_table", cx, 0, parent=sid, host=sid, key=f"{sid}-rt",
                           tooltip=_badge_tooltip("Route table", rt, detailed),
@@ -721,7 +725,7 @@ def _add_subnet_badges(d: DrawioBuilder, sid: str, subnet: dict, width, reg, vie
         reg.layer_cells.setdefault("routes", []).append(bid)
         ids.append(bid)
         cx -= BADGE_SIZE + BADGE_GAP
-    sls = _badge_refs(subnet.get("security_lists"))
+    sls = _badge_refs(subnet.get("security_lists")) if ov.draws(view, "badges_security") else []
     if sls:
         bid = d.add_badge("security_list", cx, 0, parent=sid, host=sid, key=f"{sid}-sl",
                           tooltip=_badge_tooltip("Security list", sls, detailed),
@@ -734,7 +738,13 @@ def _add_subnet_badges(d: DrawioBuilder, sid: str, subnet: dict, width, reg, vie
 
 
 def _add_nsg_badge(d: DrawioBuilder, parent, cid: str, item: dict, reg=None, view=None):
-    """NSG shield badge over the top-right of the host icon's slot; None when the item has no ``nsgs``."""
+    """NSG shield badge over the top-right of the host icon's slot.
+
+    None when the item has no ``nsgs`` and when the view's ``badges_security``
+    gate is off with no ``security`` layer to carry it (6.4 / V4).
+    """
+    if not ov.draws(view or _DEFAULT_VIEW, "badges_security"):
+        return None
     nsgs = _badge_refs(item.get("nsgs"))
     if not nsgs:
         return None
@@ -1310,7 +1320,15 @@ def _layout_locations(d: DrawioBuilder, rid, ctx: dict, hub, drgs, stack_y, stac
     return out
 
 
-def _drg_attachments(drg: dict) -> list:
+def _drg_attachments(drg: dict, view=None) -> list:
+    """The attachments this view draws as boxes; empty when the level hides them (6.4).
+
+    ``_drg_style_for`` deliberately calls this WITHOUT a view: the icon-or-box
+    choice is about how many attachments the DRG has, not about how many this
+    view happens to draw.
+    """
+    if view is not None and not ov.draws(view, "drg_attachments"):
+        return []
     return [a for a in (drg.get("attachments") or []) if attachment_type(a) != "loopback"]
 
 
@@ -1345,9 +1363,9 @@ def _att_block(atts: list) -> tuple:
     return heights, (sum(heights) + ATT_VGAP * (len(heights) - 1) if heights else 0)
 
 
-def _drg_cluster_geometry(drg: dict, style: str) -> dict:
+def _drg_cluster_geometry(drg: dict, style: str, view=None) -> dict:
     """Sizes of one DRG cluster: icon slot + attachment boxes (right = VCNs, left = on-prem / RPC)."""
-    atts = _drg_attachments(drg)
+    atts = _drg_attachments(drg, view)
     right = [a for a in atts if attachment_type(a) == "vcn"]
     left = [a for a in atts if attachment_type(a) != "vcn"]
     # A bare side still carries the 105 px caption, 15 px wider than the 75 px
@@ -1361,7 +1379,7 @@ def _drg_cluster_geometry(drg: dict, style: str) -> dict:
     # B09: the route-table badge strip hangs under the DRG caption, so the icon
     # side of the cluster is that much taller and the attachment stacks stay
     # centred on the same axis.
-    rt = drg_route_tables(drg)
+    rt = drg_route_tables(drg) if ov.draws(view or _DEFAULT_VIEW, "drg_route_table") else []
     rt_h = (DRG_RT_GAP + BADGE_SIZE) if rt else 0
     body_h = max(ICON_FOOTPRINT_H + rt_h, left_block, right_block)
     inner_w = left_w + ICON_W + right_w
@@ -1399,8 +1417,9 @@ def _hub_gutter(drgs, edge_font: float) -> int:
     return max(HUB_GAP, need)
 
 
-def _drg_column_width(drgs, requested: str) -> int:
-    return max(_drg_cluster_geometry(drg, _drg_style_for(drg, requested))["inner_w"] for drg in drgs)
+def _drg_column_width(drgs, requested: str, view=None) -> int:
+    return max(_drg_cluster_geometry(drg, _drg_style_for(drg, requested), view)["inner_w"]
+               for drg in drgs)
 
 
 def _drg_display_name(drg: dict, index: int) -> str:
@@ -1473,8 +1492,10 @@ def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_
     no DRG declares one). ``fit_to_children`` ignores badges on purpose, so the
     caller has to floor the region under the strip itself.
     """
+    view = view or _DEFAULT_VIEW
+    boxes_on = ov.draws(view, "drg_attachments")
     clusters = [(drg, _drg_style_for(drg, requested)) for drg in drgs]
-    geoms = [_drg_cluster_geometry(drg, style) for drg, style in clusters]
+    geoms = [_drg_cluster_geometry(drg, style, view) for drg, style in clusters]
     total_h = sum(g["cluster_h"] for g in geoms) + DRG_CLUSTER_GAP * (len(geoms) - 1)
     y = max(stack_y, int(round((stack_y + (stack_h - total_h) / 2) / 10.0) * 10))
     pending = []
@@ -1505,6 +1526,22 @@ def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_
             # slot_y is relative to the box group in box style, to the region otherwise
             rt_bottom = max(rt_bottom, (y if style == "box" else 0) + slot_y
                             + ICON_FOOTPRINT_H + DRG_RT_GAP + BADGE_SIZE)
+        if not boxes_on:
+            # 6.4: the executive level draws no attachment box; the DRG glyph
+            # itself connects straight to the VCN border (the vcn_with_drg
+            # presentation the classifier already knows). The attachment's own
+            # address still resolves, to the DRG glyph, so a model edge that
+            # names it keeps working.
+            for att in _drg_attachments(drg):
+                akey = str(att["address"]) if att.get("address") else None
+                if akey:
+                    reg.by_address.setdefault(akey, did)
+                is_vcn = attachment_type(att) == "vcn"
+                pending.append({"source": did,
+                                "vcn": att.get("vcn") if is_vcn else None,
+                                "target": att.get("target") if not is_vcn else None,
+                                "label": attachment_link_label(att),
+                                "key": f"{akey}-edge" if akey else None})
         for side, atts in (("right", g["right"]), ("left", g["left"])):
             if not atts:
                 continue
@@ -1690,7 +1727,8 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                   page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None,
                   locations=None, gateway_edge=None, subnet_label=None, attachment_style=None,
                   show_compartments=None, label_mode=None, label_fields=None,
-                  label_tag_keys=None, layers=None, hidden_layers=None) -> DrawioBuilder:
+                  label_tag_keys=None, layers=None, hidden_layers=None,
+                  detail=None, show_edges=None) -> DrawioBuilder:
     """Lay out a normalized model and return the (unwritten) DrawioBuilder.
 
     Schema-1 models are migrated first (DRG hub items / drg gateways -> drgs[]);
@@ -1709,8 +1747,13 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     ctx = _view_ctx(model, locations=locations, gateway_edge=gateway_edge, subnet_label=subnet_label,
                     attachment_style=attachment_style, show_compartments=show_compartments,
                     label_mode=label_mode, label_fields=label_fields, label_tag_keys=label_tag_keys,
-                    layers=layers, hidden_layers=hidden_layers)
+                    layers=layers, hidden_layers=hidden_layers,
+                    detail=detail, show_edges=show_edges)
     view = ctx["view"]
+    # 6.4: a level that asks for a legend gets one; "network" leaves the choice
+    # to the caller (its table entry is None).
+    if view["legend"] is not None:
+        legend = bool(view["legend"])
     d = DrawioBuilder(page_name=page_name or f"{subject} Architecture", style_profile=style_profile,
                       attachment_style=ctx["attachment_style"],
                       max_label_lines=view["line_budget"])
@@ -1753,7 +1796,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     if drgs:
         if nested_hub:
             drg_col_x = max(drg_col_x, HUB_X + HUB_W + _hub_gutter(drgs, d.profile["edge_font"]))
-        x = drg_col_x + _drg_column_width(drgs, requested) + DRG_GAP
+        x = drg_col_x + _drg_column_width(drgs, requested, view) + DRG_GAP
     stack_left = x              # first VCN column; the OSN band never runs left of it
 
     # B04 / spec 6.3: regroup the columns by compartment before anything is placed,
@@ -1932,7 +1975,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
             d.add_edge(pe["source"], target, _edge_label(pe["label"], view), kind="attachment",
                        key=pe["key"])
 
-    for e in model.get("edges") or []:
+    for e in (model.get("edges") or []) if view["show_edges"] else []:
         spec = EDGE_KINDS.get(str(e.get("kind") or "data").lower(), EDGE_KINDS["data"])
         kwargs = dict(color=e.get("color", spec["color"]), key=e.get("address"))
         layer_name = _edge_layer(e.get("kind"))
@@ -2018,6 +2061,11 @@ def main(argv=None) -> int:
                          f"'ips' and 'ports' are rewritten to caption fields")
     ap.add_argument("--hidden-layers", default=None, metavar="L,L",
                     help="layers created with visible=0 (toggle them in draw.io with Cmd/Ctrl+Shift+L)")
+    ap.add_argument("--detail", default=None, choices=ov.DETAIL_ORDER,
+                    help="level of detail: executive (no badges, no CIDRs, no attachment boxes, no "
+                         "connector labels), application, network (default) or engineering")
+    ap.add_argument("--no-edges", dest="show_edges", action="store_false", default=None,
+                    help="draw no model connectors at all (the inventory view)")
     args = ap.parse_args(argv)
     model = load_model(args.model)
     subject = model.get("subject") or "Architecture"
@@ -2029,7 +2077,8 @@ def main(argv=None) -> int:
                   attachment_style=args.attachment_style, show_compartments=args.show_compartments,
                   label_mode=args.label_mode, label_fields=args.label_fields,
                   label_tag_keys=args.label_tag_keys, layers=args.layers,
-                  hidden_layers=args.hidden_layers)
+                  hidden_layers=args.hidden_layers, detail=args.detail,
+                  show_edges=args.show_edges)
     return 0
 
 
