@@ -478,6 +478,7 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
     vcns_ok = _expect(errors, model.get("vcns"), list, "vcns")
     addresses = set(model_addresses(model))
     vcn_keys = {v.get(k) for v in _entries(model.get("vcns")) if isinstance(v, dict) for k in ("name", "address")}
+    peer_keys = _peer_keys(model, addresses)
     if drgs_ok:
         for di, drg in enumerate(model["drgs"]):
             dp = f"drgs[{di}]"
@@ -554,7 +555,7 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
                     if "peer" in gw:
                         if (_expect(errors, gw["peer"], (str, type(None)), f"{gp}.peer")
                                 and gw["peer"] is not None
-                                and gw["peer"] not in addresses and gw["peer"] not in vcn_keys):
+                                and gw["peer"] not in peer_keys):
                             errors.append(f"{gp}.peer: {gw['peer']!r} is not an address or a VCN name "
                                           f"in the model")
 
@@ -631,6 +632,18 @@ def model_addresses(model: dict) -> Iterator[str]:
     for item in _entries(model.get("services")):
         if _addr(item):
             yield item["address"]
+
+
+def _peer_keys(model: dict, addresses: Optional[Iterable[str]] = None) -> set:
+    """Every value a gateway ``peer`` may legally hold: a model address or a VCN name.
+
+    Shared by ``validate_model`` and ``ModelBuilder._finish``, so the producer can
+    never emit a peer the validator rejects.
+    """
+    keys = set(model_addresses(model)) if addresses is None else set(addresses)
+    keys.update(v[k] for v in _entries(model.get("vcns")) if isinstance(v, dict)
+                for k in ("name", "address") if isinstance(v.get(k), str))
+    return keys
 
 
 def model_is_empty(model: dict) -> bool:
@@ -1724,6 +1737,23 @@ class ModelBuilder:
                 kept.append(att)
             drg["attachments"] = kept
 
+    def _clear_dangling_peers(self) -> None:
+        """Drop a gateway ``peer`` pointing at something the model does not contain.
+
+        ``_build_gateways`` reads ``peer_id`` off the *resources*, but the peer LPG only
+        becomes a model gateway when its own ``vcn_id`` resolves, and ``_merge_loose`` may
+        drop a placeholder VCN with its gateways. Left in place the address would fail
+        ``validate_model``; cleared, the layout draws the LPG on the VCN's bottom border.
+        """
+        keys = _peer_keys(self.model)
+        for vcn in self.model["vcns"]:
+            for gw in vcn.get("gateways") or []:
+                peer = gw.get("peer")
+                if peer and peer not in keys:
+                    self.warn(f"{gw.get('address') or gw.get('label')}: peer {peer} "
+                              f"is not in the model; drawn without a peer")
+                    gw["peer"] = None
+
     def _finish(self) -> None:
         self._resolve_attachment_vcns()
         for vcn in self.model["vcns"]:
@@ -1735,6 +1765,7 @@ class ModelBuilder:
             self.model["subject"] = self.model["vcns"][0]["name"]
         if self.model["compartments"] and self.model["compartment"] is None:
             self.model["compartment"] = self.model["compartments"][0]
+        self._clear_dangling_peers()
         if self.warnings:                      # absent when there is nothing to say
             self.model["warnings"] = list(self.warnings)
 
