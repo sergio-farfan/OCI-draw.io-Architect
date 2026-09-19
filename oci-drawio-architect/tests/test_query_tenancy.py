@@ -372,5 +372,19 @@ class CliTests(unittest.TestCase):
         self.assertIn("--compartment-id", proc.stderr)
 
 
+class LpgPairTests(unittest.TestCase):
+    """A47: an LPG pair must survive entities_to_resources / first_ref end to end."""
+
+    FIXTURE = TESTS_DIR / "fixtures" / "tenancy" / "lpg_pair.json"
+
+    def test_both_gateways_of_a_pair_get_a_peer(self):
+        model = qt.build_model(qt.load_bundle(self.FIXTURE), None)
+        gws = {g["label"]: g for v in model["vcns"] for g in v["gateways"]}
+        self.assertEqual(sorted(gws), ["lpg-hub", "lpg-spoke"])
+        self.assertEqual(gws["lpg-hub"]["peer"], gws["lpg-spoke"]["address"])
+        self.assertEqual(gws["lpg-spoke"]["peer"], gws["lpg-hub"]["address"])
+        self.assertEqual(pt.validate_model(model), [])
+
+
 if __name__ == "__main__":
     unittest.main()
