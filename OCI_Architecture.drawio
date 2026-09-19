@@ -237,8 +237,7 @@
         <mxCell id="2" value="IPSec VPN" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=0;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="region" source="cpe" target="drg">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="250" y="480" />
-              <mxPoint x="250" y="491" />
+              <mxPoint x="257" y="480" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -249,66 +248,57 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="4" value="3000 / 8000" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=0;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="vcn-Spoke-VCN-D" source="lb" target="app-vm">
+        <mxCell id="4" value="3000 / 8000" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=0;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="vcn-Spoke-VCN-D" source="lb" target="app-vm">
           <mxGeometry relative="1" as="geometry" x="0.4" y="0">
             <Array as="points">
               <mxPoint x="77" y="95" />
-              <mxPoint x="407" y="95" />
+              <mxPoint x="372" y="95" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="5" value="443" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=1;dashPattern=6 3;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="vcn-Spoke-VCN-D" source="app-vm" target="worker-vm">
+        <mxCell id="5" value="443" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=1;dashPattern=6 3;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="vcn-Spoke-VCN-D" source="app-vm" target="worker-vm">
           <mxGeometry relative="1" as="geometry" x="0.2" y="0">
             <Array as="points">
               <mxPoint x="407" y="95" />
-              <mxPoint x="737" y="95" />
+              <mxPoint x="702" y="95" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="6" value="1522" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=0;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="vcn-Spoke-VCN-D" source="app-vm" target="adb">
+        <mxCell id="6" value="1522" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=0;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="vcn-Spoke-VCN-D" source="app-vm" target="adb">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="337" y="140" />
+              <mxPoint x="337" y="175" />
               <mxPoint x="337" y="517" />
-              <mxPoint x="115" y="517" />
-              <mxPoint x="115" y="560" />
+              <mxPoint x="112" y="517" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="7" value="1522" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=0;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="vcn-Spoke-VCN-D" source="worker-vm" target="adb">
+        <mxCell id="7" value="1522" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=0;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="vcn-Spoke-VCN-D" source="worker-vm" target="adb">
           <mxGeometry relative="1" as="geometry" x="-0.2" y="0">
             <Array as="points">
-              <mxPoint x="670" y="140" />
+              <mxPoint x="670" y="175" />
               <mxPoint x="670" y="515" />
-              <mxPoint x="120" y="515" />
-              <mxPoint x="120" y="560" />
+              <mxPoint x="77" y="515" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="8" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#AE562C;strokeWidth=1.5;dashed=0;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="subnet-sn-priv-data" source="oac" target="pac">
-          <mxGeometry relative="1" as="geometry">
-            <Array as="points">
-              <mxPoint x="405" y="90" />
-              <mxPoint x="405" y="47" />
-              <mxPoint x="448" y="47" />
-            </Array>
-          </mxGeometry>
+        <mxCell id="8" value="" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#AE562C;strokeWidth=1.5;dashed=0;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="subnet-sn-priv-data" source="oac" target="pac">
+          <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="9" value="1522 / 443 (PAC)" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#AE562C;strokeWidth=1.5;dashed=0;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="subnet-sn-priv-data" source="pac" target="adb">
+        <mxCell id="9" value="1522 / 443 (PAC)" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#AE562C;strokeWidth=1.5;dashed=0;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="subnet-sn-priv-data" source="pac" target="adb">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
               <mxPoint x="448" y="41" />
-              <mxPoint x="115" y="41" />
-              <mxPoint x="115" y="90" />
+              <mxPoint x="22" y="41" />
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="10" value="Lakehouse" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#7B61FF;strokeWidth=1.5;dashed=1;dashPattern=6 3;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="subnet-sn-priv-data" source="aidp" target="adb">
-          <mxGeometry relative="1" as="geometry" x="-0.4" y="0">
+        <mxCell id="10" value="Lakehouse" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#7B61FF;strokeWidth=1.5;dashed=1;dashPattern=6 3;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="subnet-sn-priv-data" source="aidp" target="adb">
+          <mxGeometry relative="1" as="geometry" x="-0.2" y="0">
             <Array as="points">
               <mxPoint x="578" y="33" />
-              <mxPoint x="15" y="33" />
-              <mxPoint x="15" y="90" />
+              <mxPoint x="95" y="33" />
+              <mxPoint x="95" y="120" />
             </Array>
           </mxGeometry>
         </mxCell>
@@ -320,14 +310,14 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="12" value="OCI APIs" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=1;dashPattern=6 3;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="region" source="app-vm" target="sgw">
+        <mxCell id="12" value="OCI APIs" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=1;dashPattern=6 3;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="region" source="app-vm" target="sgw">
           <mxGeometry relative="1" as="geometry" x="-0.4" y="0">
             <Array as="points">
               <mxPoint x="970" y="180" />
               <mxPoint x="970" y="114" />
               <mxPoint x="1170" y="114" />
               <mxPoint x="1170" y="86" />
-              <mxPoint x="1539" y="86" />
+              <mxPoint x="1504" y="86" />
             </Array>
           </mxGeometry>
         </mxCell>

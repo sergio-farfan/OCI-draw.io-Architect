@@ -2334,10 +2334,21 @@ class DrawioBuilder:
                 if w > 0 and h > 0:
                     obstacles[cid] = _Box(ax, ay, w, h)
                 # the slot (glyph + empty band) is kept as its own obstacle too,
-                # so an endpoint's connector cannot run through the band
-                # between its own glyph and caption
+                # so a passing connector never crosses the padding around a
+                # glyph. _route_one drops it for the edge's own endpoints -
+                # the slot is wider and taller than the glyph cell, so keeping
+                # it would tax every port of a glyph narrower than ICON_W and
+                # make the choice of docking side depend on where the lattice
+                # happens to cut that padding.
                 ox, oy = self._origin(e["parent"])
                 obstacles[f"{cid}#slot"] = _Box(ox + e["slot_x"], oy + e["slot_y"], e["slot_w"], e["slot_h"])
+                # the band between the glyph and its caption stays an obstacle
+                # for everyone, including the edge's own endpoints, so no
+                # connector runs through the gap under a glyph
+                band_y = oy + e["y"] + e["h"]
+                band_h = oy + e["slot_y"] + e["slot_h"] - band_y
+                if band_h > 0:
+                    obstacles[f"{cid}#band"] = _Box(ox + e["slot_x"], band_y, e["slot_w"], band_h)
                 lid = e.get("label_id")
                 if lid and lid in self._cells:
                     lx, ly, lw, lh = self._abs_cell(lid)
@@ -2422,9 +2433,15 @@ class DrawioBuilder:
         return out
 
     _SHARED_COST = 25.0       # re-using a corridor segment another edge already uses (below one bend)
+    _PORT_SHARE_COST = 120.0  # docking where another connector already docks (above two bends)
 
-    def _dijkstra(self, lat, starts, goals, allowed, endpoint_boxes, exclude_ids=frozenset()):
-        """Cheapest orthogonal path on the lattice. starts/goals: {(i,j): side}."""
+    def _dijkstra(self, lat, starts, goals, allowed, endpoint_boxes, exclude_ids=frozenset(),
+                  start_costs=None, goal_costs=None):
+        """Cheapest orthogonal path on the lattice. starts/goals: {(i,j): side}.
+
+        start_costs / goal_costs add a per-port surcharge (keyed like starts /
+        goals) so an already-used docking point can lose to a free one.
+        """
         import heapq
         xs, ys = lat["xs"], lat["ys"]
         nx, ny = len(xs), len(ys)
@@ -2464,16 +2481,26 @@ class DrawioBuilder:
         heap = []
         for (i, j), side in starts.items():
             d = 0 if side in ("L", "R") else 1
-            dist[(i, j, d)] = 0.0
-            heapq.heappush(heap, (0.0, i, j, d))
+            c0 = (start_costs or {}).get((i, j), 0.0)
+            dist[(i, j, d)] = c0
+            heapq.heappush(heap, (c0, i, j, d))
+        # a virtual sink collects the goals so a goal surcharge is paid before
+        # the search commits to a docking point
+        SINK = (-1, -1, -1)
         best_goal = None
         while heap:
             cost, i, j, d = heapq.heappop(heap)
+            if (i, j, d) == SINK:
+                best_goal = prev[SINK]
+                break
             if dist.get((i, j, d), float("inf")) < cost:
                 continue
             if (i, j) in goals:
-                best_goal = (i, j, d)
-                break
+                c = cost + (goal_costs or {}).get((i, j), 0.0)
+                if c < dist.get(SINK, float("inf")):
+                    dist[SINK] = c
+                    prev[SINK] = (i, j, d)
+                    heapq.heappush(heap, (c,) + SINK)
             for nd in (0, 1):
                 turn = 0.0 if nd == d else BE
                 for step in (-1, 1):
@@ -2545,10 +2572,21 @@ class DrawioBuilder:
         if not starts or not goals:
             return
         allowed = self._ancestors(src) | self._ancestors(tgt) | {src, tgt}
-        result = self._dijkstra(lat, starts, goals, allowed, (sb, tb), exclude_ids={src, tgt})
+        # one docking point per connector where the geometry allows it: a port
+        # another edge already uses costs _PORT_SHARE_COST, so a free side of
+        # the same shape wins unless it is more than a couple of bends away
+        taken = lat.setdefault("ports", {})
+        start_costs = {n: self._PORT_SHARE_COST * taken.get((src, side), 0) for n, side in starts.items()}
+        goal_costs = {n: self._PORT_SHARE_COST * taken.get((tgt, side), 0) for n, side in goals.items()}
+        result = self._dijkstra(lat, starts, goals, allowed, (sb, tb),
+                                exclude_ids={src, tgt, src + "#slot", tgt + "#slot"},
+                                start_costs=start_costs, goal_costs=goal_costs)
         if result is None:
             return
-        pts, es, ns, _cost = result
+        pts, es, ns, cost = result
+        e["route_cost"] = cost           # lattice cost of the chosen path (diagnostics)
+        taken[(src, es)] = taken.get((src, es), 0) + 1
+        taken[(tgt, ns)] = taken.get((tgt, ns), 0) + 1
         ex, ey = self._PORTS[es]
         nx_, ny_ = self._PORTS[ns]
         cell, geom = job["cell"], job["geom"]
