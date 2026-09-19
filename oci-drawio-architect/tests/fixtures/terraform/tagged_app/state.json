@@ -1,0 +1,27 @@
+{
+  "format_version": "1.0",
+  "values": {
+    "root_module": {
+      "resources": [
+        {"address": "oci_core_vcn.app", "mode": "managed", "type": "oci_core_vcn", "name": "app",
+         "values": {"id": "ocid1.vcn.oc1..aaaavcn", "display_name": "vcn-app",
+                    "cidr_block": "10.0.0.0/16", "state": "AVAILABLE",
+                    "freeform_tags": {"Application": "payments"}, "defined_tags": {}}},
+        {"address": "oci_core_subnet.web", "mode": "managed", "type": "oci_core_subnet",
+         "name": "web",
+         "values": {"id": "ocid1.subnet.oc1..aaaaweb", "display_name": "sn-web",
+                    "cidr_block": "10.0.1.0/24", "vcn_id": "ocid1.vcn.oc1..aaaavcn",
+                    "state": "AVAILABLE", "freeform_tags": {}, "defined_tags": {}}},
+        {"address": "oci_core_instance.broker", "mode": "managed", "type": "oci_core_instance",
+         "name": "broker",
+         "values": {"id": "ocid1.instance.oc1..aaaabroker", "display_name": "App Broker VM",
+                    "subnet_id": "ocid1.subnet.oc1..aaaaweb", "shape": "VM.Standard.E5.Flex",
+                    "private_ip": "10.0.1.47", "public_ip": null,
+                    "availability_domain": "Uocm:PHX-AD-1", "fault_domain": "FAULT-DOMAIN-2",
+                    "hostname_label": "broker", "state": "RUNNING",
+                    "freeform_tags": {"Application": "payments", "Environment": "prod"},
+                    "defined_tags": {"Ops.Tier": "gold"}}}
+      ]
+    }
+  }
+}

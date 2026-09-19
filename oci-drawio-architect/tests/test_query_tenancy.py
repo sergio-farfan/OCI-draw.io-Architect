@@ -76,7 +76,8 @@ class BundleModelTests(unittest.TestCase):
     def test_items_placed_by_subnet_id_and_vnic_association(self):
         app = subnet(self.vcn, "sn-app")["items"]
         self.assertEqual([(i["icon"], i["label"], i["address"]) for i in app],
-                         [("vm", "app-server-1\nVM.Standard.E4.Flex", INSTANCE)])   # via Vnic ASSOCIATED_WITH
+                         [("vm", "app-server-1", INSTANCE)])                # via Vnic ASSOCIATED_WITH
+        self.assertEqual(app[0]["metadata"]["shape"], "VM.Standard.E4.Flex")  # D1: the shape moved to metadata
         lb = subnet(self.vcn, "sn-lb-public")["items"]
         self.assertEqual([(i["icon"], i["label"]) for i in lb], [("load_balancer", "lb-shop")])   # subnet-ids[0]
         data = subnet(self.vcn, "sn-database")["items"]
