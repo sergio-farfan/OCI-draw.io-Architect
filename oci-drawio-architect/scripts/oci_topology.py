@@ -31,6 +31,64 @@ ONPREM_ICON_KEYS = frozenset({"cpe", "customer_premises_equipment", "fastconnect
 HUB_KINDS = ("onprem", "remote_region")
 HUB_TITLES = {"onprem": "On-premises", "remote_region": "Remote region"}
 
+# v1.4.0 view choices. Every one of them is a property of the VIEW, never of
+# the Terraform: the parser never writes them (spec section 5).
+LOCATION_MODES = ("outside", "nested")          # L1: Oracle's Location Canvas, or the 1.3.0 nested panel
+GATEWAY_EDGES = ("auto", "internet", "top", "bottom")
+GATEWAY_SIDES = ("top", "right", "bottom", "left")
+SUBNET_LABEL_MODES = ("twoline", "inline")      # L4: name+token over CIDR, or the 1.3.0 single line
+ATTACHMENT_STYLE_MODES = ("solid", "dotted")    # mirrors drawio_builder.ATTACHMENT_STYLES
+# G6: one grouping mechanism for B05 (User Group, Tier) and B06 (OKE cluster).
+GROUP_BOX_TYPES = ("oke_cluster", "tier", "user_group", "other")
+GROUP_BOX_TITLES = {"oke_cluster": "Container Engine for Kubernetes Cluster",
+                    "tier": "Tier", "user_group": "User Group", "other": "Group"}
+# Which container a groups[] entry hangs off, and the member key it uses there:
+# a subnet group encloses items, a VCN group bands whole subnets.
+GROUP_SCOPES = ("subnet", "vcn")
+_GROUP_MEMBER_KEYS = {"subnet": "items", "vcn": "subnets"}
+
+
+def _choice(value, allowed: tuple, default: str, what: str) -> str:
+    """A normalised enum value; absent / empty -> ``default``, unknown -> ValueError."""
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise ValueError(f"{what} must be one of {allowed}, not {value!r}")
+    text = value.strip().lower()
+    if not text:
+        return default
+    if text not in allowed:
+        raise ValueError(f"{what} must be one of {allowed}, not {value!r}")
+    return text
+
+
+def locations_mode(model: dict) -> str:
+    """``outside`` (default, Oracle's Location Canvas) or ``nested`` (the 1.3.0 panel)."""
+    return _choice((model or {}).get("locations"), LOCATION_MODES, "outside", "locations")
+
+
+def gateway_edge_mode(model: dict) -> str:
+    """Which border the Internet-facing gateways take: auto | internet | top | bottom."""
+    return _choice((model or {}).get("gateway_edge"), GATEWAY_EDGES, "auto", "gateway_edge")
+
+
+def subnet_label_mode(model: dict) -> str:
+    """``twoline`` (default) or ``inline`` (the 1.3.0 single-line label)."""
+    return _choice((model or {}).get("subnet_label"), SUBNET_LABEL_MODES, "twoline", "subnet_label")
+
+
+def attachment_style_of(model: dict):
+    """The model's attachment connector form, or None to take the style profile's."""
+    value = (model or {}).get("attachment_style")
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return _choice(value, ATTACHMENT_STYLE_MODES, "solid", "attachment_style")
+
+
+def show_compartments(model: dict) -> bool:
+    """L2: compartments are drawn as containers only when the view asks for it."""
+    return bool((model or {}).get("show_compartments"))
+
 
 def hub_kind(hub: dict) -> str:
     """``hub['kind']`` normalised; 'onprem' when absent or unknown."""
@@ -143,6 +201,43 @@ def is_regional(item: dict) -> bool:
     return str(item.get("icon") or "") in REGIONAL_ICON_KEYS
 
 
+def badge_refs(value) -> List[dict]:
+    """Normalise ``str | dict | list[str | dict]`` into ``[{"name", "address"}]`` (empty for None)."""
+    if value is None or value == "" or value == []:
+        return []
+    items = value if isinstance(value, (list, tuple)) else [value]
+    out = []
+    for it in items:
+        if isinstance(it, dict):
+            name = str(it.get("name") or it.get("label") or it.get("address") or "").strip()
+            addr = it.get("address")
+        else:
+            name, addr = str(it).strip(), None
+        if name:
+            out.append({"name": name, "address": str(addr) if addr else None})
+    return out
+
+
+def drg_route_tables(drg: dict) -> List[dict]:
+    """B09: the DRG's route tables, in model order (Oracle creates two by default)."""
+    return badge_refs((drg or {}).get("route_table"))
+
+
+def label_parts(name, cidr=None, public=None) -> Tuple[str, str]:
+    """L4 / B08: (line 1, line 2) of a two-line subnet or VCN label.
+
+    Line 1 is the name plus a ``(Public)`` / ``(Private)`` token when ``public``
+    is present AND a bool - so parser output is always marked and a hand-written
+    model that never mentions it stays unmarked. Line 2 is the CIDR.
+    """
+    line1 = str(name or "")
+    if isinstance(public, bool):
+        token = "(Public)" if public else "(Private)"
+        if token.lower() not in line1.lower():
+            line1 = f"{line1} {token}".strip()
+    return line1, str(cidr or "")
+
+
 def choose_drg_style(requested: str, n_attachments: int) -> str:
     if requested is not None and not isinstance(requested, str):
         raise ValueError(f"drg_style must be auto, icon or box, not {requested!r}")
@@ -244,6 +339,126 @@ def migrate_legacy_model(model: dict) -> Tuple[dict, List[str]]:
     return m, warnings
 
 
+def _slug_label(text: str) -> str:
+    out = "".join(ch.lower() if (ch.isalnum() or ch in "-_") else "-" for ch in str(text))
+    while "--" in out:
+        out = out.replace("--", "-")
+    return out.strip("-") or "group"
+
+
+def normalise_groups(container: dict, scope: str, parent_key: str) -> List[dict]:
+    """G6: the ``groups[]`` entries of one VCN or subnet as ``{type, label, members, key}``.
+
+    ``scope`` selects the member key: ``items`` on a subnet, ``subnets`` on a
+    VCN. Members are only names/addresses here - the recipe resolves them and
+    raises when one is not in this container (spec 6.5).
+    """
+    if scope not in _GROUP_MEMBER_KEYS:
+        raise ValueError(f"normalise_groups: scope must be 'vcn' or 'subnet', not {scope!r}")
+    member_key = _GROUP_MEMBER_KEYS[scope]
+    entries = (container or {}).get("groups") or []
+    if not isinstance(entries, (list, tuple)):
+        raise ValueError(f"{parent_key}: groups must be a list, not {type(entries).__name__}")
+    out: List[dict] = []
+    seen: Dict[str, str] = {}
+    for i, raw in enumerate(entries):
+        path = f"{parent_key}: groups[{i}]"
+        if not isinstance(raw, dict):
+            raise ValueError(f"{path} must be an object with a 'type' and {member_key!r}")
+        gtype = str(raw.get("type") or "").strip().lower()
+        if gtype not in GROUP_BOX_TYPES:
+            raise ValueError(f"{path}: type {raw.get('type')!r} is not one of {GROUP_BOX_TYPES}")
+        members = raw.get(member_key)
+        if not isinstance(members, (list, tuple)) or not members:
+            raise ValueError(f"{path}: {member_key!r} must list at least one member "
+                             f"(a groups[] box with no members has nothing to enclose)")
+        members = list(members)
+        for m in members:
+            if not isinstance(m, str) or not m.strip():
+                raise ValueError(f"{path}: {member_key!r} members must be non-empty strings, got {m!r}")
+            if m in seen:
+                raise ValueError(f"{path}: member {m!r} is already in the group {seen[m]!r}; "
+                                 f"groups[] boxes in one container may not overlap")
+        label = str(raw.get("label") or GROUP_BOX_TITLES[gtype])
+        key = str(raw.get("key") or f"group:{parent_key}:{gtype}:{_slug_label(label)}")
+        for m in members:
+            seen[m] = label
+        out.append({"type": gtype, "label": label, "members": members, "key": key})
+    return out
+
+
+def _walk_compartments(nodes: List[dict]):
+    """Yield every compartment node of a ``compartment_tree()`` result, depth first."""
+    for node in nodes:
+        yield node
+        for child in _walk_compartments(node["children"]):
+            yield child
+
+
+def compartment_tree(model: dict) -> List[dict]:
+    """L2 / B04: the compartment forest, ordered by the column order of the first VCN.
+
+    Accepts both ``compartments`` forms (a bare name, or
+    ``{"name", "parent"?, "vcns"?}``) in the same list; an object entry wins
+    over a string of the same name. VCNs not claimed by an object entry are
+    placed by their own ``vcn["compartment"]``; a VCN naming no known
+    compartment stays outside every box and is simply absent from the tree.
+    """
+    nodes: Dict[str, dict] = {}
+    order: List[str] = []
+    for entry in (model or {}).get("compartments") or []:
+        name = entry.get("name") if isinstance(entry, dict) else entry
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"compartments: {entry!r} has no name")
+        node = nodes.setdefault(name, {"name": name, "parent": None, "vcns": [], "children": []})
+        if name not in order:
+            order.append(name)
+        if isinstance(entry, dict):
+            parent = entry.get("parent")
+            if parent is not None:
+                node["parent"] = str(parent)
+            for vname in entry.get("vcns") or []:
+                if vname not in node["vcns"]:
+                    node["vcns"].append(str(vname))
+    claimed = {v for node in nodes.values() for v in node["vcns"]}
+    vcn_index = {}
+    for i, vcn in enumerate((model or {}).get("vcns") or []):
+        name = vcn.get("name")
+        if not name:
+            continue
+        vcn_index[name] = i
+        cname = vcn.get("compartment")
+        if name in claimed or not cname or cname not in nodes:
+            continue
+        nodes[cname]["vcns"].append(name)
+    for name in order:
+        parent = nodes[name]["parent"]
+        if parent is not None and parent not in nodes:
+            raise ValueError(f"compartments: {name!r} names an unknown parent {parent!r}")
+        seen, cur = {name}, parent
+        while cur is not None:
+            if cur in seen:
+                raise ValueError(f"compartments: cycle through {name!r}")
+            seen.add(cur)
+            cur = nodes[cur]["parent"]
+    def rank(name: str) -> tuple:
+        idx = [vcn_index[v] for v in nodes[name]["vcns"] if v in vcn_index]
+        kids = [rank(c) for c in order if nodes[c]["parent"] == name]
+        best = min(idx) if idx else None
+        for k in kids:
+            if k[0] == 0:
+                best = k[1] if best is None else min(best, k[1])
+        return (0, best) if best is not None else (1, order.index(name))
+    roots = []
+    for name in order:
+        node = nodes[name]
+        node["children"] = sorted((nodes[c] for c in order if nodes[c]["parent"] == name),
+                                  key=lambda n: rank(n["name"]))
+        if node["parent"] is None:
+            roots.append(node)
+    return sorted(roots, key=lambda n: rank(n["name"]))
+
+
 def classify_topology(model: dict) -> dict:
     """Pure classification of an (already migrated) model."""
     vcns = list(model.get("vcns") or [])
@@ -272,6 +487,11 @@ __all__ = [
     "TOPOLOGY_KINDS", "ATTACHMENT_TYPES", "ONPREM_ATTACHMENT_TYPES", "ATTACHMENT_LINK_LABELS",
     "DRG_ICON_KEYS", "RPC_ICON_KEYS", "DRG_BOX_THRESHOLD", "REGIONAL_ICON_KEYS",
     "ONPREM_ITEM_TYPES", "ONPREM_ICON_KEYS", "HUB_KINDS", "HUB_TITLES", "hub_kind",
+    "LOCATION_MODES", "GATEWAY_EDGES", "GATEWAY_SIDES", "SUBNET_LABEL_MODES",
+    "ATTACHMENT_STYLE_MODES", "GROUP_BOX_TYPES", "GROUP_BOX_TITLES", "GROUP_SCOPES",
+    "locations_mode", "gateway_edge_mode", "subnet_label_mode", "attachment_style_of",
+    "show_compartments", "badge_refs", "drg_route_tables", "label_parts",
+    "normalise_groups", "compartment_tree",
     "first_line", "attachment_type", "attachment_label", "attachment_link_label",
     "is_drg_item", "is_rpc_item", "is_onprem_item", "is_regional", "choose_drg_style",
     "migrate_legacy_model", "classify_topology",

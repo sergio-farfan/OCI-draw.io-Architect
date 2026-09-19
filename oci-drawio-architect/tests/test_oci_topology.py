@@ -285,5 +285,154 @@ class HelperAndExportTests(unittest.TestCase):
             self.assertTrue(hasattr(ot, name), name)
 
 
+class ViewModeTests(unittest.TestCase):
+    def test_defaults(self):
+        self.assertEqual(ot.locations_mode({}), "outside")
+        self.assertEqual(ot.gateway_edge_mode({}), "auto")
+        self.assertEqual(ot.subnet_label_mode({}), "twoline")
+        self.assertIsNone(ot.attachment_style_of({}))
+        self.assertFalse(ot.show_compartments({}))
+
+    def test_values_are_normalised(self):
+        self.assertEqual(ot.locations_mode({"locations": " Nested "}), "nested")
+        self.assertEqual(ot.gateway_edge_mode({"gateway_edge": "TOP"}), "top")
+        self.assertEqual(ot.subnet_label_mode({"subnet_label": "inline"}), "inline")
+        self.assertEqual(ot.attachment_style_of({"attachment_style": "Dotted"}), "dotted")
+        self.assertTrue(ot.show_compartments({"show_compartments": True}))
+        self.assertFalse(ot.show_compartments({"show_compartments": None}))
+
+    def test_unknown_values_raise(self):
+        for reader, model, token in ((ot.locations_mode, {"locations": "beside"}, "locations"),
+                                     (ot.gateway_edge_mode, {"gateway_edge": "left"}, "gateway_edge"),
+                                     (ot.subnet_label_mode, {"subnet_label": "three"}, "subnet_label"),
+                                     (ot.attachment_style_of, {"attachment_style": "wavy"}, "attachment_style")):
+            with self.assertRaises(ValueError) as cm:
+                reader(model)
+            self.assertIn(token, str(cm.exception))
+
+    def test_attachment_style_modes_match_the_builder(self):
+        """One list, two modules: the recipe validates, the builder renders."""
+        sys.path.insert(0, str(SCRIPTS_DIR))
+        import drawio_builder as db
+        self.assertEqual(ot.ATTACHMENT_STYLE_MODES, db.ATTACHMENT_STYLES)
+
+
+class LabelPartsTests(unittest.TestCase):
+    def test_public_and_private_tokens(self):
+        self.assertEqual(ot.label_parts("sn-web", "10.0.1.0/24", True), ("sn-web (Public)", "10.0.1.0/24"))
+        self.assertEqual(ot.label_parts("sn-app", "10.0.2.0/24", False), ("sn-app (Private)", "10.0.2.0/24"))
+
+    def test_absent_public_key_is_not_marked(self):
+        self.assertEqual(ot.label_parts("sn-app", "10.0.2.0/24"), ("sn-app", "10.0.2.0/24"))
+        self.assertEqual(ot.label_parts("sn-app", "10.0.2.0/24", None), ("sn-app", "10.0.2.0/24"))
+
+    def test_a_non_boolean_public_value_is_ignored(self):
+        self.assertEqual(ot.label_parts("sn-app", None, "yes"), ("sn-app", ""))
+
+    def test_a_name_that_already_says_public_is_not_doubled(self):
+        self.assertEqual(ot.label_parts("Web Subnet (Public)", "10.0.1.0/24", True),
+                         ("Web Subnet (Public)", "10.0.1.0/24"))
+
+
+class BadgeRefTests(unittest.TestCase):
+    def test_badge_refs_normalises_every_form(self):
+        self.assertEqual(ot.badge_refs(None), [])
+        self.assertEqual(ot.badge_refs("rt"), [{"name": "rt", "address": None}])
+        self.assertEqual(ot.badge_refs([{"name": "a", "address": "x"}, "b", {"label": "c"}, ""]),
+                         [{"name": "a", "address": "x"}, {"name": "b", "address": None},
+                          {"name": "c", "address": None}])
+
+    def test_drg_route_tables_accepts_one_or_many(self):
+        self.assertEqual(ot.drg_route_tables({}), [])
+        self.assertEqual(ot.drg_route_tables({"route_table": "drg-rt"}),
+                         [{"name": "drg-rt", "address": None}])
+        self.assertEqual([r["name"] for r in ot.drg_route_tables(
+            {"route_table": [{"name": "vcn-rt", "address": "a"}, {"name": "other-rt", "address": "b"}]})],
+            ["vcn-rt", "other-rt"])
+
+
+class GroupTests(unittest.TestCase):
+    def test_subnet_group_members_come_from_items(self):
+        sn = {"name": "sn-app", "groups": [
+            {"type": "oke_cluster", "label": "OKE", "items": ["cluster", "np-a"], "key": "oke-main"}]}
+        self.assertEqual(ot.normalise_groups(sn, "subnet", "subnet:sn-app"),
+                         [{"type": "oke_cluster", "label": "OKE", "members": ["cluster", "np-a"],
+                           "key": "oke-main"}])
+
+    def test_vcn_group_members_come_from_subnets_and_the_key_is_derived(self):
+        vcn = {"name": "hub", "groups": [{"type": "tier", "label": "Application Tier",
+                                          "subnets": ["sn-app", "sn-api"]}]}
+        got = ot.normalise_groups(vcn, "vcn", "vcn:hub")
+        self.assertEqual(got[0]["members"], ["sn-app", "sn-api"])
+        self.assertEqual(got[0]["key"], "group:vcn:hub:tier:application-tier")
+
+    def test_a_missing_label_falls_back_to_the_type_title(self):
+        sn = {"name": "s", "groups": [{"type": "oke_cluster", "items": ["c"]}]}
+        self.assertEqual(ot.normalise_groups(sn, "subnet", "subnet:s")[0]["label"],
+                         "Container Engine for Kubernetes Cluster")
+
+    def test_no_groups_is_an_empty_list(self):
+        self.assertEqual(ot.normalise_groups({}, "subnet", "subnet:s"), [])
+
+    def test_bad_entries_raise(self):
+        for entry, token in (({"type": "rack", "items": ["a"]}, "type"),
+                             ({"type": "tier", "items": []}, "members"),
+                             ({"type": "tier", "items": ["a", 7]}, "members"),
+                             ("tier", "must be an object")):
+            with self.assertRaises(ValueError) as cm:
+                ot.normalise_groups({"groups": [entry]}, "subnet", "subnet:s")
+            self.assertIn(token, str(cm.exception))
+
+    def test_two_groups_sharing_a_member_raise(self):
+        sn = {"groups": [{"type": "tier", "label": "A", "items": ["x", "y"]},
+                         {"type": "tier", "label": "B", "items": ["y", "z"]}]}
+        with self.assertRaises(ValueError) as cm:
+            ot.normalise_groups(sn, "subnet", "subnet:s")
+        self.assertIn("'y'", str(cm.exception))
+
+
+class CompartmentTreeTests(unittest.TestCase):
+    MODEL = {
+        "compartments": [{"name": "Network", "parent": "Enclosing", "vcns": ["hub"]},
+                         {"name": "Enclosing"}, "App"],
+        "vcns": [{"name": "hub"}, {"name": "spoke", "compartment": "App"},
+                 {"name": "loose", "compartment": "Missing"}],
+    }
+
+    def test_object_entries_nest_and_carry_their_vcns(self):
+        roots = ot.compartment_tree(self.MODEL)
+        self.assertEqual([r["name"] for r in roots], ["Enclosing", "App"])
+        self.assertEqual([c["name"] for c in roots[0]["children"]], ["Network"])
+        self.assertEqual(roots[0]["children"][0]["vcns"], ["hub"])
+        self.assertEqual(roots[1]["vcns"], ["spoke"])
+
+    def test_a_vcn_naming_an_unknown_compartment_is_in_no_node(self):
+        named = {v for r in ot.compartment_tree(self.MODEL)
+                 for n in ot._walk_compartments([r]) for v in n["vcns"]}
+        self.assertEqual(named, {"hub", "spoke"})
+
+    def test_string_and_object_entries_of_the_same_name_merge(self):
+        roots = ot.compartment_tree({"compartments": ["Network", {"name": "Network", "vcns": ["hub"]}],
+                                     "vcns": [{"name": "hub"}]})
+        self.assertEqual([r["name"] for r in roots], ["Network"])
+        self.assertEqual(roots[0]["vcns"], ["hub"])
+
+    def test_an_unknown_parent_raises(self):
+        with self.assertRaises(ValueError) as cm:
+            ot.compartment_tree({"compartments": [{"name": "A", "parent": "Ghost"}], "vcns": []})
+        self.assertIn("Ghost", str(cm.exception))
+
+    def test_a_cycle_raises(self):
+        with self.assertRaises(ValueError) as cm:
+            ot.compartment_tree({"compartments": [{"name": "A", "parent": "B"},
+                                                  {"name": "B", "parent": "A"}], "vcns": []})
+        self.assertIn("cycle", str(cm.exception))
+
+    def test_order_follows_the_vcn_column_order_of_the_first_member(self):
+        model = {"compartments": [{"name": "Late", "vcns": ["z"]}, {"name": "Early", "vcns": ["a"]}],
+                 "vcns": [{"name": "a"}, {"name": "z"}]}
+        self.assertEqual([r["name"] for r in ot.compartment_tree(model)], ["Early", "Late"])
+
+
 if __name__ == "__main__":
     unittest.main()
