@@ -3,26 +3,28 @@ name: oci-drawio-architect
 description: Generate deterministic draw.io diagrams of Oracle Cloud Infrastructure architectures (Redwood container styles, embedded OCI icons, auto-routed edges) from Terraform or a description. Use when the user says "draw.io OCI", "diagram this architecture", "drawio with OCI icons", "OCI architecture diagram" or "Terraform to draw.io".
 ---
 
-# OCI draw.io Architect (plugin v1.3.1)
+# OCI draw.io Architect (plugin v1.4.0)
 
-Diagrams are data: a MODEL dict laid out by `scripts/oci_layout.py` on top of `scripts/drawio_builder.py` (DrawioBuilder v1.3.1). The `/drawio-architect` command is the workflow; this skill holds the conventions, the schema and the API. Always `sys.path.insert(0, "<abs>/oci-drawio-architect/scripts")` and import from the plugin - never copy `drawio_builder.py` into a project (the copy loses the icon directory and drifts from the plugin).
+Diagrams are data: a MODEL dict laid out by `scripts/oci_layout.py` on top of `scripts/drawio_builder.py` (DrawioBuilder v1.4.0). The `/drawio-architect` command is the workflow; this skill holds the conventions, the schema and the API. Always `sys.path.insert(0, "<abs>/oci-drawio-architect/scripts")` and import from the plugin - never copy `drawio_builder.py` into a project (the copy loses the icon directory and drifts from the plugin).
 
 ## 1. Target look (the reference sample, `examples/generate_reference_layout.py`)
 
 1. Title (`add_title`): bold `<Subject> - Architecture`, italic second line `<Region label> (<region>) - Compartment: <compartment>`; with a tenancy the first line is `<tenancy> - <Subject> - Architecture`. Optional logo top-right (148x39).
-2. Region: solid Neutral-3 border, Neutral-1 fill, label = bare region id (`us-ashburn-1`) bold, top-left. Only title, notes and legend sit outside it.
-3. Hub panel (`onprem` styling): left of the DRG column, 180 px wide, vertically centred on the VCN stack, one icon per row (pitch 200): CPE, FastConnect virtual circuit, RPC peer. Never the DRG. Its title is `hub.name` when set, else `On-premises` for `hub.kind: "onprem"` (the default) and `Remote region` for `hub.kind: "remote_region"` - the parser picks `remote_region` when the hub holds only an RPC peer.
+2. Region: solid Neutral-3 border, Neutral-1 fill, label = bare region id (`us-ashburn-1`) bold, top-left. Outside it sit the title, the notes, the legend and - under the default `locations: "outside"` canvas - the location boxes: On-Premises left of the region, Internet and 3rd Party Cloud stacked in a narrow column to its right (toolkit Location Canvas, deck slide 12). `locations: "nested"` restores the 1.3.0 canvas, where the on-premises panel is a child of the region and no Internet box is drawn.
+3. Hub panel (`onprem` styling): 180 px wide (`LOC_W`), vertically centred on the VCN stack, one icon per row (pitch 200): CPE, FastConnect virtual circuit, RPC peer. Never the DRG. Its title is `hub.name` when set, else `On-premises` for `hub.kind: "onprem"` (the default) and `Remote region` for `hub.kind: "remote_region"` - the parser picks `remote_region` when the hub holds only an RPC peer. Under `locations: "outside"` it is a page-level sibling of the region, at least 70 px (`LOC_GAP_MIN`) to its left so the `Site-to-Site VPN` / `FastConnect` / `Remote Peering` label fits in the gap (deck slide 21), and a CPE / IPSec / virtual-circuit item straddles its region-facing border the way a gateway straddles a VCN border; under `locations: "nested"` it is a child of the region at `HUB_X = 15` with every item in a centred interior column.
 4. DRG column (`drgs[]`): region-level DRG icon between the on-premises panel and the VCN columns, centred on the VCN stack; one rounded attachment box (100 px wide, 44 px tall minimum, Ivy border; taller when the display name needs more lines, which also widens the stacking pitch) per attachment beside it - VCN attachments on the side facing the VCNs, IPSec / FastConnect / RPC attachments on the side facing the on-premises panel - each linked to its target by an arrowhead-less `attachment` connector (`Site-to-Site VPN`, `FastConnect`, `Remote Peering`). `drg_style` `icon` (default) or `box` (dashed `DRG: <name>` group); `auto` picks `box` above 4 attachments.
 5. VCN: label `VCN: <name> (<cidr>)`, Sienna dashed 2 px. Several VCNs are columns left to right, 45 px apart.
-6. Subnet: label `<name> (<cidr>)` (+ ` - public` when `public`), Sienna dashed 1 px. Row 1 holds lb -> app -> compute -> mgmt -> other subnets in traffic order, 2 icon columns each, wrapping to a new row past 1000 px; data-tier subnets are stretched under the rows (up to 5 columns).
+6. Subnet: two-line label - `<name> (Public)` / `<name> (Private)` on line 1, `<cidr>` on line 2 (toolkit slide 18's Subnet spec; the Public / Private token is a plugin convention and appears only when `public` is present and a bool) - Sienna dashed 1 px. `subnet_label: "inline"` restores the 1.3.0 single line `<name> (<cidr>)` + ` - public`. Row 1 holds lb -> app -> compute -> mgmt -> other subnets in traffic order, 2 icon columns each, wrapping to a new row past 1000 px; data-tier subnets are stretched under the rows (up to 5 columns).
 7. Icon order inside a subnet: primary resource (LB, VM, DB) -> attached resources (block volume, certificate, WAF). Route tables, security lists and NSGs are never icons in a subnet (item 11).
 8. Caption convention: `Role\nidentifier\nsize` - at most 3 lines of about 16 characters at 11 px, centred under a 75x95 slot; every glyph is fitted to 70x70 so all icons look the same size.
-9. OCI Services panel (`services`): inside the VCN, right of row 1, only for VCN-resident services without a subnet. Regional services (Logging, Logging Analytics, Monitoring / Alarms, Notifications, Events, Connector Hub, IAM / Identity, Vault / KMS, Certificates, Object Storage, OCIR, AI services, Data Safe, Data Science, Analytics, Streaming, Queue, APM, DevOps, DNS zones, WAF policies; full list `oci_topology.REGIONAL_ICON_KEYS`) go to ONE region-level `Oracle Services Network` panel right of the VCN columns, height matched to the tallest VCN, fed by an `attachment` connector from the Service Gateway. `"regional": false` on an item keeps it in the VCN panel.
-10. Gateways straddle the VCN border (glyph centre on the line, caption with an opaque region-fill background, parent = region): IGW and NAT on the bottom border (pitch 180), the Service Gateway on the right border facing the OSN panel, LPGs on the border facing their peer VCN (`peer` = peer LPG address or VCN name, set on both sides of a pair; unknown peer -> bottom) linked by a `Local Peering` attachment connector.
+9. OCI Services panel (`services`): inside the VCN, right of row 1, only for VCN-resident services without a subnet. Regional services (Logging, Logging Analytics, Monitoring / Alarms, Notifications, Events, Connector Hub, IAM / Identity, Vault / KMS, Certificates, Object Storage, OCIR, AI services, Data Safe, Data Science, Analytics, Streaming, Queue, APM, DevOps, DNS zones, WAF policies; full list `oci_topology.REGIONAL_ICON_KEYS`) go to ONE region-level `Oracle Services Network` panel - a full-width band below the VCN stack under the default `outside` canvas, a right-hand column height-matched to the tallest VCN under `locations: "nested"` - fed by an `attachment` connector from the Service Gateway. `"regional": false` on an item keeps it in the VCN panel.
+10. Gateways straddle the VCN border (glyph centre on the line, caption with an opaque region-fill background, parent = the VCN's container): they face what they connect to. Under `locations: "outside"` the IGW takes slot 0 and the NAT slot 1 of the **right** border - the side facing the Internet box - and the Service Gateway the **bottom** border, facing the Oracle Services Network band drawn full width under the VCN stack; under `locations: "nested"` IGW and NAT are on the bottom border (pitch 180) and the SGW on the right border facing the OSN column. LPGs take the border facing their peer VCN (`peer` = peer LPG address or VCN name, set on both sides of a pair; unknown peer -> bottom) linked by a `Local Peering` attachment connector. Within a side the order is always `igw, nat, sgw, lpg` then by address, never model order. `gateway_edge: "top"` moves the Internet-facing pair to the top border with the caption above the glyph (deck slide 31), `gateway_edge: "bottom"` restores the 1.3.0 side choice, and `gateways[].side` overrides one gateway.
 11. Security constructs are badges: a subnet's route table and security lists are half-size (22 px) caption-less icons straddling the subnet's top-right corner (route table centred on the corner, security lists one badge to its left; toolkit slide 18 uses the icons at half size as labels of the subnet box); an NSG is a 22 px shield badge in the top-right of the protected resource's 75x95 slot. Names go to the tooltip and metadata. Model fields: `subnet.route_table`, `subnet.security_lists`, `item.nsgs`.
 12. Edges: `data` solid Bark open arrow (label = protocol / port); `control` dashed Bark open arrow (management / administrative); `association` dotted, no arrowhead (dependency, configuration relationship); `attachment` thin solid, no arrowhead (structural: DRG attachments, LPG pairs, SGW -> OSN); `analytics` solid Sienna and `datalake` dashed purple remain. Routed automatically through the gutters.
-13. No legend by default (`legend=True` only on request or with 3+ edge kinds); `notes` text appears right of the title only when set.
+13. No legend by default (`legend=True` only on request or with 3+ edge kinds); when it is drawn it also explains the badges actually present (route table, security list, NSG, DRG route table) and names the active attachment form. `notes` text appears right of the title only when set.
 14. Page = content + 20 px margin rounded up to 10 (`fit_page`), white background, `default` style profile, Oracle Sans font stack.
+15. Compartments are off by default. `show_compartments: true` wraps each compartment's VCNs in a `compartment` container (dotted Sienna, bold Sienna label top-left) laid out in the column order of its first VCN, nested through `compartments[].parent`, and - with a `tenancy_name` - wraps the whole row in one `Tenancy: <name> (Root Compartment)` container. The DRG column, the on-premises panel and the OSN band stay direct children of the region: a DRG may serve VCNs in different compartments.
+16. Grouping boxes are opt-in (`vcn.groups[]`, `subnet.groups[]`), never emitted by default. `oke_cluster` is a dashed Sienna box inside a subnet around a cluster and its node pools, title top-centre (deck slide 32); `tier` and `user_group` are Oracle's "Other Grouping" boxes (slide 18). A box is a real container: its members are re-parented into it and an edge may terminate on it by its `key`.
 
 ## 2. Model schema (`oci_layout.py` docstring)
 
@@ -33,24 +35,37 @@ MODEL = {
   "subject": "Spoke-VCN-D", "region": "us-ashburn-1", "region_label": "Ashburn",
   "compartment": "Spoke-VCN-D", "tenancy_name": None,
   "drg_style": "auto",                # auto | icon | box (CLI --drg-style overrides)
+  "locations": "outside",             # outside (default) | nested - where the location boxes go
+  "gateway_edge": "auto",             # auto | internet | top | bottom - Internet-facing gateway border
+  "subnet_label": "twoline",          # twoline (default) | inline
+  "attachment_style": "solid",        # solid (default) | dotted - DRG attachment connectors
+  "show_compartments": False,         # draw compartment containers around the VCNs
+  "compartments": ["Network"],        # names, or [{"name", "parent", "vcns"}] for explicit nesting
+  "internet": {"name": "Internet", "items": []},        # synthesised by the parser when a VCN has an IGW
+  "third_party": [],                  # [{"name": "3rd Party Cloud", "items": [...]}] - authored only
   "hub": {"kind": "onprem",           # onprem (default) | remote_region - selects the default title
           "name": "On-premises",      # optional override; on-prem side only: CPE, IPSec, VC, RPC peer
           "items": [{"icon": "cpe", "label": "Corp VPN\n(10.0.0.0/8)", "address": "cpe"}],
           "link_label": None},
   "drgs": [{"name": "drg", "address": "drg", "label": "Dynamic Routing\nGateway (DRG)",
+            "route_table": ["drg-rt-vcn", "drg-rt-other"],   # str | {"name","address"} | a list; 2 badges max
             "attachments": [{"type": "vcn", "vcn": "Spoke-VCN-D", "address": "drg-att-spoke",
                              "label": "VCN attachment\nSpoke-VCN-D"},
                             {"type": "ipsec", "target": "cpe", "address": "vpn@drg", "label": "vpn-hq"}]}],
   "vcns": [{
-     "name": "Spoke-VCN-D", "cidr": "10.0.0.0/16",
+     "name": "Spoke-VCN-D", "cidr": "10.0.0.0/16", "compartment": "Network",
+     "groups": [{"type": "tier", "label": "Application Tier", "subnets": ["sn-priv-app"], "key": "tier-app"}],
      "subnets": [{"name": "sn-priv-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": False,
                   "items": [{"icon": "load_balancer", "label": "Load Balancer\n10.0.0.23",
                              "address": "lb", "metadata": {"ocid": "..."}, "tooltip": "...",
                              "nsgs": ["nsg-lb"]}],
+                  "groups": [{"type": "oke_cluster", "label": "Container Engine for Kubernetes Cluster",
+                              "items": ["oke-main", "np-a"], "key": "oke-main-box"}],
                   "route_table": "rt-lb", "security_lists": ["sl-lb"]}],
      "services": [{"icon": "logging", "label": "Logging", "address": "logs", "regional": True}],
      "services_label": "OCI Services",
-     "gateways": [{"icon": "service_gateway", "type": "sgw", "label": "Service\nGateway", "address": "sgw"},
+     "gateways": [{"icon": "service_gateway", "type": "sgw", "label": "Service\nGateway", "address": "sgw",
+                   "side": None},      # top | right | bottom | left - overrides gateway_edge
                   {"icon": "remote_peering_gateway", "type": "lpg", "label": "LPG", "address": "lpg-a",
                    "peer": "lpg-b"}]
   }],
@@ -69,12 +84,15 @@ Rules:
 6. DRGs: never inside `hub.items` or `vcn.gateways`; `drgs[].attachments[].type` in `vcn | ipsec | virtual_circuit | rpc | loopback`, `vcn` = VCN name, `target` = hub item address. Schema-1 models are migrated with a `WARNING: legacy model:` line - move the DRG to `drgs` to silence it.
 7. Edge endpoints also accept `drg:<name>`, a DRG address, an attachment address and `osn`.
 8. Security constructs: `subnet.route_table` (str or `{"name", "address"}`), `subnet.security_lists` and `item.nsgs` (lists of the same forms) draw badges; never add `route_table`, `security_list` or `nsg` items to a subnet. An entry with an `address` can be an edge endpoint (`{"source": "rt-private", "target": "sgw"}`); when several subnets or items share one address, the **first** badge drawn is the one edges resolve to - for subnets that is the layout's tier order (lb, app, compute, mgmt, other, then data), not the model's list order.
+9. View keys are authored, never parsed: `locations`, `gateway_edge`, `subnet_label`, `attachment_style` and `show_compartments` are choices about the drawing, not facts about the Terraform, so `parse_terraform.py` never sets them. Every one of them has a `build_diagram(...)` keyword and an `oci_layout.py` flag of the same name that overrides the model.
+10. Compartments: `compartments[]` accepts plain names (what the parser emits) and objects `{"name", "parent", "vcns"}`, mixed in one list; an object wins over a string of the same name. Membership is `compartments[].vcns` first, then `vcn.compartment`; a VCN naming no known compartment is drawn beside the boxes, not in one. An unknown `parent` or a cycle raises `ValueError`. Nothing is drawn unless `show_compartments` is true.
+11. Grouping boxes: `vcn.groups[]` bands whole subnet rows (`subnets`), `subnet.groups[]` encloses items (`items`); `type` in `oke_cluster | tier | user_group | other`, optional `key` (else `group:<parent>:<type>:<slug>`). Members must belong to the same container and two entries in one container may not interleave - both raise `ValueError` from `build_diagram`. The box is a container: its members are re-parented into it, and its `key` is a valid edge endpoint (deck slide 32 connects the load balancer to the OKE box, not to an icon inside it).
 
 ## 3. Layout recipe (`build_diagram`)
 
-`build_diagram(model, style_profile="default", legend=False, logo=None, page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None) -> DrawioBuilder` and `write_diagram(model, out_path, strict=False, render_fmt=None, **opts) -> Path` (build + `validate` + `write`, optional draw.io export). CLI: `python3 oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo FILE] [--strict] [--render png|svg|pdf] [--drg-style auto|icon|box]`.
+`build_diagram(model, style_profile="default", legend=False, logo=None, page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None, locations=None, gateway_edge=None, subnet_label=None, attachment_style=None, show_compartments=None) -> DrawioBuilder` and `write_diagram(model, out_path, strict=False, render_fmt=None, **opts) -> Path` (build + `validate` + `write`, optional draw.io export; `**opts` are the `build_diagram` keywords). Each of the five view keywords defaults to `None` = take the model's value, which itself defaults to the value in section 2. CLI: `python3 oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo FILE] [--strict] [--render png|svg|pdf] [--drg-style auto|icon|box] [--locations outside|nested] [--gateway-edge auto|internet|top|bottom] [--subnet-label twoline|inline] [--attachment-style solid|dotted] [--show-compartments]`.
 
-Order of operations: migrate legacy model -> classify topology -> title -> region -> for each VCN: subnet rows (each subnet: icons with their NSG badges -> `fit_to_children(subnet)` -> route table / security list badges on the subnet's top-right corner) -> VCN-resident services panel -> data subnets -> `fit_to_children(vcn)` -> border gateways (region children) -> optional region-level OCI Services panel -> Oracle Services Network panel -> on-premises panel -> DRG column -> `fit_to_children(region)` -> SGW -> OSN connectors -> attachment connectors -> model edges -> optional legend -> `fit_page()`.
+Order of operations: migrate legacy model -> classify topology -> title -> region -> compartment / tenancy containers (only with `show_compartments`) -> for each VCN: subnet rows (each subnet: icons with their NSG badges -> `subnet.groups[]` boxes around their members -> `fit_to_children(subnet)` -> route table / security list badges on the subnet's top-right corner) -> VCN-resident services panel -> data subnets -> `vcn.groups[]` bands -> `fit_to_children(vcn)` -> border gateways (children of the VCN's container) -> optional region-level OCI Services panel -> Oracle Services Network panel (right column under `locations: "nested"`, full-width band below the VCN stack under `outside`) -> on-premises panel (region child only under `nested`) -> DRG column with its route-table badge strip -> `fit_to_children(region)` -> **page-level location pass** (translate the region right, emit the On-Premises / Internet / 3rd Party sibling boxes, then re-centre the DRG clusters and the on-premises items on the VCN stack) -> SGW -> OSN connectors -> attachment connectors -> model edges -> optional legend -> `fit_page()`. Nothing inside the region is recomputed by the location pass: the region is *translated* with `resize(rid, x=...)` and every descendant moves with it.
 
 | Constant | Value | Constant | Value |
 |----------|-------|----------|-------|
@@ -93,7 +111,12 @@ Order of operations: migrate legacy model -> classify topology -> title -> regio
 | `SIDE_GW_Y0` / `LEFT_GW_Y0` / `SIDE_GW_PITCH` | 50 / 50 / 160 | `VCN_BOTTOM_PAD_GW` / `VCN_SIDE_PAD` / `SIDE_INSET` | 60 / 60 / 40 |
 | `VCN_COLUMN_GAP_GW` | 110 | | |
 | `BADGE_SIZE` (badge side) | 22 | `BADGE_GAP` (route table -> security list badge) | 4 |
-| `BADGE_RESERVE` (title width the corner badges reserve) | 52 | | |
+| `BADGE_RESERVE` (title width the corner badges reserve) | 52 | `LEGEND_BADGE_SIZE` (badge glyph in a legend row) | 16 |
+| `LOC_W` (location box width) | 180 | `LOC_GAP_MIN` / `LOC_GAP_RIGHT` / `LOC_STACK_GAP` | 70 / 10 / 10 |
+| `LOC_MIN_H` | 160 | `INTERNET_SPLIT` (Internet share of the right column) | 0.45 |
+| `OSN_BAND_GAP` (VCN stack -> OSN band) | 45 | `VCN_TOP_PAD_GW` / `TOP_GW_X0` | 60 / 50 |
+| `CMP_PAD` / `CMP_TITLE_H` / `CMP_GAP` | 30 / 40 / 40 | `TEN_PAD` / `TEN_TITLE_H` | 25 / 40 |
+| `GRP_PAD` / `GRP_TITLE_H` | 15 / 30 | `DRG_RT_GAP` / `DRG_RT_MAX` | 6 / 2 |
 
 ## 4. Icon selection
 
@@ -118,7 +141,8 @@ Order of operations: migrate legacy model -> classify topology -> title -> regio
 | `oci_apigateway_gateway` / `oci_waf_web_app_firewall` / `oci_certificates_management_certificate` | `api_gateway` / `waf` / `certificates` | lb subnet |
 | `oci_core_instance` (shape `BM.*` -> `bare_metal`) | `vm` | app / compute / mgmt subnet |
 | `oci_core_instance_pool` / `oci_autoscaling_auto_scaling_configuration` | `instance_pool` / `autoscaling` | app subnet |
-| `oci_containerengine_cluster` / `_node_pool` | `oke` | compute subnet |
+| `oci_containerengine_cluster` / `_node_pool` | `oke` / `vm` | compute subnet; a cluster and the node pools in the same subnet also emit one `subnet.groups[]` entry of type `oke_cluster` (deck slide 32) |
+| `oci_core_drg_route_table` | `route_table` (badge) | `drgs[].route_table` - a strip of up to 2 badges under the DRG glyph |
 | `oci_container_instances_container_instance` / `oci_functions_*` | `container` / `functions` | app subnet or `services` |
 | `oci_bastion_bastion` | `bastion` | mgmt subnet |
 | `oci_database_autonomous_database` (`db_workload` DW -> `adw`, OLTP -> `atp`) | `autonomous_db` | data subnet |
@@ -135,7 +159,9 @@ Order of operations: migrate legacy model -> classify topology -> title -> regio
 | `oci_datascience_*` / `oci_generative_ai_*` / `oci_analytics_analytics_instance` | `data_science` / `ai` / `analytics` | data subnet or `services` (`regional: true`, OSN panel) |
 | `oci_dataintegration_workspace` / `oci_dataflow_application` / `oci_datacatalog_catalog` | `data_integration` / `data_flow` / `data_catalog` | `services` (`regional: true`, OSN panel) |
 | `oci_integration_integration_instance` / `oci_goldengate_deployment` | `oic` / `goldengate` | `services` |
-| `oci_identity_compartment` / `_policy` / `_dynamic_group` / `_user` | (container `compartment`) / `policy` / `user_group` / `user` | custom layouts only |
+| `oci_identity_compartment` / `_policy` / `_dynamic_group` / `_user` | (container `compartment`) / `policy` / `user_group` / `user` | `compartments[]` + `vcn.compartment`; drawn as containers only with `show_compartments` |
+| `oci_identity_group` | - | **not mapped.** An IAM group is a tenancy principal, not a location; the `user_group` grouping box stays available to hand-written models, and Oracle's samples draw users as icons inside On-Premises or Internet |
+| (no resource) | (container `tier`) | `vcn.groups[]` / `subnet.groups[]` of type `tier` are authored only - `infer_tier` keeps feeding `subnet.tier` for row order and never emits a box |
 | `oci_cloud_guard_*` / `oci_data_safe_*` / `oci_vulnerability_scanning_*` | `cloud_guard` / `data_safe` / `vuln_scanning` | `services` (`regional: true`, OSN panel) |
 | `oci_core_public_ip` / `oci_core_vtap` / `oci_*_private_endpoint` | `ip_pools` / `vtap` / `private_endpoint` | lb subnet / mgmt / data |
 
@@ -213,14 +239,14 @@ Edge routing modes (`route=`):
 
 Metadata, tooltips, links: `metadata={"ocid": "...", "shape": "VM.Standard.E5.Flex"}` (keys `^[A-Za-z_][A-Za-z0-9_-]*$`, not id/label/placeholders/tooltip/link) and `tooltip="..."` wrap the cell in an `<object>` (`<UserObject>` when `link=` is given) so the data survives draw.io round-trips and shows in Edit Data. `key="app-vm"` gives a stable cell id (slugged: other characters become `-`).
 
-Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_page(0)` to return); call `add_title`/`fit_page` per page; `validate()` covers all pages. Legend: `_, _, _, bottom = d.content_bbox(); d.add_legend(PAD, bottom + GAP)` before `fit_page()`. Table: `d.add_table([["Direction", "Source", "Ports"], ["Ingress", "0.0.0.0/0", "443"]], PAD, 75, col_widths=[80, 170, 60], title="nsg-app (1 rule)")`. Demonstration of the recipe on a two-VCN hybrid model (both `drg_style` options, all four edge kinds, legend) plus a third page built with the custom API (`add_table` for an NSG rule list): `examples/generate_demo_diagram.py`.
+Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_page(0)` to return); call `add_title`/`fit_page` per page; `validate()` covers all pages. Legend: `_, _, _, bottom = d.content_bbox(); d.add_legend(PAD, bottom + GAP)` before `fit_page()`. Table: `d.add_table([["Direction", "Source", "Ports"], ["Ingress", "0.0.0.0/0", "443"]], PAD, 75, col_widths=[80, 170, 60], title="nsg-app (1 rule)")`. Demonstration of the recipe on a two-VCN hybrid model (the outside canvas with the badge legend, then the same model with `locations="nested"` and `drg_style="box"`), a third page with compartments, a tenancy wrapper, an OKE cluster box and a tier band, and a fourth built with the custom API (`add_table` for an NSG rule list): `examples/generate_demo_diagram.py`.
 
 ## 7. Acceptance criteria (all mandatory)
 
 1. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" <file>.drawio` exits 0 and prints `OK: no container overlaps or layout errors (...)`.
 2. Zero `ERROR:`/`OVERLAP:` lines (unknown parents or endpoints, intersecting containers, shapes outside their parent, icon/caption collisions).
 3. Every `WARNING:` line was read and either fixed (caption > 3 lines; estimated crossing; content exceeds page) or confirmed harmless in the PNG.
-4. PNG self-review (`render_drawio.py <file> -f png`, then Read the PNG): glyphs uniform; captions legible, 3 lines max, inside their container, no overlaps; edges in gutters, none across icons or captions, labels readable; on-premises panel and DRG column centred on the VCN stack; DRG outside every VCN with its attachment boxes beside it; gateways centred on the VCN border; regional services in the Oracle Services Network panel right of the VCNs; route tables and security lists as badges on the subnets' top-right corners and NSGs as shield badges on their resources, never as workload icons; nothing outside the region; no large empty area; title and region label follow section 1.
+4. PNG self-review (`render_drawio.py <file> -f png`, then Read the PNG): glyphs uniform; captions legible, 3 lines max, inside their container, no overlaps; edges in gutters, none across icons or captions, labels readable; on-premises panel and DRG column centred on the VCN stack; DRG outside every VCN with its attachment boxes beside it; gateways centred on the VCN border; route tables and security lists as badges on the subnets' top-right corners and NSGs as shield badges on their resources, never as workload icons; no large empty area; title and region label follow section 1. Under the default `locations: "outside"` canvas also: the On-Premises, Internet and 3rd Party Cloud boxes sit **outside** the region, the hybrid connection label (`Site-to-Site VPN` / `FastConnect` / `Remote Peering`) sits in the gap between the On-Premises box and the region, the IGW and the NAT straddle the VCN border facing the Internet box with the IGW above the NAT, the Oracle Services Network is a full-width band under the VCN stack fed by a bottom-border Service Gateway, and every subnet label is two lines (name + Public/Private, then the CIDR). Under `locations: "nested"` the 1.3.0 checks apply instead (on-premises panel inside the region, OSN panel right of the VCNs). Nothing but the title, the notes, the legend and the location boxes is outside the region.
 5. The generated script imports from the plugin `scripts` directory and contains no copied builder code; file size is roughly 7-13 KB per icon (the 31-icon reference is 280 KB).
 
 ## 8. Failure handling
@@ -246,10 +272,10 @@ Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_
 
 - Command workflow: `${CLAUDE_PLUGIN_ROOT}/commands/drawio-architect.md`
 - Layout recipe and MODEL schema: `${CLAUDE_PLUGIN_ROOT}/scripts/oci_layout.py`
-- Builder API: `${CLAUDE_PLUGIN_ROOT}/scripts/drawio_builder.py` (v1.3.1, standard library only)
+- Builder API: `${CLAUDE_PLUGIN_ROOT}/scripts/drawio_builder.py` (v1.4.0, standard library only)
 - Model producers: `${CLAUDE_PLUGIN_ROOT}/scripts/parse_terraform.py` (Terraform dir / plan / state -> model.json), `${CLAUDE_PLUGIN_ROOT}/scripts/query_tenancy.py` (experimental as-built via OCI CLI)
 - Topology helpers: `${CLAUDE_PLUGIN_ROOT}/scripts/oci_topology.py`
 - Gate and tools: `${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/render_drawio.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/detect_settings.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/smoke_test.sh`
-- Examples: `${CLAUDE_PLUGIN_ROOT}/examples/generate_reference_layout.py` (MODEL -> `write_diagram`, reproduces the reference), `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (recipe on a hybrid model in both `drg_style`s, four edge kinds, legend, plus a custom-API NSG table page)
+- Examples: `${CLAUDE_PLUGIN_ROOT}/examples/generate_reference_layout.py` (MODEL -> `write_diagram`, reproduces the reference on the outside canvas), `${CLAUDE_PLUGIN_ROOT}/examples/generate_demo_diagram.py` (four pages: the outside canvas with the badge legend, the nested 1.3.0 canvas with `drg_style="box"`, compartments with an OKE cluster and a tier band, and a custom-API NSG table)
 - Icons: `${CLAUDE_PLUGIN_ROOT}/icons/` - 159 SVGs in 12 categories, 206 aliases; catalog `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/icon-catalog.md`
 - Styles: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/oracle-styles.md`; pitfalls: `${CLAUDE_PLUGIN_ROOT}/skills/oci-drawio-architect/references/gotchas.md`

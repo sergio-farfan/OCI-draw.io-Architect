@@ -3,6 +3,34 @@
 All notable changes to the oci-drawio-architect plugin are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.4.0] - 2026-09-18
+
+Placement enrichments: the location boxes leave the region, the gateways face what they connect to, compartments and grouping boxes become drawable, and the subnet label takes Oracle's two-line form. Schema stays 2 - every new key is optional and a 1.3.x model renders unchanged apart from the two documented default flips below, each reversible in one key. Design: `docs/superpowers/specs/2026-09-18-v1.4.0-placement-enrichments-design.md`.
+
+### Added
+- **Location canvas** (`locations`): On-Premises, Internet and 3rd Party Cloud are page-level siblings of the OCI Region - On-Premises left, Internet and 3rd Party stacked right - as the toolkit's Location Canvas (deck slide 12) defines. The hybrid connection label (`Site-to-Site VPN`, `FastConnect`, `Remote Peering`) sits in the gap between the on-premises box and the region, at least 70 px wide so the text fits. A CPE, IPSec endpoint or virtual circuit straddles the on-premises box's region-facing border the way a gateway straddles a VCN border. New model keys `internet` and `third_party`; new constants `LOC_W`, `LOC_GAP_MIN`, `LOC_GAP_RIGHT`, `LOC_STACK_GAP`, `LOC_MIN_H`, `INTERNET_SPLIT`.
+- **Internet-facing gateway column** (`gateway_edge`, `gateways[].side`): the IGW takes slot 0 and the NAT slot 1 of the VCN border facing the Internet box; `gateway_edge: "top"` puts them on the top border with the caption above the glyph (`add_icon(caption_above=True)`, deck slide 31), `"bottom"` restores the 1.3.x side choice. Gateways are ordered `igw, nat, sgw, lpg` then by address on every border, in every mode.
+- **Oracle Services Network band**: under the outside canvas the OSN is a full-width band below the VCN stack and the Service Gateway moves to the VCN's bottom border facing it (`OSN_BAND_GAP`). The Service Gateway's attachment connector to the panel is no longer tied to the right border, so it is drawn in both canvases.
+- **Internet Gateway connector**: each IGW gets an attachment connector (thin, no arrowhead, no label) to the Internet box when the canvas drew one, mirroring the Service Gateway's connector to the Oracle Services Network.
+- **Compartment containers** (`show_compartments`, off by default): each compartment wraps the VCNs it holds, nested through `compartments[].parent`, with an optional `Tenancy: <name> (Root Compartment)` wrapper. `compartments[]` now accepts objects `{"name", "parent", "vcns"}` alongside the plain names the parser emits. The DRG column, the on-premises panel and the OSN band stay direct children of the region.
+- **Grouping boxes** (`vcn.groups[]`, `subnet.groups[]`): `oke_cluster` (dashed Sienna box inside a subnet, deck slide 32), `tier` and `user_group` (slide 18's "Other Grouping"). The three types join `GROUP_TYPES`. Members are re-parented into the box, so it is a container for the validator and the router, and an edge may terminate on its `key`. The Terraform parser emits an `oke_cluster` entry when a cluster and at least one of its node pools resolve to the same subnet.
+- **DRG route-table badges**: `drgs[].route_table` (a name, `{"name", "address"}`, or a list) draws a strip of up to `DRG_RT_MAX = 2` badges under the DRG glyph - the pair Oracle creates by default. `oci_core_drg_route_table` is recognised by the parser and `drg_route_table_id` by the live-tenancy reader.
+- **Badge legend rows**: `add_legend` accepts `("badge", <icon key>, text)` rows drawn at `LEGEND_BADGE_SIZE = 16`, and the recipe appends one per badge kind actually present.
+- **`attachment_style`** (`"solid"` | `"dotted"`), settable per model, per `DrawioBuilder` and per style profile; the legend names the active form.
+- CLI flags `--locations`, `--gateway-edge`, `--subnet-label`, `--attachment-style`, `--show-compartments` on `oci_layout.py`, and the matching `build_diagram` / `write_diagram` keywords.
+- A `landing_zone` Terraform fixture (nested compartments, two VCNs, an OKE cluster with two node pools, a DRG with two route tables, public and private subnets) driving the parser and the end-to-end tests.
+
+### Changed
+- **Default flip 1**: `locations` defaults to `"outside"`. `locations: "nested"` (or `--locations nested`) restores the 1.3.x canvas exactly - the region is translated, not rebuilt, so no interior coordinate and no cell id changes between the two modes' shared parts.
+- **Default flip 2**: `subnet_label` defaults to `"twoline"` - name with a `(Public)` / `(Private)` token on line 1, CIDR on line 2 (deck slide 18). `subnet_label: "inline"` restores the 1.3.x single-line label. The token appears only when `public` is present and a bool.
+- The `compartment` container's label is now bold **Sienna** `#AE562C` instead of Bark, per slide 18; visible for the first time now that the recipe draws the container. `dashPattern=1 1` is kept as a recorded plugin choice.
+- The reference sample and the README screenshots are regenerated on the outside canvas; the demo grows a fourth page (compartments, a tenancy wrapper, an OKE cluster box and a tier band).
+- `validate_model()` covers every new key and both `compartments` element forms; `summarise()` reports the compartment and group-box counts. A `groups[]` member is checked inside its own container (subnet groups name items of that subnet, VCN groups name subnets of that VCN) and an edge may terminate on a `groups[].key`.
+
+### Known cosmetic limitations
+- The location canvas top-aligns every box with the region and gives them its full height (`LOC_PAD_Y = 0`, toolkit Template 1), so a tall, near-empty On-Premises or Internet box has a lot of white space; likewise between the VCN stack and the Oracle Services Network band, and below or right of a compartment whose sibling is taller.
+- The `Site-to-Site VPN` label is centred on the whole horizontal run of its connector, which starts inside the On-Premises box; in `drg_style: "box"` that can put it slightly past the region border. It never overlaps a shape. Centring it on the gap segment alone needs a router change.
+
 ## [1.3.1] - 2026-09-18
 
 Patch release: the post-release review backlog. No schema change (one optional `hub.kind` field) and no new feature. Container geometry is unchanged apart from the two sizing fixes below; connector docking changes where the router now has a free side to use. Design: `docs/superpowers/specs/2026-09-18-v1.3.1-backlog-patch.md`.

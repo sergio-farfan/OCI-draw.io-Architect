@@ -2,7 +2,7 @@
 
 **A Claude Code plugin that generates production-quality draw.io architecture diagrams for Oracle Cloud Infrastructure (OCI) — from Terraform configurations or free-form descriptions.**
 
-[![Version](https://img.shields.io/badge/version-1.3.1-blue.svg)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/tag/v1.3.1)
+[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/tag/v1.4.0)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
@@ -11,7 +11,7 @@
 ---
 
 **Author:** Sergio Farfan · sergio.farfan@gmail.com
-**Version:** 1.3.1 · [Download archive](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.3.1/oci-drawio-architect-v1.3.1.tar.gz) · [Changelog](oci-drawio-architect/CHANGELOG.md)
+**Version:** 1.4.0 · [Download archive](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.4.0/oci-drawio-architect-v1.4.0.tar.gz) · [Changelog](oci-drawio-architect/CHANGELOG.md)
 
 ---
 
@@ -41,7 +41,7 @@ Type `/drawio-architect` in any Claude Code session and the plugin generates a p
 
 ![Diagram detail — data subnet](screenshots/diagram-detail.png)
 
-*Detail view: data subnet, NAT gateway on the bottom border and Service Gateway on the right border — uniform icon sizes, captions under every icon, connectors kept in the gutters.*
+*Detail view: data subnet, Service Gateway on the bottom border facing the Oracle Services Network band — uniform icon sizes, captions under every icon, connectors kept in the gutters.*
 
 ---
 
@@ -80,7 +80,18 @@ draw.io offers a connector for AI hosts — its hosted MCP server at `mcp.draw.i
 
 ---
 
-## What's new in 1.3.1
+## What's new in 1.4.0
+
+Placement enrichments: where things go now follows Oracle's Location Canvas and the toolkit's grouping specs (design: [the v1.4.0 spec](docs/superpowers/specs/2026-09-18-v1.4.0-placement-enrichments-design.md), full list in the [changelog](oci-drawio-architect/CHANGELOG.md)):
+
+- **Location boxes leave the region.** On-Premises sits left of the OCI Region, Internet and 3rd Party Cloud stack in a narrow column to its right, and the `Site-to-Site VPN` / `FastConnect` / `Remote Peering` label sits in the gap between the on-premises box and the region - the arrangement the toolkit's Location Canvas defines. `locations: "nested"` restores the 1.3.x canvas exactly.
+- **Gateways face what they connect to.** The Internet Gateway and the NAT Gateway form one column on the VCN border facing the Internet box, IGW above NAT; the Service Gateway moves to the bottom border and the Oracle Services Network becomes a full-width band under the VCN stack. Within a border the order is always `igw, nat, sgw, lpg`, never model order. `gateway_edge` and a per-gateway `side` override it.
+- **Subnet labels are two lines**: name with a `(Public)` / `(Private)` token, then the CIDR. `subnet_label: "inline"` restores the single-line form.
+- **Compartments can become containers** around the VCNs they hold, with an optional tenancy wrapper - opt-in via `show_compartments`, because a view with every compartment drawn is unreadable. The DRG stays at region level.
+- **Grouping boxes**: an OKE cluster box inside a subnet (the parser emits one when a cluster and its node pools share a subnet), plus Oracle's `tier` and `user_group` boxes for hand-written models. A box is a real container and an edge may terminate on it.
+- **Badges get a legend**, the DRG gets its route-table badges (up to two, the pair Oracle creates by default), and the attachment connector style is selectable (`attachment_style: "solid" | "dotted"`).
+
+## What was new in 1.3.1
 
 Patch release: correctness fixes and coverage, no new features and no intentional layout change.
 
@@ -135,7 +146,7 @@ The plugin bundles 159 OCI SVG icons (12 categories, about 1.4 MB); no external 
 ### One-line install
 
 ```bash
-curl -fsSL https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.3.1/oci-drawio-architect-v1.3.1.tar.gz | tar -xz && ./oci-drawio-architect/install.sh
+curl -fsSL https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.4.0/oci-drawio-architect-v1.4.0.tar.gz | tar -xz && ./oci-drawio-architect/install.sh
 ```
 
 This will:
@@ -250,7 +261,7 @@ python3 oci-drawio-architect/examples/make_screenshots.py
 oci-drawio-architect/pack.sh /path/to/output
 ```
 
-Expect generated `.drawio` files to weigh roughly 7–13 KB per embedded icon (the three-page demo with 26 icons is about 300 KB; the reference sample with 27 icons and 4 badges about 280 KB). The reference sample itself is `OCI_Architecture.drawio` at the repository root.
+Expect generated `.drawio` files to weigh roughly 7–13 KB per embedded icon (the four-page demo with 59 icons is about 550 KB; the reference sample with 27 icons and 4 badges about 280 KB). The reference sample itself is `OCI_Architecture.drawio` at the repository root.
 
 ---
 

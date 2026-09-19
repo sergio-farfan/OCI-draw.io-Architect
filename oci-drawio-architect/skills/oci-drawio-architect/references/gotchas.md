@@ -1,7 +1,7 @@
-# draw.io + OCI Icons - Gotchas & Workarounds (v1.3.1)
+# draw.io + OCI Icons - Gotchas & Workarounds (v1.4.0)
 
-20 verified pitfalls. Every claim below was reproduced against `scripts/drawio_builder.py`
-1.3.1 (error texts are quoted verbatim). Items marked *migration* matter when updating a
+23 verified pitfalls. Every claim below was reproduced against `scripts/drawio_builder.py`
+1.4.0 (error texts are quoted verbatim). Items marked *migration* matter when updating a
 v1.0/v1.1 script.
 
 ## 1. URL-encode SVG data URIs - `;base64,` breaks the style tokenizer
@@ -312,3 +312,41 @@ overlap **only** the cell named in its `ociHost` token (any other overlap is sti
 `fit_to_children()` skips badges, so calling it again after the badges exist does not move the
 corner. Custom layouts: place the badge after the host's final size is known and pass
 `host=<subnet id or icon id>`.
+
+## 23. *migration* - v1.4.0 flips two defaults; one key each brings the old look back
+
+Two model keys changed their default in 1.4.0 and nothing else about an unmodified model did:
+
+- `locations` now defaults to `"outside"`. The On-Premises box, an Internet box and any 3rd
+  Party Cloud box are page-level siblings of the region (toolkit Location Canvas, deck slide
+  12); the hybrid connection label moves into the gap left of the region; the IGW and the NAT
+  move to the VCN border facing the Internet box, IGW above NAT; the Service Gateway moves to
+  the bottom border and the Oracle Services Network becomes a full-width band under the VCN
+  stack. `"locations": "nested"` in the model, `locations="nested"` on `build_diagram` /
+  `write_diagram`, or `--locations nested` on the CLI restores the v1.3.x geometry exactly -
+  the region is *translated*, never rebuilt, so every interior coordinate and cell id is the
+  same in both modes.
+- `subnet_label` now defaults to `"twoline"`: the subnet's name with a `(Public)` / `(Private)`
+  token on line 1 and the CIDR on line 2 (deck slide 18's Subnet spec). `"inline"` restores
+  the single-line `<name> (<cidr>)` + ` - public` form. The token appears only when `public`
+  is present and a bool, so a hand-written model that never mentions it stays unmarked.
+
+Everything else added in 1.4.0 is off unless asked for: `show_compartments` is `false`,
+`groups[]` is empty, `attachment_style` is `solid`, and the legend's badge rows appear only
+when the corresponding badges do.
+
+Two rules that bite when you do turn them on:
+
+- **A `groups[]` box may only enclose members of its own container.** A `subnet.groups[]`
+  entry lists item addresses of that subnet, a `vcn.groups[]` entry lists subnet names of that
+  VCN; a member from anywhere else is a `ValueError` from `build_diagram`, not a silent drop,
+  and two entries in the same container whose member sets interleave are a `ValueError` too.
+  The box is a real container - its members are re-parented into it, so validator rules 3 and 7
+  and the lattice router all see the true ancestor chain, and its `key` is a valid edge
+  endpoint (deck slide 32 connects the load balancer to the OKE box, not to an icon inside it).
+- **The DRG stays at region level even when compartments are drawn.** `show_compartments`
+  wraps only the VCNs; the DRG column, the on-premises panel and the OSN band remain direct
+  children of the region. Oracle's landing-zone figure does put the DRG inside the Network
+  Compartment, but the plugin's DRG column is shared by every VCN and may serve VCNs in
+  different compartments, so region level is the only placement that is always correct - and
+  a DRG drawn inside a VCN is still the hard error of section 19.

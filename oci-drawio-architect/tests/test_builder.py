@@ -1,4 +1,4 @@
-"""Unit tests for scripts/drawio_builder.py (v1.3.1).
+"""Unit tests for scripts/drawio_builder.py (v1.4.0).
 
 Run from the plugin root:
     python3 -m unittest discover -s tests -v
@@ -2297,7 +2297,7 @@ class TestModuleCompat(unittest.TestCase):
         self.assertEqual(db.escape_label('say "hi"'), 'say "hi"')
 
     def test_version_and_exports(self):
-        self.assertEqual(db.__version__, "1.3.1")
+        self.assertEqual(db.__version__, "1.4.0")
         for name in ("DrawioBuilder", "validate_file", "find_container_overlaps",
                      "build_cell_registry", "escape_label", "label_lines", "FONT_STACK"):
             self.assertIn(name, db.__all__)
