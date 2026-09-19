@@ -762,6 +762,40 @@ class ExamplesTests(unittest.TestCase):
             out = quiet(ol.write_diagram, MODEL, Path(tmp) / "ref.drawio")
             self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
 
+    def test_reference_model_renders_the_outside_canvas(self):
+        """Spec section 9: the canonical sample ships the v1.4.0 default canvas."""
+        from generate_reference_layout import MODEL
+        self.assertEqual(MODEL["internet"], {"name": "Internet", "items": []})
+        self.assertNotIn("locations", MODEL)                   # the default is "outside"
+        d = quiet(ol.build_diagram, MODEL)
+        # the location boxes are page-level siblings of the region, not its children
+        for cid in ("hub", "internet"):
+            self.assertEqual(d._cells[cid]["parent"], "1", cid)
+        self.assertEqual(d._cells["region"]["parent"], "1")
+        rx, _, _, _ = d.abs_bbox("region")
+        hx, _, hw, _ = d.abs_bbox("hub")
+        ix, _, _, _ = d.abs_bbox("internet")
+        # the gutter holds the hybrid label AND the half slot the straddling CPE
+        # pushes out of the On-Premises box (decision 5)
+        self.assertEqual(rx - (hx + hw),
+                         max(ol.LOC_GAP_MIN, ol._hub_gutter(MODEL["drgs"], d.profile["edge_font"]))
+                         + db.ICON_W - ol.GW_SIDE_DX)
+        self.assertGreater(ix, rx)                             # Internet on the right of the region
+        # the CPE straddles the On-Premises box's region-facing border (decision 5).
+        # The reference hub item is matched by its type `oci_core_cpe`, not by the
+        # `firewall` icon it draws with.
+        cx, _, cw, _ = d.abs_bbox("cpe")
+        self.assertAlmostEqual(cx + cw / 2, hx + hw, delta=1.0)
+        # the NAT faces the Internet box, the SGW faces the OSN band below the VCN
+        vx, vy, vw, vh = d.abs_bbox("vcn-Spoke-VCN-D")
+        nx, ny, _, _ = d.abs_bbox("nat")
+        sx, sy, _, _ = d.abs_bbox("sgw")
+        self.assertEqual(nx + ol.GW_SIDE_DX, vx + vw)
+        self.assertEqual(sy + ol.GW_STRADDLE, vy + vh)
+        ox, oy, _, _ = d.abs_bbox("osn")
+        self.assertGreater(oy, vy + vh)                        # OSN is a band below the stack
+        self.assertEqual(errors_of(d), [])
+
     def test_reference_model_draws_its_nsgs_as_badges(self):
         from generate_reference_layout import MODEL
         items = {i["address"]: i for s in MODEL["vcns"][0]["subnets"] for i in s["items"]}
@@ -774,18 +808,44 @@ class ExamplesTests(unittest.TestCase):
         self.assertEqual(sorted(c for c, e in d._cells.items() if e.get("badge")),
                          ["adb-nsg", "app-vm-nsg", "lb-nsg", "worker-vm-nsg"])
 
-    def test_demo_builds_three_pages_and_passes_the_gate(self):
+    def test_demo_builds_four_pages_and_passes_the_gate(self):
         import check_overlaps
         import generate_demo_diagram as demo
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "demo.drawio"
             quiet(demo.build, out)
             text = out.read_text(encoding="utf-8")
-            self.assertEqual(text.count("<diagram "), 3)
+            self.assertEqual(text.count("<diagram "), 4)
             self.assertIn('id="drgbox-drg"', text)                  # page 2: box style
             self.assertIn("Attachment (structural)", text)          # legend row
             self.assertIn("Oracle Services Network", text)
+            self.assertIn('id="tenancy"', text)                     # page 3: compartments
+            self.assertIn('id="compartment-Network"', text)         # _slug() turns ':' into '-'
+            self.assertIn('id="oke-main-box"', text)                # page 3: the OKE cluster box
+            self.assertIn('id="tier-app"', text)                    # page 3: the tier band
+            self.assertIn('id="drg-lz-rt2"', text)                  # page 3: two DRG route tables
             self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
+
+    def test_demo_page_three_nests_its_vcns_in_compartments(self):
+        """Spec 6.3: VCNs are children of their compartment, the DRG stays at region level."""
+        import generate_demo_diagram as demo
+        d = quiet(ol.build_diagram, demo.COMPARTMENT_MODEL)
+        self.assertEqual(d._cells["vcn-vcn-net"]["parent"], "compartment-Network")
+        self.assertEqual(d._cells["vcn-vcn-app"]["parent"], "compartment-App")
+        self.assertEqual(d._cells["compartment-Network"]["parent"], "compartment-Enclosing")
+        self.assertEqual(d._cells["compartment-Enclosing"]["parent"], "tenancy")
+        self.assertEqual(d._cells["tenancy"]["parent"], "region")
+        self.assertEqual(d._cells["drg-lz"]["parent"], "region")
+        # the OKE box is a container whose members were re-parented into it
+        for addr in ("oke-main", "np-a", "np-b"):
+            self.assertEqual(d._cells[addr]["parent"], "oke-main-box")
+        self.assertEqual(d._cells["oke-main-box"]["group_type"], "oke_cluster")
+        self.assertEqual(d._cells["tier-app"]["group_type"], "tier")
+        # an edge may terminate on a grouping box (G8)
+        edges = [e for e in d._cells.values() if e["kind"] == "edge" and e.get("target") == "oke-main-box"]
+        self.assertEqual(len(edges), 1)
+        self.assertEqual(edges[0]["source"], "edge-lb")
+        self.assertEqual(errors_of(d), [])
 
     def test_connector_labels_are_not_drawn_over_shapes(self):
         """Spec section 2: the Site-to-Site VPN label sits on the line next to the
@@ -1009,8 +1069,10 @@ class DemoBadgeTests(unittest.TestCase):
             out = Path(tmp) / "demo.drawio"
             quiet(demo.build, out)
             text = out.read_text(encoding="utf-8")
-            self.assertEqual(text.count("ociRole=badge"), 20)          # 7 badges on each of the two
-                                                                       # layout pages + 3 legend rows each
+            # 7 subnet / NSG badges on each of the two DEMO_MODEL pages, the 2 DRG
+            # route-table badges on page 3, and the legend badge rows Task 2 added
+            # (3 + 3 on pages 1-2, 1 on page 3): 14 + 2 + 7
+            self.assertEqual(text.count("ociRole=badge"), 23)
             self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
 
 

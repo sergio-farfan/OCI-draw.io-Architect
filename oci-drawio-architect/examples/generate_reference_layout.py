@@ -6,9 +6,16 @@ diagram is described as data (MODEL below) and laid out by
 scripts/oci_layout.py, so a generated script only has to fill in the model:
 subnets in traffic order, icons per subnet, regional services (drawn in the
 Oracle Services Network panel), gateways on the VCN border, the DRG with its
-attachments, the on-premises panel and the edges. Security constructs are
+attachments, the location boxes and the edges. Security constructs are
 badges, not workload icons: each NSG is listed in the "nsgs" field of the
 resource it protects and drawn as a shield over that resource's icon.
+
+The canvas is the default one ("locations": "outside"): On-Premises and
+Internet are page-level boxes beside the OCI Region, the CPE straddles the
+On-Premises box's region-facing border with the Site-to-Site VPN label in the
+gap, the NAT Gateway faces the Internet box on the VCN's right border and the
+Service Gateway faces the Oracle Services Network band below the VCN. Add
+"locations": "nested" to the model for the 1.3.0 geometry.
 
 Usage:
     python3 generate_reference_layout.py [output.drawio] [--render]
@@ -33,6 +40,7 @@ MODEL = {
              "address": "cpe"},
         ],
     },
+    "internet": {"name": "Internet", "items": []},
     "drgs": [{
         "name": "drg", "address": "drg", "label": "Dynamic Routing\nGateway (DRG)",
         "attachments": [

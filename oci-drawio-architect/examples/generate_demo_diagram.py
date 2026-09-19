@@ -2,15 +2,20 @@
 """Demo / smoke test for oci-drawio-architect v1.3.1.
 
 Page 1 "Architecture": the layout recipe (oci_layout.build_diagram) on a two-VCN
-hybrid model - on-premises panel with a CPE, a region-level DRG with two VCN
-attachments and one IPSec attachment (drg_style "icon"), IGW / NAT on the hub
-VCN's bottom border, the Service Gateway on the spoke VCN's right border, an
-Oracle Services Network panel with the regional services, the four connector
-kinds (data, control, association, attachment) and the legend. Route tables and
-security lists appear as badges on the subnets' top-right corners and NSGs as
-shield badges on the load balancer, the app VM and the database.
-Page 2 "DRG as a box": the same model with drg_style "box".
-Page 3 "Security": an NSG rule table (custom DrawioBuilder API).
+hybrid model with the default outside canvas - On-Premises and Internet as
+page-level boxes beside the region, a region-level DRG with two VCN attachments
+and one IPSec attachment (drg_style "icon"), IGW / NAT on the hub VCN's border
+facing the Internet box, the Service Gateway on the spoke VCN's bottom border
+facing the Oracle Services Network band, the four connector kinds (data,
+control, association, attachment) and the legend with its badge rows. Route
+tables and security lists appear as badges on the subnets' top-right corners
+and NSGs as shield badges on the load balancer, the app VM and the database.
+Page 2 "DRG as a box": the same model with locations "nested" and drg_style
+"box" - the 1.3.0 geometry, kept as the visual regression proof.
+Page 3 "Compartments and OKE": two VCNs in nested compartment containers inside
+a tenancy wrapper, an OKE cluster box inside a subnet, a tier band around a
+subnet row and a DRG with its two route-table badges.
+Page 4 "Security": an NSG rule table (custom DrawioBuilder API).
 
 validate() must return no errors before the file is written.
 
@@ -69,11 +74,64 @@ DEMO_MODEL = {
     ],
 }
 
+# Page 3: the 1.4.0 grouping features - compartment containers inside a tenancy
+# wrapper, an OKE cluster box inside a subnet, a tier band around a subnet row,
+# and a DRG with the two route tables Oracle creates by default.
+COMPARTMENT_MODEL = {
+    "subject": "demo-landing-zone", "region": "us-ashburn-1", "region_label": "Ashburn",
+    "compartment": "Network", "tenancy_name": "demo-tenancy",
+    "show_compartments": True,
+    "compartments": [
+        {"name": "Enclosing", "parent": None, "vcns": []},
+        {"name": "Network", "parent": "Enclosing", "vcns": ["vcn-net"]},
+        {"name": "App", "parent": "Enclosing", "vcns": ["vcn-app"]},
+    ],
+    "internet": {"name": "Internet", "items": [
+        {"icon": "user", "label": "Customers", "address": "customers"}]},
+    "drgs": [{"name": "drg-lz", "address": "drg-lz", "label": "DRG\ndrg-lz",
+              "route_table": [{"name": "drg-rt-vcn", "address": "drg-rt-vcn"},
+                              {"name": "drg-rt-other", "address": "drg-rt-other"}],
+              "attachments": [
+                  {"type": "vcn", "vcn": "vcn-net", "address": "att-net",
+                   "label": "VCN attachment\nvcn-net"},
+                  {"type": "vcn", "vcn": "vcn-app", "address": "att-app",
+                   "label": "VCN attachment\nvcn-app"}]}],
+    "vcns": [
+        {"name": "vcn-net", "cidr": "10.10.0.0/16", "compartment": "Network", "subnets": [
+            {"name": "sn-edge", "cidr": "10.10.1.0/24", "tier": "lb", "public": True, "items": [
+                {"icon": "load_balancer", "label": "Edge LB", "address": "edge-lb"}]}],
+         "gateways": [{"icon": "internet_gateway", "type": "igw", "label": "Internet\nGateway",
+                       "address": "igw-net"},
+                      {"icon": "nat_gateway", "type": "nat", "label": "NAT\nGateway",
+                       "address": "nat-net"}]},
+        {"name": "vcn-app", "cidr": "10.20.0.0/16", "compartment": "App",
+         "groups": [{"type": "tier", "label": "Application Tier", "subnets": ["sn-app"],
+                     "key": "tier-app"}],
+         "subnets": [
+            {"name": "sn-app", "cidr": "10.20.1.0/24", "tier": "app", "public": False,
+             "groups": [{"type": "oke_cluster", "label": "Container Engine for\nKubernetes Cluster",
+                         "items": ["oke-main", "np-a", "np-b"], "key": "oke-main-box"}],
+             "items": [{"icon": "oke", "label": "OKE cluster\noke-main", "address": "oke-main"},
+                       {"icon": "vm", "label": "Node pool\nnp-a", "address": "np-a"},
+                       {"icon": "vm", "label": "Node pool\nnp-b", "address": "np-b"}]}],
+         "services": [{"icon": "container_registry", "label": "OCIR", "address": "ocir"}],
+         "gateways": [{"icon": "service_gateway", "type": "sgw", "label": "Service\nGateway",
+                       "address": "sgw-app"}]},
+    ],
+    "edges": [
+        {"source": "customers", "target": "igw-net", "label": "443", "kind": "data"},
+        {"source": "edge-lb", "target": "oke-main-box", "label": "8080", "kind": "data"},
+    ],
+}
+
 
 def build(out_path: Path, do_render: bool = False) -> None:
     d = build_diagram(DEMO_MODEL, page_name="Architecture", legend=True)
-    box = build_diagram(DEMO_MODEL, page_name="DRG as a box", drg_style="box", legend=True)
+    box = build_diagram(DEMO_MODEL, page_name="DRG as a box", drg_style="box", legend=True,
+                        locations="nested")
     d.append_pages(box)
+    lz = build_diagram(COMPARTMENT_MODEL, page_name="Compartments and OKE", legend=True)
+    d.append_pages(lz)
 
     d.add_page("Security", 800, 400)
     d.add_title("NSG rules - vcn-spoke", region_label="Ashburn", region="us-ashburn-1", key="title3")
