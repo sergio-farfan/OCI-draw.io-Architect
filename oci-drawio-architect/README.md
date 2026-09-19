@@ -2,7 +2,18 @@
 
 Generate production-quality draw.io diagrams for Oracle Cloud Infrastructure architectures using Python, embedded SVG icons, and Oracle template styles.
 
-## What's new in 1.3.1
+## What's new in 1.4.0
+
+Placement enrichments: where things go now follows Oracle's Location Canvas and the toolkit's grouping specs (design: [the v1.4.0 spec](https://github.com/sergio-farfan/OCI-draw.io-Architect/blob/main/docs/superpowers/specs/2026-09-18-v1.4.0-placement-enrichments-design.md), full list in the [changelog](CHANGELOG.md)):
+
+- **Location boxes leave the region.** On-Premises sits left of the OCI Region, Internet and 3rd Party Cloud stack in a narrow column to its right, and the `Site-to-Site VPN` / `FastConnect` / `Remote Peering` label sits in the gap between the on-premises box and the region - the arrangement the toolkit's Location Canvas defines. `locations: "nested"` restores the 1.3.x canvas exactly.
+- **Gateways face what they connect to.** The Internet Gateway and the NAT Gateway form one column on the VCN border facing the Internet box, IGW above NAT; the Service Gateway moves to the bottom border and the Oracle Services Network becomes a full-width band under the VCN stack. Within a border the order is always `igw, nat, sgw, lpg`, never model order. `gateway_edge` and a per-gateway `side` override it.
+- **Subnet labels are two lines**: name with a `(Public)` / `(Private)` token, then the CIDR. `subnet_label: "inline"` restores the single-line form.
+- **Compartments can become containers** around the VCNs they hold, with an optional tenancy wrapper - opt-in via `show_compartments`, because a view with every compartment drawn is unreadable. The DRG stays at region level.
+- **Grouping boxes**: an OKE cluster box inside a subnet (the parser emits one when a cluster and its node pools share a subnet), plus Oracle's `tier` and `user_group` boxes for hand-written models. A box is a real container and an edge may terminate on it.
+- **Badges get a legend**, the DRG gets its route-table badges (up to two, the pair Oracle creates by default), and the attachment connector style is selectable (`attachment_style: "solid" | "dotted"`).
+
+## What was new in 1.3.1
 
 Patch release: correctness fixes and coverage, no new features and no intentional layout change.
 
@@ -41,7 +52,7 @@ Driven by the full code review and output-quality audit of 1.1.0. Highlights (fu
 ## Installation
 
 ```bash
-tar -xzf oci-drawio-architect-v1.3.1.tar.gz
+tar -xzf oci-drawio-architect-v1.4.0.tar.gz
 ./oci-drawio-architect/install.sh
 ```
 
@@ -150,7 +161,7 @@ Diagrams are built locally by these scripts; the plugin does not use draw.io's M
 ```
 oci-drawio-architect/
 ├── .claude-plugin/
-│   └── plugin.json                    # Plugin manifest (version 1.3.1)
+│   └── plugin.json                    # Plugin manifest (version 1.4.0)
 ├── commands/
 │   └── drawio-architect.md            # /drawio-architect slash command
 ├── skills/
@@ -162,14 +173,14 @@ oci-drawio-architect/
 │           ├── gotchas.md             # Known pitfalls and workarounds
 │           └── templates/             # physical_example_*.svg composites (docs only)
 ├── scripts/
-│   ├── drawio_builder.py              # DrawioBuilder (v1.3.1): icons, styles, routing, validation
+│   ├── drawio_builder.py              # DrawioBuilder (v1.4.0): icons, styles, routing, validation
 │   ├── oci_layout.py                  # Model dict/JSON -> .drawio layout recipe (CLI + API)
 │   ├── check_overlaps.py              # Validator CLI: --strict, --quiet; exit 0/1/2
 │   ├── render_drawio.py               # PNG/SVG/PDF export via draw.io desktop; exit 0/1/3
 │   ├── detect_settings.py             # Settings probe: Terraform, ~/.oci/config, OCI CLI
 │   ├── parse_terraform.py             # HCL dir / plan JSON / state JSON -> model (--vcn, --out)
 │   ├── query_tenancy.py               # Experimental: live tenancy -> model via OCI CLI
-│   ├── oci_topology.py                # Topology classification, legacy-model migration, DRG-style choice
+│   ├── oci_topology.py                # Topology classification, view modes, model helpers, legacy-model migration
 │   ├── build_icon_catalog.py          # Regenerate / --check references/icon-catalog.md
 │   └── smoke_test.sh                  # Demo -> overlap gate -> PNG (if draw.io present)
 ├── examples/
@@ -201,11 +212,13 @@ python3 examples/generate_reference_layout.py out.drawio --render
 python3 scripts/parse_terraform.py <tf_dir> [--vcn NAME] [--plan-json F | --state-json F] --out model.json
 python3 scripts/check_overlaps.py --strict out.drawio
 python3 scripts/oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo f] [--render png] [--drg-style auto|icon|box]
+                              [--locations outside|nested] [--gateway-edge auto|internet|top|bottom] [--subnet-label twoline|inline]
+                              [--attachment-style solid|dotted] [--show-compartments]
 python3 scripts/build_icon_catalog.py --check   # after touching icons/
-./pack.sh [/output/dir]                         # oci-drawio-architect-v1.3.1.tar.gz + SHA256
+./pack.sh [/output/dir]                         # oci-drawio-architect-v1.4.0.tar.gz + SHA256
 ```
 
-Generated files weigh roughly 7-13 KB per embedded icon (the three-page demo with 26 icons is about 300 KB; the reference sample with 27 icons and 4 badges about 280 KB).
+Generated files weigh roughly 7-13 KB per embedded icon (the four-page demo with 59 icons is about 550 KB; the reference sample with 27 icons and 4 badges about 280 KB).
 
 ## Icon licensing
 

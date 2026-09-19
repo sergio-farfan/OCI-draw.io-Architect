@@ -1,6 +1,6 @@
 ---
 name: drawio-architect
-description: Generate an OCI architecture .drawio diagram (and PNG) from a Terraform directory, a terraform show -json file, a VCN name or a description, using the deterministic v1.3.1 layout recipe
+description: Generate an OCI architecture .drawio diagram (and PNG) from a Terraform directory, a terraform show -json file, a VCN name or a description, using the deterministic v1.4.0 layout recipe
 argument-hint: [terraform-dir | plan.json | vcn-name | "description"]
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 ---
@@ -40,6 +40,7 @@ Detected on YYYY-MM-DD by /drawio-architect. Edit values above; delete the file 
 ```
 
 5. The file may contain OCIDs: make sure the project `.gitignore` has the line `.claude/*.local.md` (`grep -qxF '.claude/*.local.md' .gitignore 2>/dev/null || echo '.claude/*.local.md' >> .gitignore`).
+6. View choices (not settings, never detected): the canvas is `locations: "outside"` and the subnet labels are two lines unless the user asks otherwise. Offer `show_compartments` only when the tenancy has more than one compartment in play and the user asks "show the compartments" - a view with every compartment drawn is unreadable, which is why it is off by default. The same five choices exist as flags on the layout CLI: `--locations`, `--gateway-edge`, `--subnet-label`, `--attachment-style`, `--show-compartments`.
 
 ## Step 1 - Input
 
@@ -69,6 +70,9 @@ Classify `$ARGUMENTS`; if empty, ask one AskUserQuestion with these five options
    8. Give every item an `address`; edges use addresses (or `vcn:<name>`, `subnet:<name>`, `services`, `services:<vcn>`, `hub`, `region`, `osn`, `drg:<name>`, a DRG address or a DRG attachment address). Add an edge only where a route rule, security rule, LB backend set or DB connection justifies it; `label` = port(s) (`"443"`, `"1522"`, `"3000 / 8000"`); `kind` = `data` (traffic), `control` (management / API calls), `association` (a dependency or configuration relationship that carries no traffic - Database -> Data Safe, resource -> Vault key; dotted, no arrowhead - never `control` for these), `attachment` (a structural link the recipe does not draw itself, such as an LPG pair; DRG attachments and Service Gateway -> Oracle Services Network come from the recipe), `analytics` / `datalake` for those flows. Target 0.3-0.6 edges per icon.
    9. Keep OCIDs and shapes in item `metadata` and a one-line `tooltip`.
    10. Security constructs: put the subnet's route table in `subnet.route_table` and its security lists in `subnet.security_lists`, and the NSGs of a resource in that item's `nsgs` (names, or `{"name", "address"}` when you want the badge as an edge endpoint). The recipe draws them as badges on the subnet's top-right corner and on the resource's icon; never add `route_table`, `security_list` or `nsg` icons to a subnet.
+   11. A DRG's route tables go in `drgs[].route_table` (a name, `{"name", "address"}`, or a list - Oracle creates one table for VCN attachments and one for everything else); the recipe draws up to two badges under the DRG glyph.
+   12. Compartment names are already in `model.compartments` and `vcn.compartment` after parsing; add `"show_compartments": True` only when the user asked for them, and use the object form `{"name", "parent", "vcns"}` when the compartments nest.
+   13. Grouping boxes are opt-in: add a `subnet.groups[]` entry of type `oke_cluster` around an OKE cluster and its node pools (the parser does this for you when they share a subnet), and `tier` / `user_group` boxes only when the user asks for them. Members must live in the container that owns the box.
 
 ## Step 3 - Generate `generate_<subject>_drawio.py`
 
@@ -82,14 +86,17 @@ from oci_layout import write_diagram
 MODEL = {
     "subject": "app-prod", "region": "eu-frankfurt-1", "region_label": "Frankfurt", "compartment": "prod",
     "drg_style": "auto",
+    "locations": "outside",          # default; "nested" reproduces the v1.3.x canvas
+    "subnet_label": "twoline",       # default; "inline" reproduces the v1.3.x one-line label
     "hub": {"kind": "onprem", "items": [{"icon": "cpe", "label": "Corp VPN\n(10.0.0.0/8)", "address": "cpe"}]},
+    "internet": {"name": "Internet", "items": []},   # the box the IGW faces; drop it when there is no IGW
     "drgs": [{"name": "drg", "address": "drg", "label": "Dynamic Routing\nGateway (DRG)",
               "attachments": [{"type": "vcn", "vcn": "app-vcn", "address": "drg-att-app",
                                "label": "VCN attachment\napp-vcn"}]}],
     "vcns": [{"name": "app-vcn", "cidr": "10.0.0.0/16", "subnets": [
-        {"name": "sn-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": True,
+        {"name": "sn-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": True,     # -> "sn-lb (Public)" / "10.0.0.0/24"
          "items": [{"icon": "load_balancer", "label": "Load Balancer\n10.0.0.7", "address": "lb"}]},
-        {"name": "sn-app", "cidr": "10.0.1.0/24", "tier": "app",
+        {"name": "sn-app", "cidr": "10.0.1.0/24", "tier": "app", "public": False,  # -> "sn-app (Private)" / "10.0.1.0/24"
          "route_table": "rt-app", "security_lists": ["sl-app"],
          "items": [{"icon": "vm", "label": "App VM\n10.0.1.5\n4 OCPU / 32 GB", "address": "app",
                     "nsgs": ["nsg-app"]}]},
@@ -107,7 +114,7 @@ MODEL = {
 write_diagram(MODEL, "app-prod_Architecture.drawio", render_fmt="png")
 ```
 
-2. Optional `write_diagram` kwargs: `style_profile="official"|"v1.0"`, `legend=True` (only when asked or with 3+ edge kinds), `logo=<settings logo_light>`, `strict=True` (crossings become errors), `drg_style="box"` (attachments as a dashed `DRG: <name>` group instead of loose boxes). A large `model.json` may be loaded with `json.load` instead of inlined.
+2. Optional `write_diagram` kwargs: `style_profile="official"|"v1.0"`, `legend=True` (only when asked or with 3+ edge kinds), `logo=<settings logo_light>`, `strict=True` (crossings become errors), `drg_style="box"` (attachments as a dashed `DRG: <name>` group instead of loose boxes), and the five view keywords `locations`, `gateway_edge`, `subnet_label`, `attachment_style`, `show_compartments`, each of which overrides the model key of the same name. A large `model.json` may be loaded with `json.load` instead of inlined.
 3. `write_diagram` validates, refuses to write on errors (`SystemExit`), writes the file and renders the PNG when draw.io desktop is installed.
 4. Custom layout ONLY when the recipe cannot express the architecture (availability/fault domains, nested compartments, several regions, third-party cloud, rule tables, extra pages). Then use `DrawioBuilder` from the same `scripts` directory with `place_icons` -> `fit_to_children` (innermost first) -> `fit_page` -> `validate` gate exactly as in SKILL.md section 6; never hand-compute container sizes.
 
@@ -120,7 +127,7 @@ write_diagram(MODEL, "app-prod_Architecture.drawio", render_fmt="png")
 1. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" "<Subject>_Architecture.drawio"` must exit 0 (1 = errors, 2 = unreadable/unparsable file). Add `--strict` to make crossings blocking.
 2. Fix every `ERROR`/`OVERLAP` line (table below). Read every `WARNING`: long caption -> shorten to 3 lines; estimated crossing -> look at the PNG, then reorder items, move the item to the right tier/panel, or (custom layouts) add `label_pos`/`route="direct"`; accept only when the PNG shows no real crossing.
 3. If Step 4 did not render: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_drawio.py" "<Subject>_Architecture.drawio" -f png` (exit 3 = draw.io absent -> skip and say so).
-4. READ the PNG with the Read tool and check: all glyphs the same size; every caption legible, inside its container, not overlapping; edges run in gutters and cross no icon or caption; on-premises panel and DRG centred on the VCN stack; DRG outside every VCN, attachment boxes beside it; gateways centred on the VCN border; Oracle Services Network panel right of the VCNs; route table / security list badges on the subnets' top-right corners and NSG badges on the top-right of their icons, none of them drawn as captioned icons; nothing outside the region; no large empty areas.
+4. READ the PNG with the Read tool and check: all glyphs the same size; every caption legible, inside its container, not overlapping; edges run in gutters and cross no icon or caption; on-premises panel and DRG centred on the VCN stack; DRG outside every VCN, attachment boxes beside it; gateways centred on the VCN border; route table / security list badges on the subnets' top-right corners and NSG badges on the top-right of their icons, none of them drawn as captioned icons; no large empty areas. On the default outside canvas: the On-Premises, Internet and 3rd Party boxes are outside the region, the hybrid connection label sits in the gap between the On-Premises box and the region, the IGW is directly above the NAT on the border facing the Internet box, the Oracle Services Network is a band under the VCN stack, and subnet labels are two lines. With `locations: "nested"`: nothing but the title, notes and legend outside the region, and the OSN panel right of the VCNs. When a legend is drawn, it has one row per badge kind actually used.
 5. Anything failing -> back to Step 2. At most 3 iterations.
 
 ## Step 6 - Report

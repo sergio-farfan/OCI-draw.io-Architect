@@ -1,4 +1,4 @@
-"""Layout tests for scripts/oci_layout.py (v1.3.1 topology-aware placement)."""
+"""Layout tests for scripts/oci_layout.py (v1.4.0 placement enrichments)."""
 import contextlib
 import copy
 import io

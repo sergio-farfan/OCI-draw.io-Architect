@@ -1,6 +1,6 @@
-# Oracle draw.io Template Styles (v1.3.1)
+# Oracle draw.io Template Styles (v1.4.0)
 
-Every value below was read back from `scripts/drawio_builder.py` 1.3.1 with Python
+Every value below was read back from `scripts/drawio_builder.py` 1.4.0 with Python
 probes (`DrawioBuilder(style_profile=...)._group_styles[...]`, a test diagram written
 to `/tmp` and inspected). `{FONT_STACK}` in a style string stands for the value of
 `drawio_builder.FONT_STACK` (see section 8); everything else is literal.
@@ -77,6 +77,7 @@ alias of `"v1.0"` accepted by `DrawioBuilder` only. Unknown names raise
 | `edge_font` | 12 | 10.5 | 12 | connector label `fontSize` (also drives label-collision estimates) |
 | `dash_pattern` | `6 3` | none | `6 3` | `dashPattern` on dashed edges (none = draw.io's default 3 3 pattern) |
 | `dashed_arrow` | `none` | `open` | `none` | `endArrow` on dashed edges |
+| `attachment_style` | `solid` | `solid` | `solid` | the `attachment` edge kind: `solid` = thin solid, no arrowhead; `dotted` = `dashed=1;dashPattern=1 3;` at `strokeWidth=1`, still no arrowhead. `DrawioBuilder(attachment_style=...)` and the model key `attachment_style` override the profile; `ATTACHMENT_STYLES` lists the two values |
 
 - **default** - the sample look with the official 12px container labels; dashed edges keep `6 3` so they stay distinct from dashed borders. Provenance: sample + official.
 - **official** - strict toolkit values (library arc sizes, 1pt sharp connectors, open arrowheads on dashed lines, 10.5px labels, 12px subnet labels). Provenance: official.
@@ -90,8 +91,8 @@ identical in all three.
 
 `GROUP_TYPES` = `region, tenancy, availability_domain, fault_domain, compartment, vcn,
 subnet, services, oracle_services_network, onprem, hub, other, metro_or_realm,
-third_party_cloud, internet, drg` (`hub` is a deprecated alias whose style is identical to
-`onprem`). Strings below are the **default** profile.
+third_party_cloud, internet, drg, user_group, tier, oke_cluster` (`hub` is a deprecated alias
+whose style is identical to `onprem`). Strings below are the **default** profile.
 
 Every style starts with `whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;`
 and ends with `ociGroup=<type>;container=1;collapsible=0;expand=0;recursiveResize=0;`:
@@ -139,9 +140,9 @@ Solid Neutral 3 border, Air fill, centred label; nests inside `availability_doma
 
 ### compartment
 ```
-whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;dashPattern=1 1;fillColor=none;strokeColor=#AE562C;fontSize=12;fontStyle=1;fontColor=#312D2A;align=left;spacingLeft=5;ociGroup=compartment;container=1;collapsible=0;expand=0;recursiveResize=0;
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;dashPattern=1 1;fillColor=none;strokeColor=#AE562C;fontSize=12;fontStyle=1;fontColor=#AE562C;align=left;spacingLeft=5;ociGroup=compartment;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
-Dotted (`dashPattern=1 1`) Sienna border, no fill, **left-aligned Bark** label (official). Unlike VCN/subnet the label does not take the border colour.
+Dotted (`dashPattern=1 1`) Sienna border, no fill, **bold left-aligned Sienna** label. Deck slide 18 specifies "Align: Top/Left, Font: 9pt Bold, Color: Sienna, Line: 1pt dashed Sienna, Fill: No Fill", so the label takes the border colour like VCN and subnet - corrected in v1.4.0, when the recipe started drawing the container for the first time (`show_compartments`). Two recorded drifts: slide 18 says 1pt **dashed** and the toolkit's own compartment cell records `dashed=1` with no `dashPattern`, while the plugin keeps the dotted `dashPattern=1 1` as a deliberate choice (it distinguishes a compartment from a subnet at a glance); and the toolkit example labels compartments top-**centre** in Bark, against slide 18's top-left Sienna, which the plugin follows.
 
 ### vcn
 ```
@@ -185,6 +186,24 @@ whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSi
 ```
 The official logical "Other Group" look with a left-aligned label; project convention for `DRG: <name>` boxes (`drg_style="box"`).
 
+### user_group
+```
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=1;arcSize=1;strokeWidth=1;fillColor=#F5F4F2;strokeColor=#9E9892;fontSize=11;fontStyle=0;fontColor=#312D2A;align=center;ociGroup=user_group;container=1;collapsible=0;expand=0;recursiveResize=0;
+```
+Deck slide 18, "Other Grouping" / User Group: rounded, 1pt solid Neutral 3, Neutral 1 fill, 9pt regular Bark label top-centre. `arcSize` is the profile's `arc_region`, because no Oracle source records a corner radius for any grouping box. Model use: a `groups[]` entry of type `user_group`; never emitted by default - no Oracle template draws one, and `oci_identity_group` is deliberately not mapped to it.
+
+### tier
+```
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;fillColor=#FCFBFA;strokeColor=#9E9892;fontSize=11;fontStyle=0;fontColor=#312D2A;align=center;ociGroup=tier;container=1;collapsible=0;expand=0;recursiveResize=0;
+```
+Deck slide 18, "Other Grouping" / Tier: square, 1pt dashed Neutral 3, Air fill, 9pt light Bark label top-centre. Recorded drift: the drawn PPTX shape uses `dash=sysDot` and **no** fill, against the printed spec's dashed line and Air fill; the plugin follows the printed spec. Model use: a `vcn.groups[]` or `subnet.groups[]` entry of type `tier`; `subnet.tier` keeps feeding row order only and never draws a box.
+
+### oke_cluster
+```
+whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#AE562C;fontSize=11;fontStyle=1;fontColor=#AE562C;align=center;ociGroup=oke_cluster;container=1;collapsible=0;expand=0;recursiveResize=0;
+```
+Deck slide 32 and toolkit tile `toolkit_physical_r4c1`: "Container Engine for Kubernetes Cluster" is a dashed Sienna box **inside** a subnet holding the cluster and its node pools, with the title top-**centre** - which is what distinguishes it from the subnet's own top-left label. The Container Registry stays in the Oracle Services Network. Model use: a `subnet.groups[]` entry of type `oke_cluster`; the parser emits one when a cluster and at least one of its node pools resolve to the same subnet.
+
 ### How `official` and `v1.0` differ from `default`
 
 | group_type | `official` | `v1.0` |
@@ -195,6 +214,7 @@ The official logical "Other Group" look with a left-aligned label; project conve
 | availability_domain | `arcSize=8` | - |
 | fault_domain | `arcSize=7` | - |
 | oracle_services_network, other, third_party_cloud, internet | - | - |
+| user_group, tier, oke_cluster | - | - |
 
 ### Per-call overrides
 
@@ -300,7 +320,7 @@ extensions. `parent` defaults to the common ancestor of source and target.
 | `data` | no | profile default | `open` | profile default (1.5 / 1) | traffic: protocol / port |
 | `control` | yes | profile default | `open` | profile default (1.5 / 1) | management / administrative |
 | `association` | yes | `1 3` | `none` | profile default (1.5 / 1) | dependency, configuration relationship |
-| `attachment` | no | profile default | `none` | 1 (fixed) | structural: DRG attachments, LPG pairs, SGW -> OSN |
+| `attachment` | `attachment_style` | `1 3` when dotted | `none` | 1 (fixed) | structural: DRG attachments, LPG pairs, SGW -> OSN. `solid` (every profile's default) is thin solid; `dotted` is the landing-zone form and the team guidelines' "dotted = association" |
 
 `analytics` and `datalake` are not `kind`s (no `EDGE_KIND_STYLES` entry); they are still reached
 via `color=COLORS["edge_accent"]` (solid Sienna) / `color=COLORS["edge_purple"], dashed=True`
@@ -332,6 +352,14 @@ to) and run long identifiers through `wrap_hints()` first, or the validator repo
 Legacy edge-style aliases still accepted by `entries=`: `solid` -> `data`, `dashed` -> `control`,
 `accent` -> `data` (Sienna swatch), `purple` -> `control` (purple swatch), `dotted` -> `association`,
 `thin` -> `attachment`.
+
+A third row kind explains the badges: `("badge", <icon key>, text)` draws the glyph at
+`LEGEND_BADGE_SIZE = 16` centred at `(32, ry + row_h / 2)` - the same x centre as a group
+swatch, small enough to fit the unchanged 22px row - with the text in the usual column at
+`x = 60`. The layout recipe appends one badge row per badge kind actually present (route
+table, security list, NSG, DRG route table) and rewrites the attachment row's text to name
+the active form: `Attachment (structural)` for `attachment_style="solid"`,
+`Attachment / association (structural)` for `dotted`.
 
 ## 7. Text, title, table and legend styles
 

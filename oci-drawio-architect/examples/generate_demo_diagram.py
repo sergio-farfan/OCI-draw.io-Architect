@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Demo / smoke test for oci-drawio-architect v1.3.1.
+"""Demo / smoke test for oci-drawio-architect v1.4.0.
 
 Page 1 "Architecture": the layout recipe (oci_layout.build_diagram) on a two-VCN
 hybrid model with the default outside canvas - On-Premises and Internet as
