@@ -297,6 +297,25 @@ class RenderCaptionTests(unittest.TestCase):
         item = {"label": "Load Balancer\n10.0.0.23", "metadata": {"private_ip": "10.0.0.23"}}
         self.assertEqual(self.render(item=item), "Load Balancer\n10.0.0.23")
 
+    def test_the_dedupe_matches_whole_tokens_not_substrings(self):
+        """V5 skips a value already rendered, not one that merely ends another."""
+        item = {"label": "public-lb", "metadata": {"private_ip": "10.0.0.80", "ports": "80"}}
+        self.assertEqual(self.render(item=item), "public-lb\n10.0.0.80\n80")
+        item = {"label": "bastion", "metadata": {"private_ip": "10.0.0.22", "ports": "22"}}
+        self.assertEqual(self.render(item=item), "bastion\n10.0.0.22\n22")
+
+    def test_a_hand_wrapped_authored_caption_still_absorbs_the_rendered_form(self):
+        """The whole-token rule keeps the multi-word V5 case working."""
+        item = {"label": "Service\nGateway", "type": "sgw"}
+        out = ov.render_caption(item, ov.resolve_view({}, label_mode="detailed"), kind="gateway")
+        self.assertEqual(out, "Service\nGateway")
+
+    def test_a_value_with_regex_metacharacters_is_matched_literally(self):
+        item = {"label": "10.0.0.0/24 gw", "metadata": {"private_ip": "10.0.0.0/24"}}
+        self.assertEqual(self.render(item=item), "10.0.0.0/24 gw")
+        item = {"label": "app", "metadata": {"private_ip": "1a0b0c0d", "ports": "1.0.0.0"}}
+        self.assertEqual(self.render(item=item), "app\n1a0b0c0d\n1.0.0.0")
+
     def test_a_missing_value_is_skipped_silently_with_no_empty_line(self):
         item = {"label": "Functions App", "metadata": {}}
         self.assertEqual(self.render(item=item), "Functions App")
