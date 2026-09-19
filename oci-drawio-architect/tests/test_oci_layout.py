@@ -1070,7 +1070,8 @@ class LabelModeTests(unittest.TestCase):
 
     def test_two_line_label_marks_public_and_private(self):
         self.assertEqual(ol._subnet_label(self.PUB),
-                         'sn-web (Public)<br><font style="font-size: 10px" color="#312D2A">10.0.1.0/24</font>')
+                         'sn-web (Public)<br><font style="font-size: 10px; font-weight: normal"'
+                         ' color="#312D2A">10.0.1.0/24</font>')
         self.assertIn("sn-app (Private)<br>", ol._subnet_label(self.PRIV))
 
     def test_a_subnet_without_a_public_key_carries_no_token(self):
@@ -1087,7 +1088,8 @@ class LabelModeTests(unittest.TestCase):
 
     def test_the_vcn_cidr_moves_to_line_2(self):
         self.assertEqual(ol._vcn_label({"name": "hub", "cidr": "10.0.0.0/16"}),
-                         'VCN: hub<br><font style="font-size: 10px" color="#312D2A">10.0.0.0/16</font>')
+                         'VCN: hub<br><font style="font-size: 10px; font-weight: normal"'
+                         ' color="#312D2A">10.0.0.0/16</font>')
         self.assertEqual(ol._vcn_label({"name": "hub"}), "VCN: hub")
 
     def test_a_badged_subnets_title_width_is_measured_per_line(self):
