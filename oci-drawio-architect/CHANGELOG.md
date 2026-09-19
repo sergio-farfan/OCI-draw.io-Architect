@@ -3,6 +3,31 @@
 All notable changes to the oci-drawio-architect plugin are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.3.1] - 2026-09-18
+
+Patch release: the post-release review backlog. No schema change (one optional `hub.kind` field), no new feature, no intentional geometry change. Design: `docs/superpowers/specs/2026-09-18-v1.3.1-backlog-patch.md`.
+
+### Fixed
+- Two DRGs without a `name` no longer abort the build with `ValueError: Duplicate cell key 'drg:DRG'`: an unnamed DRG takes its name from the second line of its label, then its address, then its position, and never the bare word `DRG`.
+- `parse_terraform.py` no longer invents a DRG attachment for an IPSec connection, a private virtual circuit or a remote peering connection that names no DRG. A declared but unresolvable reference still falls back to a single unambiguous DRG and now records `WARNING: <address>: <attr> does not resolve; attaching to the only DRG <name>`; warnings appear on stderr, in `model["warnings"]` and in the `summarise()` line.
+- Validator rule 7: a DRG caption that lies inside a VCN whose border the glyph only straddles is reported (it was skipped unconditionally), and a leaf inside nested foreign containers is reported once, against the innermost one.
+- The NSG badge is positioned from the host icon's actual slot width instead of the module constant `ICON_W`.
+- A badged subnet reserves `2 * (BADGE_SIZE + BADGE_GAP)` of title width for its corner badges, and the validator warns when a badged container's title does not fit in what its badges leave.
+- The gap between two VCN columns is sized from both facing borders, so a left-border gateway in the next column no longer puts its caption inside the previous VCN.
+- A DRG cluster with no attachment box on one side reserves the 15 px its caption overhangs the icon slot, restoring the documented 45 px gap.
+- A gateway with a `link` keeps its hyperlink when it is placed on the VCN border.
+- `choose_drg_style` raises `ValueError` instead of `AttributeError` for a non-string; `validate_model` returns violations instead of raising when `drgs` or `vcns` is not a list; `select_vcn` clears a `peer` pointing at a pruned LPG and `validate_model` now checks that `peer` resolves; service items merged from a dropped placeholder VCN carry `regional`; legacy hub DRG items are matched by identity rather than by value.
+- One page-prefix-aware `is_warning()` replaces three WARNING/error splits, two of which promoted a warning whose label contained `"] "` to a blocking error.
+
+### Changed
+- The hub panel carries an optional `hub.kind` (`onprem` | `remote_region`, default `onprem`) that selects its default title; the container keeps the `onprem` styling and an explicit `hub.name` still wins. The Terraform parser sets `remote_region` when the hub holds only RPC peers, and the skill and command no longer hard-code `On-premises`.
+- The legend applies the profile's dashed-arrow suppression to every legacy alias that resolves to `control`, so `dashed` and `purple` render alike; the canonical kind name keeps the `EDGE_KIND_STYLES` arrow.
+- The region-level `OCI Services` panel (2+ VCNs) is height-matched to the tallest VCN column like the Oracle Services Network panel.
+- `attachment_type()`, `is_regional()` and the legacy single-DRG match warn once to stderr on an unknown attachment type, a non-boolean `regional` value and a name mismatch; `is_regional()` also accepts the JSON string forms `"true"` / `"false"`; `has_onprem` follows the spec's CPE / IPSec / virtual-circuit rule.
+- `DrawioBuilder.layout_info` is declared and documented on the class instead of being attached by the recipe; `VNIC_ATTACHMENT_TYPES` drops `oci_core_vnic` (a data source, never a managed resource); `HUB_TYPES` is a `frozenset`.
+- Docs: the builder module docstring lists the `drg` group type and `add_box()`; the command lists the `osn`, `drg:<name>` and attachment-address edge endpoints, and SKILL.md records the badge first-wins rule for a shared construct; SKILL.md, the command and `references/gotchas.md` document the new `WARNING: title ... its badges leave`.
+- Tests: ~20 new cases (legend aliases, pinned-route edge kinds, `add_box` error paths, the `FOREIGN_TOL` boundary, rule 6's badge exclusion, one OSN panel for two VCNs, `_resolve_attachment_target`, the topology helpers and exported tuples, `REGIONAL_TYPE_PREFIXES`, a reference-backed edge under `--no-inferred-edges`, indexed-instance VNIC NSG badges in plan JSON and a two-LPG tenancy fixture).
+
 ## [1.3.0] - 2026-09-17
 
 Topology-aware placement. The layout recipe now follows how Oracle's Architecture Diagram Toolkit (v24.2, slides 19-22 and 27-32), Oracle's reference architectures and the team's diagram guidelines draw connectivity infrastructure: the DRG is a region-level element with its attachments beside it, gateways sit on the VCN border, regional services live in an Oracle Services Network panel, and connectors carry four semantics. Design: `docs/superpowers/specs/2026-09-17-topology-aware-placement-design.md`.

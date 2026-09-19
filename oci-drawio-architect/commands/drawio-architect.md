@@ -1,6 +1,6 @@
 ---
 name: drawio-architect
-description: Generate an OCI architecture .drawio diagram (and PNG) from a Terraform directory, a terraform show -json file, a VCN name or a description, using the deterministic v1.3.0 layout recipe
+description: Generate an OCI architecture .drawio diagram (and PNG) from a Terraform directory, a terraform show -json file, a VCN name or a description, using the deterministic v1.3.1 layout recipe
 argument-hint: [terraform-dir | plan.json | vcn-name | "description"]
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 ---
