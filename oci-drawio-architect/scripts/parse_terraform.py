@@ -514,7 +514,9 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
         if "kind" in hub and kind_present not in (None, "") and (
                 not isinstance(kind, str) or kind.strip().lower() not in HUB_KINDS):
             errors.append(f"hub.kind: {kind!r} not in {HUB_KINDS}")
-        _expect(errors, hub.get("name"), str, "hub.name")
+        # name is optional (section 6): _layout_hub falls back to HUB_TITLES,
+        # and the command's MODEL template carries kind and items only
+        _expect(errors, hub.get("name"), (str, type(None)), "hub.name")
         _expect(errors, hub.get("link_label"), (str, type(None)), "hub.link_label")
         if _expect(errors, hub.get("items"), list, "hub.items"):
             for i, item in enumerate(hub["items"]):
