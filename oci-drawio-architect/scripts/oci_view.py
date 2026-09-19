@@ -846,21 +846,30 @@ def prune_dangling(model: dict, known=None) -> dict:
     deleted from every diagram, filtered or not, so an unrecognised form is
     left alone and only a name that *was* in the model and is not any more is
     pruned. ``known=None`` keeps the strict behaviour ``select_vcn`` wants.
+
+    The guard covers DRG attachments too, not only edges: an attachment whose
+    target this pruner never knew about is left in place, so a hand-written
+    1.4.0 model still fails loudly in ``_resolve_attachment_target`` instead of
+    losing an attachment box on every unfiltered build (spec 11).
     """
     vcn_keys = {str(v[k]) for v in _list(model.get("vcns")) if isinstance(v, dict)
                 for k in ("name", "address") if isinstance(v.get(k), str)}
     dropped = {"attachments": 0, "peers": 0, "edges": 0}
     reachable = set(model_addresses(model)) | vcn_keys
 
+    def _judgeable(ref) -> bool:
+        return known is None or str(ref) in known
+
     def _dangling(att) -> bool:
         if not isinstance(att, dict):
             return False
         if att.get("type") == "vcn":
-            return str(att.get("vcn")) not in vcn_keys
+            return str(att.get("vcn")) not in vcn_keys and _judgeable(att.get("vcn"))
         # An ipsec / virtual-circuit / rpc attachment points at a CPE, a DRG or
         # a peer that the filter may have removed; leaving it in makes
         # build_diagram raise "edge endpoint 'cpe' not found".
-        return bool(att.get("target")) and str(att.get("target")) not in reachable
+        return (bool(att.get("target")) and str(att.get("target")) not in reachable
+                and _judgeable(att.get("target")))
 
     for drg in _list(model.get("drgs")):
         if not isinstance(drg, dict):
@@ -877,10 +886,7 @@ def prune_dangling(model: dict, known=None) -> dict:
                 dropped["peers"] += 1
 
     def _dead(ref) -> bool:
-        ref = str(ref)
-        if ref in alive:
-            return False
-        return known is None or ref in known
+        return str(ref) not in alive and _judgeable(ref)
 
     edges = _list(model.get("edges"))
     kept_edges = [e for e in edges if isinstance(e, dict)
@@ -1015,6 +1021,10 @@ def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> T
     # The endpoint names this model knew before anything was removed; see
     # prune_dangling's docstring for why an unknown endpoint form is kept.
     known_before = set(model_addresses(model))
+    # A vcn attachment names its VCN, which is a name and not an address, so the
+    # pre-filter VCN keys join the set the pruner may judge.
+    known_before |= {str(v[k]) for v in _list(model.get("vcns")) if isinstance(v, dict)
+                     for k in ("name", "address") if isinstance(v.get(k), str)}
     # The groups[] member names the model could resolve before the filter ran;
     # see prune_groups' docstring for why an unknown member is kept.
     known_group_members = group_member_keys(model)
@@ -1023,7 +1033,8 @@ def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> T
               "exclude": tuple(e["raw"] for e in parsed["exclude"]),
               "items_kept": 0, "items_dropped": 0, "edges_dropped": 0,
               "containers_dropped": 0, "groups_dropped": 0, "pruned_items": 0,
-              "pruned_services": 0, "mode": mode, "warnings": []}
+              "pruned_services": 0, "attachments_dropped": 0, "peers_nulled": 0,
+              "mode": mode, "warnings": []}
     has_filter = bool(parsed["include"] or parsed["exclude"])
 
     # A region expression is a whole-model predicate: it either keeps or empties.
@@ -1165,8 +1176,17 @@ def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> T
     # box that went (its key joins the endpoint whitelist for that one call).
     groups_report = prune_groups(m, known=known_group_members)
     report["groups_dropped"] = groups_report["boxes"]
-    report["edges_dropped"] += prune_dangling(
-        m, known=known_before | set(groups_report["keys"]))["edges"]
+    dangling = prune_dangling(m, known=known_before | set(groups_report["keys"]))
+    report["edges_dropped"] += dangling["edges"]
+    report["attachments_dropped"] = dangling["attachments"]
+    report["peers_nulled"] = dangling["peers"]
+    # 6.5: the count is reported. Nothing was asked for here, so anything the
+    # pruner still had to remove is worth a line rather than a silent deletion.
+    if not has_filter and (dangling["attachments"] or dangling["peers"]):
+        report["warnings"].append(
+            f"WARNING: no filter was given, yet {dangling['attachments']} DRG attachment(s) and "
+            f"{dangling['peers']} local-peering target(s) pointed at something the model does not "
+            f"draw; they were pruned")
     return m, report
 
 

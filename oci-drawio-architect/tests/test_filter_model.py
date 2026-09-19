@@ -378,6 +378,43 @@ class PruneDanglingTests(unittest.TestCase):
                          ["att-app", "att-ops"])
         self.assertEqual(counts["attachments"], 1)
 
+    def test_an_attachment_target_the_walk_never_knew_is_left_alone(self):
+        """Spec 11: an undrawn target must fail loudly, not lose the box in silence."""
+        m = model()
+        m["drgs"][0]["attachments"].append(
+            {"type": "ipsec", "target": "cpe-not-drawn", "address": "att-x", "label": "IPSec 2"})
+        counts = ov.prune_dangling(m, known=set(ov.model_addresses(m)))
+        self.assertIn("att-x", [a["address"] for a in m["drgs"][0]["attachments"]])
+        self.assertEqual(counts["attachments"], 0)
+        ov.prune_dangling(m)                     # known=None keeps the strict behaviour
+        self.assertNotIn("att-x", [a["address"] for a in m["drgs"][0]["attachments"]])
+
+    def test_an_unfiltered_build_keeps_the_attachment_and_reports_nothing(self):
+        m = model()
+        m["drgs"][0]["attachments"].append(
+            {"type": "ipsec", "target": "cpe-not-drawn", "address": "att-x", "label": "IPSec 2"})
+        out, report = ov.filter_model(m, {})
+        self.assertIn("att-x", [a["address"] for a in out["drgs"][0]["attachments"]])
+        self.assertEqual(report["attachments_dropped"], 0)
+        self.assertEqual(report["warnings"], [])
+
+    def test_a_filter_still_prunes_the_attachments_it_orphans_and_counts_them(self):
+        """vcn=vcn-app drops vcn-ops and, with it, the hub CPE the IPSec attachment needs."""
+        out, report = ov.filter_model(model(), ["vcn=vcn-app"])
+        self.assertEqual([a["address"] for a in out["drgs"][0]["attachments"]], ["att-app"])
+        self.assertEqual(report["attachments_dropped"], 2)
+
+    def test_an_orphaned_attachment_without_a_filter_is_reported(self):
+        """6.5: the count is reported - mode=participating can orphan one with no filter."""
+        m = model()
+        m["drgs"][0]["attachments"].append(
+            {"type": "ipsec", "target": "vault", "address": "att-y", "label": "IPSec 3"})
+        out, report = ov.filter_model(m, {}, mode="participating")
+        self.assertNotIn("att-y", [a["address"] for a in out["drgs"][0]["attachments"]])
+        self.assertEqual(report["attachments_dropped"], 1)
+        self.assertTrue([w for w in report["warnings"] if "DRG attachment" in w],
+                        report["warnings"])
+
     def test_an_endpoint_the_walk_never_knew_is_not_treated_as_dangling(self):
         """The recipe's registry also resolves group keys, badges and container names."""
         m = model()
