@@ -22,6 +22,7 @@ Patch release: the post-release review backlog. No schema change (one optional `
 - One page-prefix-aware `is_warning()` replaces three WARNING/error splits, two of which promoted a warning whose label contained `"] "` to a blocking error.
 
 ### Changed
+- `validate_model` accepts a hub without a `name`: section 6 declares it optional, `_layout_hub` falls back to `HUB_TITLES`, and the command's MODEL template emits `kind` and `items` only - so the template no longer reports `hub.name: expected str, got NoneType`.
 - The hub panel carries an optional `hub.kind` (`onprem` | `remote_region`, default `onprem`) that selects its default title; the container keeps the `onprem` styling and an explicit `hub.name` still wins. The Terraform parser sets `remote_region` when the hub holds only RPC peers, and the skill and command no longer hard-code `On-premises`.
 - The legend applies the profile's dashed-arrow suppression to every legacy alias that resolves to `control`, so `dashed` and `purple` render alike; the canonical kind name keeps the `EDGE_KIND_STYLES` arrow.
 - The region-level `OCI Services` panel (2+ VCNs) is height-matched to the tallest VCN column like the Oracle Services Network panel.

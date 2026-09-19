@@ -220,6 +220,18 @@ class HclThreeTierTests(unittest.TestCase):
         model["hub"]["kind"] = "datacentre"
         self.assertTrue(any(p.startswith("hub.kind:") for p in pt.validate_model(model)))
 
+    def test_validate_model_accepts_a_hub_without_a_name(self):
+        # section 6: name is optional and overrides the title derived from
+        # kind; the command's MODEL template carries kind and items only, and
+        # _layout_hub falls back to HUB_TITLES - so it must validate.
+        model = pt.parse_terraform_dir(FIXTURES / "three_tier")
+        del model["hub"]["name"]
+        self.assertEqual(pt.validate_model(model), [])
+        model["hub"]["name"] = None
+        self.assertEqual(pt.validate_model(model), [])
+        model["hub"]["name"] = 7
+        self.assertTrue(any(p.startswith("hub.name:") for p in pt.validate_model(model)))
+
     def test_validate_model_accepts_a_whitespace_only_hub_kind(self):
         # hub_kind() reads a whitespace-only value as absent and defaults to
         # "onprem"; the validator must accept exactly what renders.
