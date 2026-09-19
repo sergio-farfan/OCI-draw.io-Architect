@@ -220,6 +220,13 @@ class HclThreeTierTests(unittest.TestCase):
         model["hub"]["kind"] = "datacentre"
         self.assertTrue(any(p.startswith("hub.kind:") for p in pt.validate_model(model)))
 
+    def test_validate_model_accepts_a_whitespace_only_hub_kind(self):
+        # hub_kind() reads a whitespace-only value as absent and defaults to
+        # "onprem"; the validator must accept exactly what renders.
+        model = pt.parse_terraform_dir(FIXTURES / "three_tier")
+        model["hub"]["kind"] = "  "
+        self.assertEqual(pt.validate_model(model), [])
+
 
 # ---------------------------------------------------------------------------
 # HCL mode: tfvars-driven VCN map
