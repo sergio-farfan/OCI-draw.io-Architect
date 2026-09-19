@@ -676,11 +676,7 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
             _expect(errors, text, str, f"warnings[{wi}]")
     # G8: a grouping box is addressable by its groups[].key, which is a cell id
     # rather than a model address, so an edge may terminate on it.
-    group_keys = {g.get("key")
-                  for v in _entries(model.get("vcns")) if isinstance(v, dict)
-                  for c in [v] + _entries(v.get("subnets")) if isinstance(c, dict)
-                  for g in _entries(c.get("groups")) if isinstance(g, dict)
-                  and isinstance(g.get("key"), str)}
+    group_keys = set(model_group_keys(model))
     if _expect(errors, model.get("edges"), list, "edges"):
         for ei, edge in enumerate(model["edges"]):
             ep = f"edges[{ei}]"
@@ -701,6 +697,17 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
     for addr, n in sorted(seen.items()):
         if n > 1:
             errors.append(f"address {addr!r} appears {n} times")
+    # A groups[].key is a draw.io cell id in the same namespace as an address,
+    # so a repeat makes build_diagram raise "Duplicate cell key" instead of
+    # drawing anything. Same safety net as the duplicate-address rule above.
+    key_seen: Dict[str, int] = {}
+    for key in model_group_keys(model):
+        key_seen[key] = key_seen.get(key, 0) + 1
+    for key, n in sorted(key_seen.items()):
+        if n > 1:
+            errors.append(f"groups[].key {key!r} appears {n} times")
+        if key in seen:
+            errors.append(f"groups[].key {key!r} is also an address in the model")
     return errors
 
 
@@ -712,6 +719,24 @@ def _addr(entry) -> Optional[str]:
 def _entries(value) -> list:
     """A list of entries; validate_model reports a bad container type itself."""
     return value if isinstance(value, list) else []
+
+
+def model_group_keys(model: dict) -> Iterator[str]:
+    """Yield every ``vcn.groups[].key`` / ``subnet.groups[].key`` in the model.
+
+    A grouping box's key is its draw.io cell id (spec G8), which lives in the
+    same namespace as an address: an edge may terminate on either, and a repeat
+    of either makes ``build_diagram`` raise.
+    """
+    for vcn in _entries(model.get("vcns")):
+        if not isinstance(vcn, dict):
+            continue
+        for container in [vcn] + _entries(vcn.get("subnets")):
+            if not isinstance(container, dict):
+                continue
+            for grp in _entries(container.get("groups")):
+                if isinstance(grp, dict) and isinstance(grp.get("key"), str):
+                    yield grp["key"]
 
 
 def model_addresses(model: dict) -> Iterator[str]:
@@ -1654,8 +1679,11 @@ class ModelBuilder:
                           f"{subnet['name']}'s icon grid beside its other items; no OKE box")
                 continue
             subnet["items"] = order
+            # keyed on the cluster's ADDRESS, not its display name: the box's
+            # key is a cell id, and two modules instantiating the same cluster
+            # name in different subnets would otherwise claim the same one.
             subnet.setdefault("groups", []).append(
-                new_group("oke_cluster", label, members, key=f"oke:{label}"))
+                new_group("oke_cluster", label, members, key=f"oke:{addr}"))
 
     def _add_vcn_attachment(self, drg: dict, att: dict, vcn: dict, derived_label: bool) -> None:
         """Append a VCN attachment and remember the VCN dict for the final name resolution."""

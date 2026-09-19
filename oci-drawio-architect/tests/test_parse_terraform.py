@@ -269,7 +269,8 @@ class HclLandingZoneTests(unittest.TestCase):
     def test_oke_cluster_and_its_node_pools_become_one_group_box(self):
         app = find_subnet(self.vcns["vcn-spoke"], "sn-app")
         self.assertEqual(app["groups"], [{
-            "type": "oke_cluster", "label": "oke-main", "key": "oke:oke-main",
+            "type": "oke_cluster", "label": "oke-main",
+            "key": "oke:oci_containerengine_cluster.main",
             "items": ["oci_containerengine_cluster.main",
                       "oci_containerengine_node_pool.system",
                       "oci_containerengine_node_pool.apps"]}])
@@ -323,7 +324,8 @@ class HclOkeMixedTests(unittest.TestCase):
                           "oci_containerengine_node_pool.app",
                           "oci_core_instance.bastion"])   # declared first, moved behind the box
         self.assertEqual(app["groups"], [{
-            "type": "oke_cluster", "label": "oke-app", "key": "oke:oke-app",
+            "type": "oke_cluster", "label": "oke-app",
+            "key": "oke:oci_containerengine_cluster.app",
             "items": ["oci_containerengine_cluster.app",
                       "oci_containerengine_node_pool.app"]}])
 
@@ -387,9 +389,64 @@ resource "oci_containerengine_node_pool" "%s" {
             (Path(tmp) / "main.tf").write_text(tf, encoding="utf-8")
             model = pt.parse_terraform_dir(Path(tmp))
         subnet = model["vcns"][0]["subnets"][0]
-        self.assertEqual([g["key"] for g in subnet["groups"]], ["oke:oke-one"])
+        self.assertEqual([g["key"] for g in subnet["groups"]],
+                         ["oke:oci_containerengine_cluster.one"])
         self.assertTrue(any("oci_containerengine_cluster.two" in w and "plain icon" in w
                             for w in model["warnings"]), model["warnings"])
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+        self.assertEqual(ol.build_diagram(model).check_overlaps(strict=True), [])
+
+    def test_two_clusters_with_the_same_display_name_get_distinct_keys(self):
+        """The same module instantiated for two subnets: keying the box on the
+        cluster's display name made both boxes claim one cell id and
+        build_diagram raised instead of drawing anything."""
+        tf = """
+resource "oci_core_vcn" "a" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  display_name   = "vcn-a"
+  cidr_blocks    = ["10.7.0.0/16"]
+}
+"""
+        for name in ("one", "two"):
+            tf += """
+resource "oci_core_subnet" "%s" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  vcn_id         = oci_core_vcn.a.id
+  display_name   = "sn-%s"
+  cidr_block     = "10.7.%s.0/24"
+}
+
+resource "oci_containerengine_cluster" "%s" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  vcn_id         = oci_core_vcn.a.id
+  name           = "main"
+  endpoint_config {
+    subnet_id = oci_core_subnet.%s.id
+  }
+}
+
+resource "oci_containerengine_node_pool" "%s" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  cluster_id     = oci_containerengine_cluster.%s.id
+  name           = "np-%s"
+  node_shape     = "VM.Standard.E4.Flex"
+  node_config_details {
+    placement_configs {
+      subnet_id = oci_core_subnet.%s.id
+    }
+  }
+}
+""" % (name, name, 1 if name == "one" else 2, name, name, name, name, name, name)
+        import oci_layout as ol
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "main.tf").write_text(tf, encoding="utf-8")
+            model = pt.parse_terraform_dir(Path(tmp))
+        keys = [g["key"] for v in model["vcns"] for sn in v["subnets"]
+                for g in sn.get("groups") or []]
+        self.assertEqual(keys, ["oke:oci_containerengine_cluster.one",
+                                "oke:oci_containerengine_cluster.two"])
+        self.assertEqual([g["label"] for v in model["vcns"] for sn in v["subnets"]
+                          for g in sn.get("groups") or []], ["main", "main"])
         self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
         self.assertEqual(ol.build_diagram(model).check_overlaps(strict=True), [])
 
@@ -1140,14 +1197,31 @@ class HelperTests(unittest.TestCase):
         model = pt.parse_terraform_dir(FIXTURES / "landing_zone")
         vcn = next(v for v in model["vcns"] if v["name"] == "vcn-spoke")
         subnet = find_subnet(vcn, "sn-app")
-        self.assertEqual(subnet["groups"][0]["key"], "oke:oke-main")
-        model["edges"].append({"source": subnet["items"][0]["address"], "target": "oke:oke-main",
+        self.assertEqual(subnet["groups"][0]["key"], "oke:oci_containerengine_cluster.main")
+        model["edges"].append({"source": subnet["items"][0]["address"],
+                               "target": "oke:oci_containerengine_cluster.main",
                                "label": "443", "kind": "data", "inferred": False})
         self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
         idx = len(model["edges"]) - 1
         model["edges"][idx]["target"] = "no-such-box"
         self.assertIn(f"edges[{idx}].target: 'no-such-box' is not an address in the model",
                       pt.validate_model(model, BUILDER_ICONS))
+
+    def test_two_group_boxes_may_not_share_a_key_or_shadow_an_address(self):
+        """A groups[].key is a cell id, so validate_model has to catch a repeat
+        for the same reason it catches a repeated address: build_diagram raises
+        "Duplicate cell key" and draws nothing."""
+        model = pt.parse_terraform_dir(FIXTURES / "landing_zone")
+        vcn = next(v for v in model["vcns"] if v["name"] == "vcn-spoke")
+        subnet = find_subnet(vcn, "sn-app")
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+        vcn["groups"] = [{"type": "tier", "label": "App tier", "key": subnet["groups"][0]["key"],
+                          "subnets": [subnet["name"]]}]
+        self.assertIn(f"groups[].key {subnet['groups'][0]['key']!r} appears 2 times",
+                      pt.validate_model(model, BUILDER_ICONS))
+        vcn["groups"][0]["key"] = subnet["items"][0]["address"]
+        self.assertIn(f"groups[].key {subnet['items'][0]['address']!r} is also an address "
+                      f"in the model", pt.validate_model(model, BUILDER_ICONS))
 
     def test_location_box_items_are_addresses_of_the_model(self):
         """Section 5: internet / third_party items use the hub's item shape - so they are
