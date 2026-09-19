@@ -1861,23 +1861,31 @@ class DrawioBuilder:
         return "1"
 
     # -- emitters ------------------------------------------------------------
+    def _object_attrs(self, cid, label, tooltip=None, metadata=None, link=None) -> dict:
+        """Build the <object>/<UserObject> wrapper attribute dict shared by
+        vertex (_emit_vertex) and edge (add_edge) metadata/tooltip/link wrapping.
+        Validates metadata keys against _METADATA_KEY_RE / _RESERVED_METADATA_KEYS.
+        """
+        obj_attrs = {"id": cid, "label": label, "placeholders": "1"}
+        if tooltip is not None:
+            obj_attrs["tooltip"] = str(tooltip)
+        if link:
+            obj_attrs["link"] = str(link)
+        if metadata:
+            for key, val in metadata.items():
+                if not self._METADATA_KEY_RE.fullmatch(str(key)) or key in self._RESERVED_METADATA_KEYS:
+                    raise ValueError(
+                        f"Invalid metadata key {key!r}: must match ^[A-Za-z_][A-Za-z0-9_-]*$ "
+                        f"and not be one of {sorted(self._RESERVED_METADATA_KEYS)}")
+                obj_attrs[str(key)] = str(val)
+        return obj_attrs
+
     def _emit_vertex(self, value, style, parent, x, y, w, h,
                      metadata=None, tooltip=None, cid=None, link=None) -> str:
         cid = cid or self._new_id()
         value = "" if value is None else str(value)
         if metadata or tooltip is not None or link:
-            obj_attrs = {"id": cid, "label": value, "placeholders": "1"}
-            if tooltip is not None:
-                obj_attrs["tooltip"] = str(tooltip)
-            if link:
-                obj_attrs["link"] = str(link)
-            if metadata:
-                for key, val in metadata.items():
-                    if not self._METADATA_KEY_RE.fullmatch(str(key)) or key in self._RESERVED_METADATA_KEYS:
-                        raise ValueError(
-                            f"Invalid metadata key {key!r}: must match ^[A-Za-z_][A-Za-z0-9_-]*$ "
-                            f"and not be one of {sorted(self._RESERVED_METADATA_KEYS)}")
-                    obj_attrs[str(key)] = str(val)
+            obj_attrs = self._object_attrs(cid, value, tooltip=tooltip, metadata=metadata, link=link)
             obj = ET.SubElement(self.root, "UserObject" if link else "object", **obj_attrs)
             cell = ET.SubElement(obj, "mxCell", style=style, vertex="1", parent=parent)
         else:
@@ -2460,15 +2468,7 @@ class DrawioBuilder:
                 style += f"entryX={_fmt_num(entry_x)};entryY={_fmt_num(entry_y)};entryDx=0;entryDy=0;"
 
         if tooltip is not None or metadata:
-            obj_attrs = {"id": cid, "label": text, "placeholders": "1"}
-            if tooltip is not None:
-                obj_attrs["tooltip"] = str(tooltip)
-            for mkey, mval in (metadata or {}).items():
-                if not self._METADATA_KEY_RE.fullmatch(str(mkey)) or mkey in self._RESERVED_METADATA_KEYS:
-                    raise ValueError(
-                        f"Invalid metadata key {mkey!r}: must match ^[A-Za-z_][A-Za-z0-9_-]*$ "
-                        f"and not be one of {sorted(self._RESERVED_METADATA_KEYS)}")
-                obj_attrs[str(mkey)] = str(mval)
+            obj_attrs = self._object_attrs(cid, text, tooltip=tooltip, metadata=metadata)
             obj = ET.SubElement(self.root, "object", **obj_attrs)
             cell = ET.SubElement(obj, "mxCell", style=style, edge="1", parent=parent,
                                  source=source, target=target)
