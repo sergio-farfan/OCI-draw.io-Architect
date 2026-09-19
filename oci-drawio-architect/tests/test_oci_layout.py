@@ -390,21 +390,6 @@ class DrgColumnTests(unittest.TestCase):
         self.assertIn(("drg", "app-Spoke"), pairs)
         self.assertEqual(errors_of(d), [])
 
-    def test_edge_kinds_map_to_builder_kinds(self):
-        model = copy.deepcopy(MODEL_GW)
-        model["vcns"][0]["subnets"][0]["items"].append({"icon": "vault", "label": "Vault", "address": "vault-a"})
-        model["edges"] = [
-            {"source": "app-a", "target": "vault-a", "label": "secrets", "kind": "association", "address": "e-assoc"},
-            {"source": "app-a", "target": "sgw", "label": "443", "kind": "control", "address": "e-ctl"},
-            {"source": "app-a", "target": "igw", "label": "", "kind": "datalake", "address": "e-lake"},
-            {"source": "app-a", "target": "nat", "label": "", "kind": "data", "dashed": True, "address": "e-dashed"},
-        ]
-        d = quiet(ol.build_diagram, model)
-        self.assertEqual((style_of(d, "e-assoc")["dashPattern"], style_of(d, "e-assoc")["endArrow"]), ("1 3", "none"))
-        self.assertEqual((style_of(d, "e-ctl")["dashed"], style_of(d, "e-ctl")["endArrow"]), ("1", "open"))
-        self.assertEqual(style_of(d, "e-lake")["strokeColor"], db.COLORS["edge_purple"])
-        self.assertEqual(style_of(d, "e-dashed")["endArrow"], "none")     # explicit dashed keeps the profile look
-
     def test_a_bare_cluster_side_reserves_the_caption_overhang(self):
         """A23: the 105 px caption overhangs the 75 px slot by 15 px on a side with no box."""
         pad = (db.LABEL_W - db.ICON_W) // 2
@@ -471,6 +456,25 @@ class UnnamedDrgTests(unittest.TestCase):
         self.assertEqual(sorted(d.layout_info["drg_style"]), ["drg-prod", "drg:Dynamic Routing"])
 
 
+class EdgeKindTests(unittest.TestCase):
+    """Model edge kinds map to the builder's connector styles (no DRG fixture needed)."""
+
+    def test_edge_kinds_map_to_builder_kinds(self):
+        model = copy.deepcopy(MODEL_GW)
+        model["vcns"][0]["subnets"][0]["items"].append({"icon": "vault", "label": "Vault", "address": "vault-a"})
+        model["edges"] = [
+            {"source": "app-a", "target": "vault-a", "label": "secrets", "kind": "association", "address": "e-assoc"},
+            {"source": "app-a", "target": "sgw", "label": "443", "kind": "control", "address": "e-ctl"},
+            {"source": "app-a", "target": "igw", "label": "", "kind": "datalake", "address": "e-lake"},
+            {"source": "app-a", "target": "nat", "label": "", "kind": "data", "dashed": True, "address": "e-dashed"},
+        ]
+        d = quiet(ol.build_diagram, model)
+        self.assertEqual((style_of(d, "e-assoc")["dashPattern"], style_of(d, "e-assoc")["endArrow"]), ("1 3", "none"))
+        self.assertEqual((style_of(d, "e-ctl")["dashed"], style_of(d, "e-ctl")["endArrow"]), ("1", "open"))
+        self.assertEqual(style_of(d, "e-lake")["strokeColor"], db.COLORS["edge_purple"])
+        self.assertEqual(style_of(d, "e-dashed")["endArrow"], "none")     # explicit dashed keeps the profile look
+
+
 class AttachmentBoxTextTests(unittest.TestCase):
     """A parser-style display name must wrap inside its box instead of across the diagram."""
 
@@ -533,18 +537,24 @@ class DrgStyleTests(unittest.TestCase):
         self.assertEqual(style_of(d, "drgbox-drg")["ociGroup"], "drg")
         self.assertEqual(errors_of(d), [])
 
-    def test_auto_picks_icon_up_to_four_and_overrides_apply(self):
+    def test_auto_picks_icon_up_to_four_attachments(self):
         d = quiet(ol.build_diagram, self._hub_spoke(4))
         self.assertEqual(d.layout_info["drg_style"]["drg"], "icon")
         self.assertNotIn("drgbox-drg", d._cells)
+
+    def test_the_call_argument_forces_the_box_style(self):
         d = quiet(ol.build_diagram, self._hub_spoke(2), drg_style="box")
         self.assertIn("drgbox-drg", d._cells)
+
+    def test_the_model_field_forces_the_icon_style(self):
         model = self._hub_spoke(6)
         model["drg_style"] = "icon"
         d = quiet(ol.build_diagram, model)
         self.assertNotIn("drgbox-drg", d._cells)
+
+    def test_an_unknown_drg_style_raises(self):
         with self.assertRaises(ValueError):
-            quiet(ol.build_diagram, model, drg_style="fancy")
+            quiet(ol.build_diagram, self._hub_spoke(6), drg_style="fancy")
 
     def test_onprem_attachments_sit_left_and_link_to_the_hub_item(self):
         model = self._hub_spoke(1)
@@ -637,9 +647,14 @@ class CliTests(unittest.TestCase):
 
 
 class ExamplesTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.examples_dir = str(TESTS_DIR.parent / "examples")
+        sys.path.insert(0, cls.examples_dir)
+        cls.addClassCleanup(sys.path.remove, cls.examples_dir)
+
     def test_reference_model_is_schema_2_and_passes_the_gate(self):
         import check_overlaps
-        sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
         from generate_reference_layout import MODEL
         self.assertEqual([i["address"] for i in MODEL["hub"]["items"]], ["cpe"])
         self.assertEqual([a["type"] for a in MODEL["drgs"][0]["attachments"]], ["vcn"])
@@ -656,7 +671,6 @@ class ExamplesTests(unittest.TestCase):
             self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
 
     def test_reference_model_draws_its_nsgs_as_badges(self):
-        sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
         from generate_reference_layout import MODEL
         items = {i["address"]: i for s in MODEL["vcns"][0]["subnets"] for i in s["items"]}
         self.assertEqual([a for a, i in items.items()
@@ -670,7 +684,6 @@ class ExamplesTests(unittest.TestCase):
 
     def test_demo_builds_three_pages_and_passes_the_gate(self):
         import check_overlaps
-        sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
         import generate_demo_diagram as demo
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "demo.drawio"
@@ -685,7 +698,6 @@ class ExamplesTests(unittest.TestCase):
     def test_connector_labels_are_not_drawn_over_shapes(self):
         """Spec section 2: the Site-to-Site VPN label sits on the line next to the
         on-premises item - not on top of the IPSec attachment box it leaves."""
-        sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
         from generate_demo_diagram import DEMO_MODEL
         from generate_reference_layout import MODEL
         cases = (("reference", MODEL, {}),
@@ -703,7 +715,6 @@ class ExamplesTests(unittest.TestCase):
                 self.assertLessEqual(label.right, box.x)      # on the on-premises side
 
     def test_committed_reference_diagram_is_not_stale(self):
-        sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
         from generate_reference_layout import MODEL
         committed = TESTS_DIR.parent.parent / "OCI_Architecture.drawio"
         if not committed.exists():                            # not shipped in the plugin archive
@@ -870,9 +881,14 @@ class BadgeLayoutTests(unittest.TestCase):
 
 
 class DemoBadgeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.examples_dir = str(TESTS_DIR.parent / "examples")
+        sys.path.insert(0, cls.examples_dir)
+        cls.addClassCleanup(sys.path.remove, cls.examples_dir)
+
     def test_demo_model_carries_badges_on_both_layout_pages(self):
         import check_overlaps
-        sys.path.insert(0, str(TESTS_DIR.parent / "examples"))
         import generate_demo_diagram as demo
         subnets = {s["name"]: s for v in demo.DEMO_MODEL["vcns"] for s in v["subnets"]}
         self.assertEqual(subnets["sn-public"]["route_table"], "rt-public")
