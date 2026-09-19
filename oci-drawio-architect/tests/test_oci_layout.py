@@ -1490,5 +1490,96 @@ class OsnBandClearanceTests(unittest.TestCase):
         self.assertEqual(errors_of(d), [])
 
 
+LANDING_ZONE = {
+    "subject": "landing-zone", "region": "eu-frankfurt-1", "tenancy_name": "example-tenancy",
+    "show_compartments": True,
+    "compartments": [{"name": "Enclosing"},
+                     {"name": "Network", "parent": "Enclosing", "vcns": ["hub"]},
+                     {"name": "App", "parent": "Enclosing"}],
+    "drgs": [{"name": "drg", "address": "drg", "label": "DRG\ndrg", "attachments": [
+        {"type": "vcn", "vcn": "hub", "address": "att-hub", "label": "VCN attachment\nhub"},
+        {"type": "vcn", "vcn": "spoke", "address": "att-spoke", "label": "VCN attachment\nspoke"}]}],
+    "vcns": [
+        {"name": "hub", "cidr": "10.0.0.0/16", "subnets": [
+            {"name": "sn-web", "cidr": "10.0.1.0/24", "tier": "lb", "public": True,
+             "items": [{"icon": "load_balancer", "label": "LB", "address": "lb"}]}],
+         "gateways": [gw("igw", "internet_gateway", "Internet\nGateway", "igw"),
+                      gw("sgw", "service_gateway", "Service\nGateway", "sgw")],
+         "services": [{"icon": "buckets", "label": "Object Storage", "address": "buckets"}]},
+        {"name": "spoke", "cidr": "10.1.0.0/16", "compartment": "App", "subnets": [
+            {"name": "sn-app", "cidr": "10.1.1.0/24", "tier": "app", "public": False,
+             "items": [{"icon": "vm", "label": "App VM", "address": "app"}]}]},
+    ],
+}
+
+
+class CompartmentTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.d = quiet(ol.build_diagram, LANDING_ZONE)
+
+    def test_each_vcn_and_its_gateways_are_children_of_their_compartment(self):
+        self.assertEqual(self.d._cells["vcn-hub"]["parent"], "compartment-Network")
+        self.assertEqual(self.d._cells["igw"]["parent"], "compartment-Network")
+        self.assertEqual(self.d._cells["sgw"]["parent"], "compartment-Network")
+        self.assertEqual(self.d._cells["vcn-spoke"]["parent"], "compartment-App")
+
+    def test_compartments_nest_through_parent_and_the_tenancy_wraps_them(self):
+        self.assertEqual(self.d._cells["compartment-Network"]["parent"], "compartment-Enclosing")
+        self.assertEqual(self.d._cells["compartment-App"]["parent"], "compartment-Enclosing")
+        self.assertEqual(self.d._cells["compartment-Enclosing"]["parent"], "tenancy")
+        self.assertEqual(self.d._cells["tenancy"]["parent"], "region")
+        self.assertEqual(self.d._cells["tenancy"]["label"],
+                         "Tenancy: example-tenancy (Root Compartment)")
+
+    def test_the_drg_column_stays_at_region_level(self):
+        """Spec 6.3: the DRG column is shared by VCNs in different compartments."""
+        self.assertEqual(self.d._cells["drg"]["parent"], "region")
+        self.assertEqual(self.d._cells["att-hub"]["parent"], "region")
+        self.assertEqual(self.d._cells["osn"]["parent"], "region")
+
+    def test_the_compartment_encloses_its_vcn_with_its_padding(self):
+        cx, cy, cw, ch = self.d.abs_bbox("compartment-Network")
+        vx, vy, vw, vh = self.d.abs_bbox("vcn-hub")
+        self.assertLessEqual(cx, vx - ol.CMP_PAD + ol.GW_SIDE_DX)
+        # hub is not the rightmost column, so G4 puts its IGW on the TOP border:
+        # the compartment clears that caption as well as its own title band
+        self.assertEqual(vy - cy, ol.CMP_TITLE_H + ol.GW_STRADDLE + db.LABEL_GAP + db.LABEL_H)
+        self.assertGreaterEqual(cx + cw, vx + vw)
+        self.assertGreaterEqual(cy + ch, vy + vh)
+        # the App compartment's VCN has no gateways: its title band is exactly CMP_TITLE_H
+        _ax, ay, _aw, _ah = self.d.abs_bbox("compartment-App")
+        _sx, sy, _sw, _sh = self.d.abs_bbox("vcn-spoke")
+        self.assertEqual(sy - ay, ol.CMP_TITLE_H)
+
+    def test_the_diagram_validates_and_no_two_compartments_overlap(self):
+        self.assertEqual(errors_of(self.d), [])
+        self.assertEqual(quiet(self.d.check_overlaps, True), [])
+
+    def test_a_vcn_naming_no_known_compartment_stays_a_region_child(self):
+        model = copy.deepcopy(LANDING_ZONE)
+        model["vcns"][1]["compartment"] = "Missing"
+        d = quiet(ol.build_diagram, model)
+        self.assertEqual(d._cells["vcn-spoke"]["parent"], "region")
+        self.assertNotIn("compartment-App", d._cells)
+        self.assertEqual(errors_of(d), [])
+
+    def test_compartments_are_off_by_default(self):
+        model = copy.deepcopy(LANDING_ZONE)
+        model.pop("show_compartments")
+        d = quiet(ol.build_diagram, model)
+        self.assertEqual(d._cells["vcn-hub"]["parent"], "region")
+        self.assertNotIn("tenancy", d._cells)
+        self.assertNotIn("compartment-Network", d._cells)
+
+    def test_a_cycle_in_the_compartment_list_raises(self):
+        model = copy.deepcopy(LANDING_ZONE)
+        model["compartments"] = [{"name": "A", "parent": "B", "vcns": ["hub"]},
+                                 {"name": "B", "parent": "A"}]
+        with self.assertRaises(ValueError) as cm:
+            quiet(ol.build_diagram, model)
+        self.assertIn("cycle", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
