@@ -86,6 +86,8 @@ Usage (CLI):
                           [--label-mode minimal|network|detailed] [--label-fields F,F]
                           [--label-tag-keys K,K] [--layers off|auto|L,L] [--hidden-layers L,L]
                           [--detail executive|application|network|engineering] [--no-edges]
+                          [--filter EXPR ...] [--mode all|participating] [--discovery K,K]
+                          [--annotate-discovery]
 
 Usage (Python):
     from oci_layout import build_diagram, write_diagram
@@ -342,7 +344,8 @@ def _edge_label(text, view: dict) -> str:
 def _view_ctx(model: dict, locations=None, gateway_edge=None, subnet_label=None,
               attachment_style=None, show_compartments=None,
               label_mode=None, label_fields=None, label_tag_keys=None,
-              layers=None, hidden_layers=None, detail=None, show_edges=None) -> dict:
+              layers=None, hidden_layers=None, detail=None, show_edges=None,
+              view=None) -> dict:
     """The view choices of one diagram: model keys, with the build_diagram kwargs winning.
 
     ``internet`` is synthesised with no items when the canvas is the Location
@@ -367,11 +370,16 @@ def _view_ctx(model: dict, locations=None, gateway_edge=None, subnet_label=None,
     # the detail levels, the filter and the purposes need comes out of
     # oci_view.resolve_view, whose answers for subnet_label reproduce
     # oci_topology.subnet_label_mode exactly for every 1.4.0 value.
-    view = ov.resolve_view(m, label_mode=label_mode, label_fields=label_fields,
-                           label_tag_keys=label_tag_keys, layers=layers,
-                           hidden_layers=hidden_layers, detail=detail, show_edges=show_edges)
-    for note in view["notes"]:
-        print(note, file=sys.stderr)
+    # 8: build_diagram resolves the view BEFORE it filters (the filter is part of
+    # the view) and hands the result back in, so the Internet box below is
+    # synthesised from the VCNs that actually survived.
+    if view is None:
+        view = ov.resolve_view(m, label_mode=label_mode, label_fields=label_fields,
+                               label_tag_keys=label_tag_keys, layers=layers,
+                               hidden_layers=hidden_layers, detail=detail,
+                               show_edges=show_edges)
+        for note in view["notes"]:
+            print(note, file=sys.stderr)
     return {"locations": mode,
             "gateway_edge": gateway_edge_mode(m),
             "subnet_label": view["subnet_label"],
@@ -1729,7 +1737,8 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                   locations=None, gateway_edge=None, subnet_label=None, attachment_style=None,
                   show_compartments=None, label_mode=None, label_fields=None,
                   label_tag_keys=None, layers=None, hidden_layers=None,
-                  detail=None, show_edges=None) -> DrawioBuilder:
+                  detail=None, show_edges=None, filter_spec=None, mode=None,
+                  discovery=None, annotate_discovery=None) -> DrawioBuilder:
     """Lay out a normalized model and return the (unwritten) DrawioBuilder.
 
     Schema-1 models are migrated first (DRG hub items / drg gateways -> drgs[]);
@@ -1739,6 +1748,23 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     model, warnings = migrate_legacy_model(model)
     for w in warnings:
         print(w, file=sys.stderr)
+    # 8, phase 1: migrate -> resolve the view -> filter and prune -> classify.
+    # The view is resolved from the pre-filter model (a filter is part of the
+    # view, not of the infrastructure) and then reused, so the Internet box and
+    # the topology are both derived from what actually survived.
+    view = ov.resolve_view(model, label_mode=label_mode, label_fields=label_fields,
+                           label_tag_keys=label_tag_keys, layers=layers,
+                           hidden_layers=hidden_layers, detail=detail, show_edges=show_edges,
+                           subnet_label=subnet_label, show_compartments=show_compartments,
+                           filter=filter_spec, mode=mode, discovery=discovery,
+                           annotate_discovery=annotate_discovery)
+    for note in view["notes"]:
+        print(note, file=sys.stderr)
+    model, filter_report = ov.filter_model(model, view["filter"], mode=view["mode"],
+                                           discovery=view["discovery"])
+    for w in filter_report["warnings"]:
+        warnings.append(w)
+        print(w, file=sys.stderr)
     if not model.get("vcns") and not model.get("hub") and not model.get("drgs"):
         raise ValueError("model needs at least one VCN (model['vcns']), a hub or a DRG")
     requested = str(drg_style or model.get("drg_style") or "auto").lower()
@@ -1747,10 +1773,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     subject = model.get("subject") or (model["vcns"][0].get("name") if model.get("vcns") else "Architecture")
     ctx = _view_ctx(model, locations=locations, gateway_edge=gateway_edge, subnet_label=subnet_label,
                     attachment_style=attachment_style, show_compartments=show_compartments,
-                    label_mode=label_mode, label_fields=label_fields, label_tag_keys=label_tag_keys,
-                    layers=layers, hidden_layers=hidden_layers,
-                    detail=detail, show_edges=show_edges)
-    view = ctx["view"]
+                    view=view)
     # 6.4: a level that asks for a legend gets one; "network" leaves the choice
     # to the caller (its table entry is None).
     if view["legend"] is not None:
@@ -1758,9 +1781,19 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     d = DrawioBuilder(page_name=page_name or f"{subject} Architecture", style_profile=style_profile,
                       attachment_style=ctx["attachment_style"],
                       max_label_lines=view["line_budget"])
+    edge_mix = {}
+    for e in model.get("edges") or []:
+        kind = str(e.get("discovery") or "association")
+        edge_mix[kind] = edge_mix.get(kind, 0) + 1
     d.layout_info = {"topology": topo, "warnings": list(warnings), "drg_style": {},
                      "locations": ctx["locations"], "view": view,
-                     "layers": {"enabled": [], "hidden": [], "cells": {}}}
+                     "layers": {"enabled": [], "hidden": [], "cells": {}},
+                     "filter": {k: filter_report[k] for k in
+                                ("include", "exclude", "items_kept", "items_dropped",
+                                 "edges_dropped", "containers_dropped")},
+                     "pruned": {"items": filter_report["pruned_items"],
+                                "services": filter_report["pruned_services"]},
+                     "edges": edge_mix}
     reg = _Registry()
 
     if title:
@@ -1982,6 +2015,10 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         layer_name = _edge_layer(e.get("kind"))
         if layer_name in layer_ids:
             kwargs["parent"] = layer_ids[layer_name]
+        if view["annotate_discovery"]:
+            # V8: never a style. The provenance goes in the tooltip only, so the
+            # four line styles keep the four meanings the guidelines give them.
+            kwargs["tooltip"] = f"Discovered by: {e.get('discovery') or 'association'}"
         if "dashed" in e:
             kwargs["dashed"] = e["dashed"]            # explicit override keeps the profile look
         else:
@@ -2067,6 +2104,18 @@ def main(argv=None) -> int:
                          "connector labels), application, network (default) or engineering")
     ap.add_argument("--no-edges", dest="show_edges", action="store_false", default=None,
                     help="draw no model connectors at all (the inventory view)")
+    ap.add_argument("--filter", action="append", default=None, metavar="EXPR",
+                    help="keep only what matches: '[!]<dimension>[:<key>]<op><value>[,<value>]' "
+                         f"over {','.join(ov.FILTER_DIMENSIONS)}, with <op> '=' (exact) or "
+                         "'~' (substring). Repeatable; a leading '!' excludes; expressions AND "
+                         "across dimensions and OR within one")
+    ap.add_argument("--mode", default=None, choices=ov.MODES,
+                    help="all (default here) or participating (only what takes part in the "
+                         "architecture)")
+    ap.add_argument("--discovery", default=None, metavar="K,K",
+                    help=f"keep only edges discovered this way: {','.join(ov.DISCOVERY_KINDS)}")
+    ap.add_argument("--annotate-discovery", action="store_true", default=None,
+                    help="put each connector's discovery method in its tooltip (never in its style)")
     args = ap.parse_args(argv)
     model = load_model(args.model)
     subject = model.get("subject") or "Architecture"
@@ -2079,7 +2128,8 @@ def main(argv=None) -> int:
                   label_mode=args.label_mode, label_fields=args.label_fields,
                   label_tag_keys=args.label_tag_keys, layers=args.layers,
                   hidden_layers=args.hidden_layers, detail=args.detail,
-                  show_edges=args.show_edges)
+                  show_edges=args.show_edges, filter_spec=args.filter, mode=args.mode,
+                  discovery=args.discovery, annotate_discovery=args.annotate_discovery)
     return 0
 
 
