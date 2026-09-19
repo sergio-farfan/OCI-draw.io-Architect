@@ -553,7 +553,11 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
                     _expect(errors, gw.get("label"), str, f"{gp}.label")
                     _expect(errors, gw.get("address"), (str, type(None)), f"{gp}.address")
                     if "peer" in gw:
-                        _expect(errors, gw["peer"], (str, type(None)), f"{gp}.peer")
+                        if (_expect(errors, gw["peer"], (str, type(None)), f"{gp}.peer")
+                                and gw["peer"] is not None
+                                and gw["peer"] not in addresses and gw["peer"] not in vcn_keys):
+                            errors.append(f"{gp}.peer: {gw['peer']!r} is not an address or a VCN name "
+                                          f"in the model")
 
     if _expect(errors, model.get("services"), list, "services"):
         for ii, item in enumerate(model["services"]):
@@ -657,6 +661,10 @@ def select_vcn(model: dict, name: str) -> bool:
         drg["attachments"] = [a for a in drg.get("attachments") or []
                               if a.get("type") != "vcn" or a.get("vcn") in keep_vcn]
     keep = set(model_addresses(model))
+    for vcn in model["vcns"]:                     # a peer LPG in a dropped VCN no longer exists
+        for g in vcn.get("gateways") or []:
+            if g.get("peer") and g["peer"] not in keep and g["peer"] not in keep_vcn:
+                g["peer"] = None
     model["edges"] = [e for e in model["edges"] if e["source"] in keep and e["target"] in keep]
     return True
 

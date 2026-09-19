@@ -748,6 +748,19 @@ class HelperTests(unittest.TestCase):
         self.assertTrue(pt.select_vcn(model, "spoke"))                       # unique substring
         self.assertEqual(model["subject"], "vcn-spoke-app")
 
+    def test_select_vcn_clears_a_peer_pointing_at_a_pruned_lpg(self):
+        """A42: --vcn drops the peer VCN, so its LPG address is gone from the model."""
+        model = pt.parse_terraform_dir(FIXTURES / "hub_spoke")
+        self.assertTrue(pt.select_vcn(model, "vcn-hub"))
+        peers = [g.get("peer") for v in model["vcns"] for g in v["gateways"]]
+        self.assertEqual(peers, [None])
+        self.assertEqual(pt.validate_model(model), [])
+
+    def test_validate_model_rejects_an_unresolvable_peer(self):
+        model = pt.parse_terraform_dir(FIXTURES / "hub_spoke")
+        model["vcns"][0]["gateways"][0]["peer"] = "oci_core_local_peering_gateway.ghost"
+        self.assertTrue(any(".peer:" in p and "ghost" in p for p in pt.validate_model(model)))
+
     def test_validate_model_reports_violations(self):
         model = pt.parse_terraform_dir(FIXTURES / "three_tier")
         self.assertEqual(pt.validate_model(model), [])
