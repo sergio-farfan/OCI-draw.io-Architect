@@ -169,6 +169,22 @@ WRAP_HINT = "​"   # zero-width space: a break opportunity inside a long identi
 CHAR_W_RATIO = 0.56    # estimated mean glyph width as a fraction of the font size
 ICON_FOOTPRINT_H = ICON_H + LABEL_GAP + LABEL_H   # 142
 MAX_LABEL_LINES = 3
+# v1.5.0 label modes (spec 6.3 / V6): a detailed caption grows the caption BOX,
+# never the slot width, so ICON_W / LABEL_W / COL_W and every container width
+# formula are untouched. The box is sized from the FIELD count, and any field
+# long enough to wrap at LABEL_W is charged an extra line, so the four-field
+# detailed preset routinely renders six lines. 6 * LABEL_LINE_H + 4 = 88 px is
+# add_icon's own auto-grow height for six lines and clears rule 5's height
+# escape (6 * 11 * 1.25 = 82.5 px), so a detailed diagram validates under the
+# default max_label_lines instead of shipping a silently clipped caption -
+# rule-5 findings are warnings and are never promoted to errors.
+LABEL_H_DETAILED = 88
+LABEL_LINE_BUDGET = {"minimal": 2, "network": 3, "detailed": 5}
+
+
+def icon_footprint_h(label_h: float = LABEL_H) -> float:
+    """Slot + gap + caption height for a given caption box (ICON_FOOTPRINT_H by default)."""
+    return ICON_H + LABEL_GAP + float(label_h)
 
 # Layout defaults shared with the skill's layout recipe
 PAD = 20        # inner padding / outer page margin
@@ -1449,10 +1465,17 @@ def validate_registry(registry: dict, page: str = "", strict: bool = False,
         # straddles must still flag the caption.
         drg_owner_box = boxes.get(owner_id) if (owner is not None and _is_drg_icon(owner)) else None
         is_drg = _is_drg_icon(le)
+        # 6.2 / V2: a badge moved onto a view layer is no longer a descendant
+        # of the subnet or icon it decorates, so the ancestor test below can no
+        # longer clear it. Its declared host does: a badge is not foreign to a
+        # container that IS its host, or that holds it.
+        badge_host = _badge_host(le)
         foreign = []
         for gid, gt in network_groups:
             gb = boxes[gid]
             if not gb.contains(lb, tol=FOREIGN_TOL):
+                continue
+            if badge_host and (badge_host == gid or _is_ancestor(registry, gid, badge_host)):
                 continue
             if drg_owner_box is not None and gt == "vcn" and gb.contains(drg_owner_box, tol=FOREIGN_TOL):
                 continue
@@ -1586,7 +1609,8 @@ class DrawioBuilder:
     _PORTS = {"R": (1.0, 0.5), "L": (0.0, 0.5), "T": (0.5, 0.0), "B": (0.5, 1.0)}
 
     def __init__(self, page_name="Architecture", width=1600, height=1100,
-                 style_profile="default", font_family=None, attachment_style=None):
+                 style_profile="default", font_family=None, attachment_style=None,
+                 max_label_lines=MAX_LABEL_LINES):
         if style_profile not in STYLE_PROFILES:
             raise ValueError(f"Unknown style_profile {style_profile!r}; choose from {sorted(STYLE_PROFILES)}")
         self.profile_name = style_profile
@@ -1596,6 +1620,11 @@ class DrawioBuilder:
         self.attachment_style = str(attachment_style or self.profile["attachment_style"]).strip().lower()
         attachment_kind_style(self.attachment_style)
         self.font = font_family or FONT_STACK
+        # 6.3: the caption line ceiling is a property of the LABEL MODE, so a
+        # detailed document raises it for its own validate() while the file
+        # gate (validate_file / check_overlaps.py) keeps the default - the
+        # detailed caption box is tall enough to pass rule 5 on height alone.
+        self.max_label_lines = int(max_label_lines)
         self._group_styles = _build_group_styles(self.profile, self.font)
         self._cell_id = 1
         self._ids = set()
@@ -1705,6 +1734,24 @@ class DrawioBuilder:
                             "parent": "0", "page": self._page_idx, "label": str(name)}
         self.page["layers"].append(cid)
         return cid
+
+    def set_base_layer_name(self, name: str) -> str:
+        """Name the page's background layer (cell "1"); returns "1".
+
+        draw.io emits the background layer without a value and shows it as an
+        unnamed row in the layers panel. The view recipe names it ``Network``
+        (spec 6.2 step 1) so every row in the panel reads as a view layer.
+        """
+        for el in self.root:
+            if el.tag == "mxCell" and el.get("id") == "1":
+                el.set("value", str(name))
+                break
+        self.page["base_layer_name"] = str(name)
+        return "1"
+
+    def layer_ids(self) -> list:
+        """The current page's layer ids, base layer first (``page["layers"]``)."""
+        return list(self.page["layers"])
 
     # -- ids / registry ------------------------------------------------------
     def _new_id(self, key=None) -> str:
@@ -1894,7 +1941,7 @@ class DrawioBuilder:
     def add_icon(self, label, icon_key, x, y, parent="1", w=None, h=None,
                  metadata=None, tooltip=None, key=None, label_w=None, label_h=None,
                  raw_html=False, font_size=None, link=None, label_fill=None,
-                 caption_above=False) -> str:
+                 caption_above=False, style_extra="") -> str:
         """Add an OCI icon with a caption below. Returns the icon cell id.
 
         (x, y) is the top-left of a ICON_W x ICON_H slot; the glyph is fitted
@@ -1937,6 +1984,7 @@ class DrawioBuilder:
             "shape=image;verticalLabelPosition=bottom;verticalAlign=top;"
             f"imageAspect=1;aspect=fixed;{role}image={data_uri};"
         )
+        style = _merge_style(style, style_extra)
         cid = self._emit_vertex("", style, parent, cell_x, cell_y, cell_w, cell_h,
                                 metadata=metadata, tooltip=tooltip,
                                 cid=self._new_id(key) if key is not None else None, link=link)
@@ -2023,7 +2071,7 @@ class DrawioBuilder:
 
     # -- badges ----------------------------------------------------------------
     def add_badge(self, icon_key, cx, cy, parent="1", host=None, size=BADGE_SIZE,
-                  key=None, metadata=None, tooltip=None) -> str:
+                  key=None, metadata=None, tooltip=None, style_extra="") -> str:
         """Add a caption-less half-size icon centred on (cx, cy) in parent coordinates.
 
         Badges mark route tables / security lists on a subnet's top-right corner
@@ -2038,10 +2086,10 @@ class DrawioBuilder:
         data_uri, _nw, _nh = _load_svg(icon_key)
         x, y = cx - size / 2, cy - size / 2
         host_id = "" if host is None else str(host)
-        style = (
+        style = _merge_style(
             "shape=image;verticalLabelPosition=bottom;verticalAlign=top;imageAspect=1;aspect=fixed;"
-            f"ociRole=badge;ociHost={host_id};image={data_uri};"
-        )
+            f"ociRole=badge;ociHost={host_id};image={data_uri};",
+            style_extra)
         cid = self._emit_vertex("", style, parent, x, y, size, size, metadata=metadata, tooltip=tooltip,
                                 cid=self._new_id(key) if key is not None else None)
         self._register(cid, "icon", x, y, size, size, parent, label="", icon_key=icon_key,
@@ -2193,11 +2241,14 @@ class DrawioBuilder:
                    key=None) -> str:
         """Add a legend box explaining edge styles and container types.
 
-        entries: list of ("edge", <style>, text), ("group", <group_type>, text)
-        or ("badge", <icon key>, text) where <style> is one of the
-        EDGE_KIND_STYLES names ("data", "control", "association", "attachment")
-        or a legacy alias ("solid", "dashed", "accent", "purple", "dotted",
-        "thin"). A badge row draws the glyph at LEGEND_BADGE_SIZE.
+        entries: list of ("edge", <style>, text), ("group", <group_type>, text),
+        ("badge", <icon key>, text), ("layer", <layer name>, text) or
+        ("note", "", text) where <style> is one of the EDGE_KIND_STYLES names
+        ("data", "control", "association", "attachment") or a legacy alias
+        ("solid", "dashed", "accent", "purple", "dotted", "thin"). A badge row
+        draws the glyph at LEGEND_BADGE_SIZE; a layer row draws a neutral
+        dashed chip; a note row is a plain full-width line that grows to as
+        many lines as its text needs, and the legend box grows with it.
         """
         parent = self._check_parent(parent, "add_legend")
         if entries is None:
@@ -2212,11 +2263,23 @@ class DrawioBuilder:
                 ("group", "oracle_services_network", "Oracle Services Network"),
             ]
         row_h = 22
-        h = 30 + row_h * len(entries) + 8
+        # 7.7: every row is row_h tall except a "note" row (6.5's filter report),
+        # which wraps to as many lines as its text needs; the pitch and the box
+        # height are therefore computed per row.
+        row_hs = []
+        for _kind, _spec, _text in entries:
+            if _kind == "note":
+                n = label_lines(escape_label(_text), width - 24, 10)
+                row_hs.append(max(row_h, int(math.ceil(n * 10 * 1.25)) + 4))
+            else:
+                row_hs.append(row_h)
+        h = 30 + sum(row_hs) + 8
         gid = self.add_group(title, x, y, width, h, parent=parent, group_type="other",
                              key=key, label_position="left")
+        ry = 30
         for i, (kind, spec, text) in enumerate(entries):
-            ry = 30 + i * row_h
+            rh = row_hs[i]
+            tx, tw = 60, width - 66
             if kind == "edge":
                 kind_name = _LEGACY_LEGEND_ALIASES.get(spec, spec)
                 if kind_name not in EDGE_KIND_STYLES:
@@ -2243,6 +2306,19 @@ class DrawioBuilder:
                 # B07: the security-construct badges the recipe draws, at a size
                 # that fits a 22 px row, on the swatch's x centre.
                 self.add_badge(spec, 32, ry + row_h / 2, parent=gid, size=LEGEND_BADGE_SIZE)
+            elif kind == "layer":
+                # 7.7: a view layer (spec 6.2). The swatch is deliberately not a
+                # container style - a layer is not a drawn box - so it is the
+                # neutral dashed chip the layers panel shows beside a row.
+                lstyle = (f"rounded=1;arcSize=20;strokeWidth=1;dashed=1;dashPattern=3 3;"
+                          f"fillColor={COLORS['air']};strokeColor={COLORS['neutral_4']};"
+                          f"fontFamily={self.font};")
+                sw_id = self._emit_vertex("", lstyle, gid, 14, ry + 3, 36, 16)
+                self._register(sw_id, "other", 14, ry + 3, 36, 16, gid, label="layer swatch")
+            elif kind == "note":
+                # 7.7: a plain full-width line with no swatch, e.g. the filter
+                # report of 6.5. It keeps the row's own (possibly grown) height.
+                tx, tw = 14, width - 20
             else:
                 gstyle = self._group_styles.get(spec, self._group_styles["other"])
                 tokens = _style_tokens(gstyle)
@@ -2250,8 +2326,9 @@ class DrawioBuilder:
                     tokens.pop(k, None)
                 sw_id = self._emit_vertex("", _tokens_to_style(tokens), gid, 14, ry + 3, 36, 16)
                 self._register(sw_id, "other", 14, ry + 3, 36, 16, gid, label="swatch")
-            self.add_text(escape_label(text), 60, ry, width - 66, row_h, parent=gid,
+            self.add_text(escape_label(text), tx, ry, tw, rh, parent=gid,
                           font_size=10, raw_html=True)
+            ry += rh
         return gid
 
     # -- edges -----------------------------------------------------------------
@@ -2295,7 +2372,7 @@ class DrawioBuilder:
     def add_edge(self, source, target, label="", parent=None, dashed=False, color=None,
                  style_extra="", exit_x=None, exit_y=None, entry_x=None, entry_y=None,
                  waypoints=None, orthogonal=None, route=None, label_pos=None, arrow=None,
-                 key=None, raw_html=False, kind=None) -> str:
+                 key=None, raw_html=False, kind=None, tooltip=None, metadata=None) -> str:
         """Connect two cells. Returns the edge id.
 
         Routing modes (``route``):
@@ -2382,8 +2459,22 @@ class DrawioBuilder:
             if entry_x is not None:
                 style += f"entryX={_fmt_num(entry_x)};entryY={_fmt_num(entry_y)};entryDx=0;entryDy=0;"
 
-        cell = ET.SubElement(self.root, "mxCell", id=cid, value=text, style=style,
-                             edge="1", parent=parent, source=source, target=target)
+        if tooltip is not None or metadata:
+            obj_attrs = {"id": cid, "label": text, "placeholders": "1"}
+            if tooltip is not None:
+                obj_attrs["tooltip"] = str(tooltip)
+            for mkey, mval in (metadata or {}).items():
+                if not self._METADATA_KEY_RE.fullmatch(str(mkey)) or mkey in self._RESERVED_METADATA_KEYS:
+                    raise ValueError(
+                        f"Invalid metadata key {mkey!r}: must match ^[A-Za-z_][A-Za-z0-9_-]*$ "
+                        f"and not be one of {sorted(self._RESERVED_METADATA_KEYS)}")
+                obj_attrs[str(mkey)] = str(mval)
+            obj = ET.SubElement(self.root, "object", **obj_attrs)
+            cell = ET.SubElement(obj, "mxCell", style=style, edge="1", parent=parent,
+                                 source=source, target=target)
+        else:
+            cell = ET.SubElement(self.root, "mxCell", id=cid, value=text, style=style,
+                                 edge="1", parent=parent, source=source, target=target)
         geom = ET.SubElement(cell, "mxGeometry", relative="1")
         geom.set("as", "geometry")
         if label_pos is not None:
@@ -2959,7 +3050,8 @@ class DrawioBuilder:
         multi = len(self._pages) > 1
         for p in self._pages:
             registry = build_cell_registry(p["root"])
-            e, w = validate_registry(registry, page=p["name"] if multi else "", strict=strict)
+            e, w = validate_registry(registry, page=p["name"] if multi else "", strict=strict,
+                                     max_label_lines=self.max_label_lines)
             errors.extend(e)
             warnings.extend(w)
             _, _, right, bottom = self._content_bbox_registry(registry)
@@ -3012,6 +3104,7 @@ __all__ = [
     "DrawioBuilder", "COLORS", "FONT_STACK", "ICON_MAP", "ICON_ALIASES", "GROUP_TYPES",
     "STYLE_PROFILES", "EDGE_KIND_STYLES", "ICON_W", "ICON_H", "GLYPH_W", "GLYPH_H", "LABEL_GAP", "LABEL_W",
     "LABEL_H", "LABEL_FONT_SIZE", "LABEL_LINE_H", "WRAP_HINT", "CHAR_W_RATIO", "ICON_FOOTPRINT_H",
+    "LABEL_H_DETAILED", "LABEL_LINE_BUDGET", "icon_footprint_h",
     "BADGE_SIZE", "BADGE_GAP", "BADGE_RESERVE", "LEGEND_BADGE_SIZE",
     "ATTACHMENT_STYLES", "attachment_kind_style",
     "PAD", "ROW1_Y",
