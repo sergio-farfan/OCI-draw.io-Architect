@@ -125,7 +125,10 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import detect_settings as ds  # noqa: E402
-from oci_topology import HUB_KINDS, HUB_TITLES  # noqa: E402
+from oci_topology import (  # noqa: E402
+    ATTACHMENT_STYLE_MODES, GATEWAY_EDGES, GATEWAY_SIDES, GROUP_BOX_TYPES, GROUP_SCOPES,
+    HUB_KINDS, HUB_TITLES, LOCATION_MODES, SUBNET_LABEL_MODES,
+)
 
 SCHEMA_VERSION = 2
 TIERS = ("lb", "app", "compute", "mgmt", "data", "other")
@@ -232,6 +235,7 @@ SUBNET_TYPE = "oci_core_subnet"
 COMPARTMENT_TYPE = "oci_identity_compartment"
 DRG_TYPE = "oci_core_drg"
 DRG_ATTACHMENT_TYPE = "oci_core_drg_attachment"
+DRG_ROUTE_TABLE_TYPE = "oci_core_drg_route_table"
 GATEWAY_TYPES: Dict[str, str] = {
     "oci_core_internet_gateway": "igw",
     "oci_core_nat_gateway": "nat",
@@ -269,6 +273,8 @@ LB_CHILD_TYPES = LB_BACKEND_TYPES | LB_LISTENER_TYPES | frozenset({
     "oci_load_balancer_certificate", "oci_load_balancer_hostname",
     "oci_load_balancer_path_route_set", "oci_load_balancer_rule_set",
 })
+OKE_CLUSTER_TYPE = "oci_containerengine_cluster"
+OKE_NODE_POOL_TYPE = "oci_containerengine_node_pool"
 COMPUTE_TYPES = frozenset({"oci_core_instance", "oci_containerengine_node_pool", "oci_core_instance_pool"})
 DB_PORTS: Dict[str, str] = {
     "oci_database_autonomous_database": "1522",
@@ -316,6 +322,8 @@ def new_model(subject: str = "OCI Architecture", region: Optional[str] = None,
         "vcns": [],
         "services": [],
         "compartments": [],
+        "internet": None,
+        "third_party": [],
         "edges": [],
     }
 
@@ -338,6 +346,15 @@ def new_item(icon: str, label: str, rtype: str, address: Optional[str], metadata
 
 def new_gateway(gtype: str, label: str, address: Optional[str]) -> dict:
     return {"icon": GATEWAY_ICONS[gtype], "type": gtype, "label": label, "address": address}
+
+
+def new_group(gtype: str, label: str, members: List[str], key: Optional[str] = None,
+              scope: str = "subnet") -> dict:
+    """A ``groups[]`` grouping box: ``items`` on a subnet, ``subnets`` on a VCN."""
+    if scope not in GROUP_SCOPES:
+        raise ValueError(f"new_group: scope must be one of {GROUP_SCOPES}, not {scope!r}")
+    return {"type": gtype, "label": label,
+            "items" if scope == "subnet" else "subnets": list(members), "key": key}
 
 
 def badge_ref(name: str, address: Optional[str] = None) -> dict:
@@ -454,6 +471,51 @@ def _validate_item(errors: List[str], item, path: str, with_metadata: bool, icon
         _validate_badge_refs(errors, item["nsgs"], f"{path}.nsgs")
 
 
+def _validate_location(errors: List[str], box, path: str, icon_keys) -> None:
+    """``internet`` / ``third_party[i]``: None or ``{"name"?, "items"?}`` (same item shape as the hub)."""
+    if box is None:
+        return
+    if not _expect(errors, box, dict, path):
+        return
+    _expect(errors, box.get("name"), (str, type(None)), f"{path}.name")
+    if "items" in box and _expect(errors, box["items"], list, f"{path}.items"):
+        for i, item in enumerate(box["items"]):
+            _validate_item(errors, item, f"{path}.items[{i}]", False, icon_keys)
+
+
+def _validate_groups(errors: List[str], container, path: str, scope: str) -> None:
+    """``vcn.groups[]`` / ``subnet.groups[]``: type, label, members and optional key.
+
+    A member is resolved **inside its own container** (spec section 5): a subnet
+    group names items of that subnet, a VCN group names subnets of that VCN. A
+    model-wide check would accept a box the layout cannot draw.
+    """
+    if "groups" not in container:
+        return
+    if not _expect(errors, container["groups"], list, f"{path}.groups"):
+        return
+    if scope == "subnet":
+        member_key, what = "items", "an item of this subnet"
+        known = {i.get("address") for i in _entries(container.get("items"))
+                 if isinstance(i, dict)} - {None}
+    else:
+        member_key, what = "subnets", "a subnet of this VCN"
+        known = {s.get(k) for s in _entries(container.get("subnets")) if isinstance(s, dict)
+                 for k in ("name", "address")} - {None}
+    for gi, grp in enumerate(container["groups"]):
+        gp = f"{path}.groups[{gi}]"
+        if not _expect(errors, grp, dict, gp):
+            continue
+        if grp.get("type") not in GROUP_BOX_TYPES:
+            errors.append(f"{gp}.type: {grp.get('type')!r} not in {GROUP_BOX_TYPES}")
+        _expect(errors, grp.get("label"), str, f"{gp}.label")
+        _expect(errors, grp.get("key"), (str, type(None)), f"{gp}.key")
+        if _expect(errors, grp.get(member_key), list, f"{gp}.{member_key}"):
+            for mi, member in enumerate(grp[member_key]):
+                if _expect(errors, member, str, f"{gp}.{member_key}[{mi}]") and member not in known:
+                    errors.append(f"{gp}.{member_key}[{mi}]: {member!r} is not {what}")
+
+
 def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str]:
     """Return a list of schema violations (empty when ``model`` conforms).
 
@@ -474,6 +536,12 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
         _expect(errors, model["source"].get("path"), (str, type(None)), "source.path")
     if model.get("drg_style") not in DRG_STYLES:
         errors.append(f"drg_style: {model.get('drg_style')!r} not in {DRG_STYLES}")
+    for key, allowed in (("locations", LOCATION_MODES), ("gateway_edge", GATEWAY_EDGES),
+                         ("subnet_label", SUBNET_LABEL_MODES), ("attachment_style", ATTACHMENT_STYLE_MODES)):
+        if key in model and model[key] is not None and model[key] not in allowed:
+            errors.append(f"{key}: {model[key]!r} not in {allowed}")
+    if "show_compartments" in model and model["show_compartments"] is not None:
+        _expect(errors, model["show_compartments"], bool, "show_compartments")
     # A41: check the container types before collecting addresses, which walks them.
     drgs_ok = _expect(errors, model.get("drgs"), list, "drgs")
     vcns_ok = _expect(errors, model.get("vcns"), list, "vcns")
@@ -488,6 +556,9 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
             _expect(errors, drg.get("name"), str, f"{dp}.name")
             _expect(errors, drg.get("address"), str, f"{dp}.address")
             _expect(errors, drg.get("label"), str, f"{dp}.label")
+            if "route_table" in drg:
+                _validate_badge_refs(errors, drg["route_table"], f"{dp}.route_table",
+                                     single=not isinstance(drg["route_table"], list))
             if _expect(errors, drg.get("attachments"), list, f"{dp}.attachments"):
                 for ai, att in enumerate(drg["attachments"]):
                     ap = f"{dp}.attachments[{ai}]"
@@ -531,6 +602,7 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
             _expect(errors, vcn.get("address"), str, f"{vp}.address")
             _expect(errors, vcn.get("cidr"), (str, type(None)), f"{vp}.cidr")
             _expect(errors, vcn.get("compartment"), (str, type(None)), f"{vp}.compartment")
+            _validate_groups(errors, vcn, vp, "vcn")
             if _expect(errors, vcn.get("subnets"), list, f"{vp}.subnets"):
                 for si, sn in enumerate(vcn["subnets"]):
                     sp = f"{vp}.subnets[{si}]"
@@ -542,6 +614,7 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
                     _expect(errors, sn.get("public"), bool, f"{sp}.public")
                     if sn.get("tier") not in TIERS:
                         errors.append(f"{sp}.tier: {sn.get('tier')!r} not in {TIERS}")
+                    _validate_groups(errors, sn, sp, "subnet")
                     _validate_badge_refs(errors, sn.get("route_table"), f"{sp}.route_table", single=True)
                     if "security_lists" in sn:
                         _validate_badge_refs(errors, sn["security_lists"], f"{sp}.security_lists")
@@ -563,6 +636,8 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
                         errors.append(f"{gp}.icon: {gw.get('icon')!r} does not match type {gw['type']!r}")
                     _expect(errors, gw.get("label"), str, f"{gp}.label")
                     _expect(errors, gw.get("address"), (str, type(None)), f"{gp}.address")
+                    if "side" in gw and gw["side"] not in GATEWAY_SIDES:
+                        errors.append(f"{gp}.side: {gw['side']!r} not in {GATEWAY_SIDES}")
                     if "peer" in gw:
                         if (_expect(errors, gw["peer"], (str, type(None)), f"{gp}.peer")
                                 and gw["peer"] is not None
@@ -574,18 +649,40 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
         for ii, item in enumerate(model["services"]):
             _validate_item(errors, item, f"services[{ii}]", True, keys)
     if _expect(errors, model.get("compartments"), list, "compartments"):
-        for ci, name in enumerate(model["compartments"]):
-            _expect(errors, name, str, f"compartments[{ci}]")
+        # section 5: the list widened from [str] to [str] | [{"name", "parent"?, "vcns"?}],
+        # both forms mixable - every 1.3.0 value stays valid.
+        for ci, entry in enumerate(model["compartments"]):
+            cp = f"compartments[{ci}]"
+            if isinstance(entry, dict):
+                _expect(errors, entry.get("name"), str, f"{cp}.name")
+                _expect(errors, entry.get("parent"), (str, type(None)), f"{cp}.parent")
+                if "vcns" in entry and _expect(errors, entry["vcns"], list, f"{cp}.vcns"):
+                    for vi, vname in enumerate(entry["vcns"]):
+                        _expect(errors, vname, str, f"{cp}.vcns[{vi}]")
+            else:
+                _expect(errors, entry, str, cp)
+    _validate_location(errors, model.get("internet"), "internet", keys)
+    if _expect(errors, model.get("third_party", []), list, "third_party"):
+        for ti, box in enumerate(model.get("third_party") or []):
+            _validate_location(errors, box, f"third_party[{ti}]", keys)
     if "warnings" in model and _expect(errors, model["warnings"], list, "warnings"):
         for wi, text in enumerate(model["warnings"]):
             _expect(errors, text, str, f"warnings[{wi}]")
+    # G8: a grouping box is addressable by its groups[].key, which is a cell id
+    # rather than a model address, so an edge may terminate on it.
+    group_keys = {g.get("key")
+                  for v in _entries(model.get("vcns")) if isinstance(v, dict)
+                  for c in [v] + _entries(v.get("subnets")) if isinstance(c, dict)
+                  for g in _entries(c.get("groups")) if isinstance(g, dict)
+                  and isinstance(g.get("key"), str)}
     if _expect(errors, model.get("edges"), list, "edges"):
         for ei, edge in enumerate(model["edges"]):
             ep = f"edges[{ei}]"
             if not _expect(errors, edge, dict, ep):
                 continue
             for end in ("source", "target"):
-                if _expect(errors, edge.get(end), str, f"{ep}.{end}") and edge[end] not in addresses:
+                if (_expect(errors, edge.get(end), str, f"{ep}.{end}")
+                        and edge[end] not in addresses and edge[end] not in group_keys):
                     errors.append(f"{ep}.{end}: {edge[end]!r} is not an address in the model")
             _expect(errors, edge.get("label"), str, f"{ep}.label")
             if edge.get("kind") not in EDGE_KINDS:
@@ -1443,6 +1540,51 @@ class ModelBuilder:
                     "vcn", f"{drg.address}@{vcn['address']}", f"VCN attachment\n{vcn['name']}",
                     vcn=vcn["name"]), vcn, True)
 
+    def _build_drg_route_tables(self) -> None:
+        """``oci_core_drg_route_table`` -> ``drgs[].route_table``, a list in address order."""
+        for r in sorted((r for r in self.resources if r.rtype == DRG_ROUTE_TABLE_TYPE),
+                        key=lambda r: r.address):
+            drg = self.first_ref(r, ("drg_id",), DRG_TYPE)
+            if drg is not None:
+                addr = drg.address
+            elif not self._declares(r, ("drg_id",)):
+                self.warn(f"{r.address}: no drg_id; not drawn as a DRG route table")
+                continue
+            elif len(self.drg_by_addr) == 1:
+                addr = next(iter(self.drg_by_addr))
+                self.warn(f"{r.address}: drg_id does not resolve; attaching to the only DRG "
+                          f"{self.drg_by_addr[addr]['name']}")
+            else:
+                self.warn(f"{r.address}: drg_id does not resolve and the model has "
+                          f"{len(self.drg_by_addr)} DRGs; no route table")
+                continue
+            entry = self.drg_by_addr[addr]
+            entry.setdefault("route_table", []).append(badge_ref(r.label("DRG route table"), r.address))
+
+    def _build_oke_groups(self) -> None:
+        """A cluster and the node pools sharing its subnet become one ``oke_cluster`` group box."""
+        for r in self.resources:
+            if r.rtype != OKE_CLUSTER_TYPE or r.address not in self.item_place:
+                continue
+            subnet_addr = self.item_place[r.address][1]
+            if subnet_addr is None or subnet_addr not in self.subnet_by_addr:
+                continue
+            members = [r.address]
+            for pool in self.resources:
+                if pool.rtype != OKE_NODE_POOL_TYPE or pool.address not in self.item_place:
+                    continue
+                cluster = self.first_ref(pool, ("cluster_id",), OKE_CLUSTER_TYPE)
+                if cluster is None or cluster.address != r.address:
+                    continue
+                if self.item_place[pool.address][1] == subnet_addr:
+                    members.append(pool.address)
+            if len(members) < 2:
+                continue
+            label = self.item_index[r.address]["label"].split("\n")[0]
+            subnet = self.subnet_by_addr[subnet_addr]
+            subnet.setdefault("groups", []).append(
+                new_group("oke_cluster", label, members, key=f"oke:{label}"))
+
     def _add_vcn_attachment(self, drg: dict, att: dict, vcn: dict, derived_label: bool) -> None:
         """Append a VCN attachment and remember the VCN dict for the final name resolution."""
         drg["attachments"].append(att)
@@ -1777,6 +1919,8 @@ class ModelBuilder:
             self.model["subject"] = self.model["vcns"][0]["name"]
         if self.model["compartments"] and self.model["compartment"] is None:
             self.model["compartment"] = self.model["compartments"][0]
+        if any(g.get("type") == "igw" for v in self.model["vcns"] for g in v["gateways"]):
+            self.model["internet"] = {"name": "Internet", "items": []}
         self._clear_dangling_peers()
         if self.warnings:                      # absent when there is nothing to say
             self.model["warnings"] = list(self.warnings)
@@ -1787,9 +1931,11 @@ class ModelBuilder:
         self._build_subnets()
         self._build_gateways()
         self._build_drgs()
+        self._build_drg_route_tables()
         self._build_hub()
         self._build_drg_links()
         self._build_items()
+        self._build_oke_groups()
         self._build_vnic_nsgs()
         self._build_edges()
         self._merge_loose()
@@ -1847,9 +1993,13 @@ def summarise(model: dict) -> str:
     drgs = model.get("drgs") or []
     n_att = sum(len(d.get("attachments") or []) for d in drgs)
     warns = model.get("warnings") or []
+    n_comp = len(model.get("compartments") or [])
+    n_grp = (sum(len(v.get("groups") or []) for v in model["vcns"])
+             + sum(len(s.get("groups") or []) for v in model["vcns"] for s in v["subnets"]))
     return (f"{model['subject']}: {len(model['vcns'])} VCN(s), {n_sub} subnet(s), {n_items} subnet item(s), "
             f"{n_svc} service(s), {n_gw} gateway(s), {len(drgs)} DRG(s) / {n_att} attachment(s), "
-            f"{hub} hub item(s), {len(model['edges'])} edge(s)"
+            f"{hub} hub item(s), {n_comp} compartment(s), {n_grp} group box(es), "
+            f"{len(model['edges'])} edge(s)"
             + (f", {len(warns)} warning(s)" if warns else ""))
 
 

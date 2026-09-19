@@ -229,8 +229,27 @@ class HelperTests(unittest.TestCase):
                                     "network-security-group-ids": ["ocid1.networksecuritygroup.oc1.eu-frankfurt-1.n"]})
         self.assertEqual(norm["refs"]["network_security_group_ids"], ["ocid1.networksecuritygroup.oc1.eu-frankfurt-1.n"])
 
+    def test_drg_route_table_entities_and_references_are_carried(self):
+        """Section 8: no new CLI call - the route table arrives in the search bundle."""
+        self.assertEqual(qt.ENTITY_TF_TYPES["drgroutetable"], pt.DRG_ROUTE_TABLE_TYPE)
+        self.assertIn(("drg_route_table_id", "drg_route_table_id"), qt._REF_FIELDS)
+        self.assertIn(("cluster_id", "cluster_id"), qt._REF_FIELDS)
+        norm = qt.normalise_entity({
+            "type": "DrgRouteTable", "id": "ocid1.drgroutetable.oc1.eu-frankfurt-1.rt1",
+            "displayName": "drg-rt-vcn", "drgId": "ocid1.drg.oc1.eu-frankfurt-1.d1"})
+        self.assertEqual(norm["kind"], "drgroutetable")
+        self.assertEqual(norm["refs"]["drg_id"], ["ocid1.drg.oc1.eu-frankfurt-1.d1"])
+        att = qt.normalise_entity({
+            "type": "DrgAttachment", "id": "ocid1.drgattachment.oc1.eu-frankfurt-1.a1",
+            "drg-route-table-id": "ocid1.drgroutetable.oc1.eu-frankfurt-1.rt1"})
+        self.assertEqual(att["refs"]["drg_route_table_id"],
+                         ["ocid1.drgroutetable.oc1.eu-frankfurt-1.rt1"])
+
     def test_every_entity_type_maps_to_a_known_resource_type(self):
-        containers = {pt.VCN_TYPE, pt.SUBNET_TYPE, pt.COMPARTMENT_TYPE, pt.DRG_ATTACHMENT_TYPE}
+        # structural types never drawn as an item: containers, the DRG attachment box
+        # and the DRG route table (a badge fed through drgs[].route_table)
+        containers = {pt.VCN_TYPE, pt.SUBNET_TYPE, pt.COMPARTMENT_TYPE, pt.DRG_ATTACHMENT_TYPE,
+                      pt.DRG_ROUTE_TABLE_TYPE}
         for kind, rtype in qt.ENTITY_TF_TYPES.items():
             with self.subTest(kind=kind):
                 self.assertTrue(rtype in pt.RESOURCE_ICONS or rtype in containers, rtype)
