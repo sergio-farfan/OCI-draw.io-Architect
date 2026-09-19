@@ -475,6 +475,26 @@ class TestAddIconGeometry(TempDirMixin, unittest.TestCase):
         self.assertEqual(registry["adb-label"]["owner"], "adb")
         self.assertEqual(registry["genai-label"]["owner"], "genai")
 
+    def test_a_caption_less_icon_does_not_steal_the_caption_above_it(self):
+        """A label-less item (oci_layout defaults `label` to "") sitting under a
+        straddling gateway's caption must not re-own it: the stolen `owner`
+        would cancel the straddle exemption in validator rule 3."""
+        d = DrawioBuilder()
+        r = d.add_group("us-ashburn-1", 0, 0, 900, 600, group_type="region")
+        v = d.add_group("VCN: a (10.0.0.0/16)", 40, 100, 600, 400, parent=r, group_type="vcn")
+        d.add_icon("Service\nGateway", "service_gateway", -38, 50, parent=v,
+                   label_fill=db.COLORS["region_fill"], key="sgw")
+        d.add_icon("", "vm", 0, 200, parent=v, key="bare")
+        self.assertEqual(only_errors(d.validate()), [])
+        path = quiet_write(d, self.tmp / "caption_theft.drawio")
+        errors, _warnings, _pages, _containers = db.validate_file(path)
+        self.assertEqual([e for e in errors if not db.is_warning(e)], [])
+        registry = db.build_cell_registry(ET.parse(path).getroot().find("diagram/mxGraphModel/root"))
+        db._attach_captions(registry, db._abs_boxes(registry))
+        self.assertEqual(registry["sgw-label"]["owner"], "sgw")
+        self.assertEqual(registry["sgw"]["caption"], "Service Gateway")
+        self.assertIsNone(registry["bare"].get("caption"))
+
 
 # ---------------------------------------------------------------------------
 # 3. Escaping
