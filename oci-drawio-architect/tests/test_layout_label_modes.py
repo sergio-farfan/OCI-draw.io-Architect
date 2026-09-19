@@ -169,3 +169,110 @@ class EdgeLabelTests(unittest.TestCase):
         self.assertIn("443", [e["label"] for e in d._cells.values() if e["kind"] == "edge"])
         d2 = quiet(ol.build_diagram, model, label_mode="minimal")
         self.assertNotIn("443", [e["label"] for e in d2._cells.values() if e["kind"] == "edge"])
+
+
+# 6.3 "Per element" lists hub items alongside the workloads and the services,
+# so every item placed by _place_hub_items - the nested on-premises panel, the
+# page-level On-Premises box and the Internet / 3rd Party Cloud boxes - is
+# captioned from the mode's field list too. The CPE is also the only element
+# that reaches the private_ip field's metadata.ip_address fallback.
+CANVAS_MODEL = {
+    "subject": "canvas", "region": "us-ashburn-1", "locations": "outside",
+    "hub": {"name": "On-Premises", "link_label": "trunk", "items": [
+        {"icon": "cpe", "label": "Edge CPE", "address": "cpe",
+         "metadata": {"ip_address": "203.0.113.5", "compartment": "net-prod",
+                      "availability_domain": "Uocm:PHX-AD-1",
+                      "fault_domain": "FAULT-DOMAIN-2"}},
+        {"icon": "firewall", "label": "Edge Firewall", "address": "fw",
+         "metadata": {"ip_address": "203.0.113.6"}}]},
+    "internet": {"name": "Internet", "items": [
+        {"icon": "user", "label": "Users", "address": "usr",
+         "metadata": {"ip_address": "198.51.100.9"}}]},
+    "third_party": [{"name": "3rd Party Cloud", "items": [
+        {"icon": "vm", "label": "Partner VM", "address": "pvm",
+         "metadata": {"ip_address": "192.0.2.10", "compartment": "partner-cmp"}}]}],
+    "vcns": [{"name": "vcn-app", "cidr": "10.0.0.0/16", "subnets": [
+        {"name": "sn-app", "cidr": "10.0.2.0/24", "tier": "app", "public": False, "items": [
+            {"icon": "vm", "label": "App VM", "address": "vm"}]}]}],
+    "edges": [],
+}
+
+NESTED_HUB_MODEL = dict(CANVAS_MODEL, locations="nested", internet=None, third_party=[])
+
+
+class HubItemCaptionTests(unittest.TestCase):
+    def build(self, model=None, **over):
+        return quiet(ol.build_diagram, model or CANVAS_MODEL, **over)
+
+    def test_the_network_mode_captions_a_hub_item_with_its_ip(self):
+        """The private_ip field's metadata.ip_address fallback, which only a CPE reaches."""
+        self.assertEqual(caption_of(self.build(), "cpe"), "Edge CPE\n203.0.113.5")
+
+    def test_the_detailed_mode_captions_a_hub_item_in_full(self):
+        self.assertEqual(caption_of(self.build(label_mode="detailed"), "cpe"),
+                         "Edge CPE\n203.0.113.5\nAD-1 / FD-2\nCompartment: net-prod")
+
+    def test_the_minimal_mode_leaves_a_hub_item_at_its_name(self):
+        self.assertEqual(caption_of(self.build(label_mode="minimal"), "cpe"), "Edge CPE")
+
+    def test_the_internet_and_third_party_boxes_caption_their_items_too(self):
+        d = self.build()
+        self.assertEqual(caption_of(d, "usr"), "Users\n198.51.100.9")
+        self.assertEqual(caption_of(d, "pvm"), "Partner VM\n192.0.2.10")
+
+    def test_the_nested_on_premises_panel_captions_its_items_too(self):
+        d = self.build(NESTED_HUB_MODEL)
+        self.assertEqual(caption_of(d, "cpe"), "Edge CPE\n203.0.113.5")
+
+    def test_every_mode_validates_clean_and_strict_on_both_canvases(self):
+        for model, name in ((CANVAS_MODEL, "outside"), (NESTED_HUB_MODEL, "nested")):
+            for mode in ("minimal", "network", "detailed"):
+                d = self.build(model, label_mode=mode)
+                self.assertEqual([m for m in d.validate() if not db.is_warning(m)], [],
+                                 (name, mode))
+                self.assertEqual(d.check_overlaps(strict=True), [], (name, mode))
+
+
+class StructuralEdgeLabelTests(unittest.TestCase):
+    """6.3: the edge-label gate has no carve-out, so every labelled path obeys it."""
+
+    def edge_labels(self, **over):
+        d = quiet(ol.build_diagram, ATTACHMENT_MODEL, **over)
+        return {e["label"] for e in d._cells.values() if e["kind"] == "edge"}
+
+    def test_the_hub_link_label_follows_the_gate(self):
+        self.assertIn("trunk", {e["label"] for e in
+                                quiet(ol.build_diagram, CANVAS_MODEL)._cells.values()
+                                if e["kind"] == "edge"})
+        self.assertNotIn("trunk", {e["label"] for e in
+                                   quiet(ol.build_diagram, CANVAS_MODEL,
+                                         label_mode="minimal")._cells.values()
+                                   if e["kind"] == "edge"})
+
+    def test_the_drg_attachment_label_follows_the_gate(self):
+        """oci_topology.ATTACHMENT_LINK_LABELS is real text, not a structural blank."""
+        self.assertIn("Site-to-Site VPN", self.edge_labels())
+        self.assertNotIn("Site-to-Site VPN", self.edge_labels(label_mode="minimal"))
+
+    def test_the_connectors_themselves_are_still_drawn_in_the_minimal_mode(self):
+        kept = len([e for e in quiet(ol.build_diagram, ATTACHMENT_MODEL)._cells.values()
+                    if e["kind"] == "edge"])
+        dropped = len([e for e in quiet(ol.build_diagram, ATTACHMENT_MODEL,
+                                        label_mode="minimal")._cells.values()
+                       if e["kind"] == "edge"])
+        self.assertEqual(kept, dropped)
+
+
+ATTACHMENT_MODEL = {
+    "subject": "attachments", "region": "us-ashburn-1",
+    "hub": {"name": "On-Premises", "link_label": "trunk", "items": [
+        {"icon": "cpe", "label": "Edge CPE", "address": "cpe"},
+        {"icon": "firewall", "label": "Edge Firewall", "address": "fw"}]},
+    "drgs": [{"name": "DRG", "address": "drg", "drg_style": "box", "attachments": [
+        {"type": "ipsec", "name": "vpn-1", "target": "cpe", "address": "att-vpn"},
+        {"type": "vcn", "name": "vcn-app", "vcn": "vcn-app", "address": "att-vcn"}]}],
+    "vcns": [{"name": "vcn-app", "cidr": "10.0.0.0/16", "subnets": [
+        {"name": "sn-app", "cidr": "10.0.2.0/24", "tier": "app", "public": False, "items": [
+            {"icon": "vm", "label": "App VM", "address": "vm"}]}]}],
+    "edges": [],
+}
