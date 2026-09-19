@@ -105,7 +105,8 @@ from drawio_builder import (  # noqa: E402
     escape_label, is_warning, label_lines, render, wrap_hints,
 )
 from oci_topology import (  # noqa: E402
-    ATTACHMENT_STYLE_MODES, GATEWAY_EDGES, GROUP_BOX_TYPES, HUB_TITLES, LOCATION_MODES,
+    ATTACHMENT_STYLE_MODES, GATEWAY_EDGES, GATEWAY_SIDES, GROUP_BOX_TYPES, HUB_TITLES,
+    LOCATION_MODES,
     SUBNET_LABEL_MODES, attachment_label, attachment_link_label, attachment_style_of,
     attachment_type, badge_refs, choose_drg_style, classify_topology, compartment_tree,
     drg_route_tables, gateway_edge_mode, hub_kind, is_onprem_item, is_regional, label_parts,
@@ -171,8 +172,17 @@ GW_ICON_TYPES = {
     "remote_peering_gateway": "lpg", "rpg": "lpg", "networking_remote_peering_gateway": "lpg",
 }
 
-OSN_GAP = 45                     # last VCN column -> Oracle Services Network panel
+OSN_GAP = 45                     # last VCN column -> Oracle Services Network panel (nested canvas)
+OSN_BAND_GAP = 45                # VCN stack bottom -> OSN band top (Location Canvas, G5)
 OSN_LABEL = "Oracle Services Network"
+TOP_GW_X0 = 50                   # first top-border slot, measured from the VCN's RIGHT edge inwards
+VCN_TOP_PAD_GW = 60              # VCN top padding when top-border gateways exist
+VCN_Y_TOP_GW = 110               # region-local VCN y when any VCN carries top-border gateways.
+                                 # The caption hangs above the glyph, whose slot starts
+                                 # GW_STRADDLE above the VCN, so the caption's top sits at
+                                 # vcn_y - (GW_STRADDLE + LABEL_GAP + LABEL_H) = vcn_y - 87;
+                                 # PAD + 87 = 107, rounded up to the 10 px grid.
+GW_SORT_ORDER = ("igw", "nat", "sgw", "lpg")   # B01: deterministic slot order on every side
 
 DRG_GAP = 45                     # DRG column -> first VCN column
 ATT_W = 100                      # attachment box
@@ -326,33 +336,75 @@ def _is_sgw(gw: dict) -> bool:
     return gtype == "sgw" or (not gtype and str(gw.get("icon") or "") in SGW_ICONS)
 
 
-def _gateway_side(gw: dict, vcn_index: int, order: dict) -> str:
-    """bottom (IGW, NAT, unknown), right (SGW; LPG whose peer is a later column), left (LPG, earlier peer)."""
-    gtype = str(gw.get("type") or "").lower()
-    icon = str(gw.get("icon") or "")
-    if _is_sgw(gw):
-        return "right"
-    if gtype == "lpg" or (not gtype and icon in LPG_ICONS):
+def _gateway_side(gw: dict, vcn_index: int, order: dict, ctx=None) -> str:
+    """Which VCN border a gateway straddles (G4, G5).
+
+    ``gateways[].side`` wins over everything. Otherwise: the Internet-facing
+    gateways (IGW, NAT) take the border facing the Internet box - the right one
+    under the Location Canvas for the rightmost VCN column, the top one for
+    every other column, the bottom one in the 1.3.0 nested canvas - and
+    the Service Gateway takes the border facing the Oracle Services Network:
+    bottom when the OSN is a band under the stack, right when it is a column.
+    An LPG faces its peer's column. Called with three arguments (no ``ctx``)
+    this reproduces the 1.3.0 choice exactly.
+    """
+    side = str(gw.get("side") or "").strip().lower()
+    if side:
+        if side not in GATEWAY_SIDES:
+            raise ValueError(f"gateways[].side must be one of {GATEWAY_SIDES}, not {gw.get('side')!r}")
+        return side
+    gtype = _gateway_type(gw)
+    outside = bool(ctx) and ctx.get("locations") == "outside"
+    edge = (ctx or {}).get("gateway_edge") or "bottom"
+    if edge == "auto":
+        edge = "internet" if (outside and ctx.get("has_internet")) else "bottom"
+    if gtype == "sgw":
+        return "bottom" if outside else "right"
+    if gtype == "lpg":
         peer = gw.get("peer")
         peer_idx = order.get(str(peer)) if peer is not None else None
         if peer_idx is None or peer_idx == vcn_index:
             return "bottom"
         return "right" if peer_idx > vcn_index else "left"
+    if gtype in ("igw", "nat"):
+        if edge != "internet":
+            return {"top": "top", "bottom": "bottom"}[edge]
+        # G4: only the rightmost VCN column's right border faces the Internet
+        # box - every other column's right border faces the next VCN - so the
+        # Internet-facing gateways of the other columns take the top border,
+        # which faces the Internet box's row (deck slide 31).
+        last_index = max(order.values()) if order else 0
+        return "right" if vcn_index >= last_index else "top"
     return "bottom"
 
 
-def _gateway_sides(vcn: dict, vcn_index: int, order: dict) -> dict:
-    sides = {"left": [], "right": [], "bottom": []}
-    for g in vcn.get("gateways") or []:
-        sides[_gateway_side(g, vcn_index, order)].append(g)
+def _gateway_sort_key(gw: dict) -> tuple:
+    """B01: IGW, NAT, SGW, LPG, then address - never the model's list order."""
+    gtype = _gateway_type(gw)
+    rank = GW_SORT_ORDER.index(gtype) if gtype in GW_SORT_ORDER else len(GW_SORT_ORDER)
+    return (rank, str(gw.get("address") or gw.get("label") or ""))
+
+
+def _gateway_sides(vcn: dict, vcn_index: int, order: dict, ctx=None) -> dict:
+    sides = {"top": [], "left": [], "right": [], "bottom": []}
+    for g in sorted(vcn.get("gateways") or [], key=_gateway_sort_key):
+        sides[_gateway_side(g, vcn_index, order, ctx)].append(g)
     return sides
 
 
-def _place_edge_gateway(d: DrawioBuilder, region_id, box, side: str, slot: int, gw: dict, reg) -> str:
-    """One gateway icon centred on a VCN border; box = (x, y, w, h) of the VCN in region coordinates."""
+def _place_edge_gateway(d: DrawioBuilder, parent_id, box, side: str, slot: int, gw: dict, reg,
+                        caption_above=False) -> str:
+    """One gateway icon centred on a VCN border; box = (x, y, w, h) of the VCN in the parent's space.
+
+    Top-border slots are counted from the VCN's RIGHT edge inwards, because
+    deck slide 31 puts the Internet Gateway at the right end of the top border,
+    nearest the Internet box.
+    """
     vx, vy, vw, vh = box
     if side == "bottom":
         x, y = vx + PAD + slot * GW_PITCH, vy + vh - GW_STRADDLE
+    elif side == "top":
+        x, y = vx + vw - TOP_GW_X0 - ICON_W - slot * GW_PITCH, vy - GW_STRADDLE
     elif side == "right":
         x, y = vx + vw - GW_SIDE_DX, vy + SIDE_GW_Y0 + slot * SIDE_GW_PITCH
     else:
@@ -363,7 +415,8 @@ def _place_edge_gateway(d: DrawioBuilder, region_id, box, side: str, slot: int, 
     for k in ("metadata", "tooltip", "link"):
         if gw.get(k):
             spec[k] = gw[k]
-    ids, _ = d.place_icons(region_id, [spec], cols=1, x0=int(x), y0=int(y), label_fill=COLORS["region_fill"])
+    ids, _ = d.place_icons(parent_id, [spec], cols=1, x0=int(x), y0=int(y),
+                           label_fill=COLORS["region_fill"], caption_above=caption_above)
     reg.add_item(gw, ids[0])
     return ids[0]
 
@@ -374,17 +427,23 @@ def _split_services(items) -> tuple:
     return [s for s in items if is_regional(s)], [s for s in items if not is_regional(s)]
 
 
-def _layout_osn(d: DrawioBuilder, region_id, items, x, y, min_h, reg) -> tuple:
-    """Region-level Oracle Services Network panel; returns (id, w, h)."""
-    rows_n, cols = _grid(len(items), 2)
-    prov_w = cols * COL_W + SUBNET_EXTRA_W
+def _layout_osn(d: DrawioBuilder, region_id, items, x, y, min_h, reg, min_w=None, cols=None) -> tuple:
+    """Region-level Oracle Services Network panel; returns (id, w, h).
+
+    A right-hand column (2 icon columns, the 1.3.0 nested canvas) or, under the
+    Location Canvas, a full-width band below the VCN stack (G5) - then the
+    caller passes the stack's width and the number of columns that fits it.
+    """
+    rows_n, cols = _grid(len(items), cols or 2)
+    prov_w = max(cols * COL_W + SUBNET_EXTRA_W, int(min_w or 0))
     prov_h = ROW1_Y + (rows_n - 1) * ROW_H + ICON_FOOTPRINT_H + SUBNET_BOTTOM_PAD
     pid = d.add_group(OSN_LABEL, x, y, prov_w, prov_h, parent=region_id,
                       group_type="oracle_services_network", key="osn", label_position="left")
     reg.containers["osn"] = pid
     reg.containers.setdefault("services", pid)
     _icon_items(d, pid, items, cols, reg=reg)
-    w, h = d.fit_to_children(pid, pad=PAD, min_w=prov_w, min_h=max(prov_h, min_h or 0))
+    w, h = d.fit_to_children(pid, pad=PAD, min_w=max(prov_w, int(min_w or 0)),
+                             min_h=max(prov_h, min_h or 0))
     return pid, w, h
 
 
@@ -540,7 +599,7 @@ def _layout_subnet(d: DrawioBuilder, vcn_id, subnet, x, y, max_cols, reg, min_w=
 
 def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX_ROW_W,
                 inset_left=0, right_pad=PAD, bottom_pad=VCN_BOTTOM_PAD, min_h=200,
-                min_w=VCN_MIN_W, label_mode="twoline"):
+                min_w=VCN_MIN_W, label_mode="twoline", top_pad=PAD):
     """Lay out one VCN box; min_h / min_w are the minimum FINAL height / width (borders
     included), so the caller can reserve room for the gateways that straddle the border."""
     vid = d.add_group(_vcn_label(vcn, label_mode), x, y, 400, 300, parent=region_id,
@@ -569,7 +628,8 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
     if cur:
         rows.append(cur)
 
-    cy = ROW1_Y
+    inset_top = max(0, top_pad - PAD)      # room for a top-border gateway's glyph
+    cy = ROW1_Y + inset_top
     row1_right = PAD + inset_left
     for row in rows:
         cx = PAD + inset_left
@@ -588,7 +648,8 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
         prov_w = cols * COL_W + SUBNET_EXTRA_W
         prov_h = ROW1_Y + (rows_n - 1) * ROW_H + ICON_FOOTPRINT_H + SUBNET_BOTTOM_PAD
         px = (row1_right + PANEL_GAP) if rows else PAD + inset_left
-        pid = d.add_group(vcn.get("services_label", "OCI Services"), px, ROW1_Y, prov_w, prov_h,
+        pid = d.add_group(vcn.get("services_label", "OCI Services"), px, ROW1_Y + inset_top,
+                          prov_w, prov_h,
                           parent=vid, group_type="services",
                           key=f"services:{vcn.get('name', '')}" if vcn.get("name") else None)
         reg.containers["services"] = pid
@@ -682,7 +743,7 @@ def _layout_hub(d: DrawioBuilder, region_id, hub: dict, vcn_y, vcn_h, reg, expli
     items = list(hub.get("items") or [])
     n = max(1, len(items))
     hub_h = HUB_ICON_Y0 + (n - 1) * HUB_PITCH + ICON_FOOTPRINT_H + 30
-    hub_y = max(VCN_Y, int(round((vcn_y + (vcn_h - hub_h) / 2) / 10.0) * 10))
+    hub_y = max(vcn_y, int(round((vcn_y + (vcn_h - hub_h) / 2) / 10.0) * 10))
     title = hub.get("name") or HUB_TITLES[hub_kind(hub)]
     hid = d.add_group(title, HUB_X, hub_y, HUB_W, hub_h,
                       parent=region_id, group_type="onprem", key="hub")
@@ -949,7 +1010,7 @@ def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_
     clusters = [(drg, _drg_style_for(drg, requested)) for drg in drgs]
     geoms = [_drg_cluster_geometry(drg, style) for drg, style in clusters]
     total_h = sum(g["cluster_h"] for g in geoms) + DRG_CLUSTER_GAP * (len(geoms) - 1)
-    y = max(VCN_Y, int(round((stack_y + (stack_h - total_h) / 2) / 10.0) * 10))
+    y = max(stack_y, int(round((stack_y + (stack_h - total_h) / 2) / 10.0) * 10))
     pending = []
     for idx, ((drg, style), g) in enumerate(zip(clusters, geoms)):
         name = _drg_display_name(drg, idx)
@@ -1100,7 +1161,10 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         x = drg_col_x + _drg_column_width(drgs, requested) + DRG_GAP
 
     order = _vcn_order(vcns)
-    all_sides = [_gateway_sides(v, i, order) for i, v in enumerate(vcns)]
+    all_sides = [_gateway_sides(v, i, order, ctx) for i, v in enumerate(vcns)]
+    # A top-border gateway hangs its caption above the VCN: the stack starts
+    # lower so the caption stays inside the region's padding.
+    vcn_y = VCN_Y_TOP_GW if any(s["top"] for s in all_sides) else VCN_Y
     vcn_boxes = []
     edge_gateways = []          # (vcn index, side, gateway dict, icon id)
     for i, vcn in enumerate(vcns):
@@ -1112,20 +1176,25 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
             VCN_MIN_W,
             (PAD + (len(sides["bottom"]) - 1) * GW_PITCH + ICON_W + PAD) if sides["bottom"] else 0,
         )
+        need_w = max(need_w,
+                     (TOP_GW_X0 + ICON_W + (len(sides["top"]) - 1) * GW_PITCH + PAD)
+                     if sides["top"] else 0)
         need_h = max(
             200,
             (SIDE_GW_Y0 + (len(sides["right"]) - 1) * SIDE_GW_PITCH + ICON_FOOTPRINT_H + PAD) if sides["right"] else 0,
             (LEFT_GW_Y0 + (len(sides["left"]) - 1) * SIDE_GW_PITCH + ICON_FOOTPRINT_H + PAD) if sides["left"] else 0,
         )
-        vid, w, h = _layout_vcn(d, rid, vcn, x, VCN_Y, reg, max_row_w=max_row_w,
+        vid, w, h = _layout_vcn(d, rid, vcn, x, vcn_y, reg, max_row_w=max_row_w,
                                 inset_left=SIDE_INSET if sides["left"] else 0,
                                 right_pad=VCN_SIDE_PAD if sides["right"] else PAD,
                                 bottom_pad=VCN_BOTTOM_PAD_GW if sides["bottom"] else VCN_BOTTOM_PAD,
+                                top_pad=VCN_TOP_PAD_GW if sides["top"] else PAD,
                                 min_h=need_h, min_w=need_w, label_mode=ctx["subnet_label"])
-        vcn_boxes.append((vid, x, VCN_Y, w, h))
-        for side in ("bottom", "right", "left"):
+        vcn_boxes.append((vid, x, vcn_y, w, h))
+        for side in ("bottom", "top", "right", "left"):
             for slot, g in enumerate(sides[side]):
-                gid = _place_edge_gateway(d, rid, (x, VCN_Y, w, h), side, slot, g, reg)
+                gid = _place_edge_gateway(d, rid, (x, vcn_y, w, h), side, slot, g, reg,
+                                          caption_above=(side == "top"))
                 edge_gateways.append((i, side, g, gid))
         # The gap must clear the captions of both facing borders: this column's
         # right-side gateways and the next column's left-side ones (spec A17).
@@ -1136,7 +1205,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     if top_services:
         rows_n, cols = _grid(len(top_services), 2)
         prov_h = ROW1_Y + (rows_n - 1) * ROW_H + ICON_FOOTPRINT_H + SUBNET_BOTTOM_PAD
-        pid = d.add_group("OCI Services", x, VCN_Y, cols * COL_W + SUBNET_EXTRA_W, prov_h,
+        pid = d.add_group("OCI Services", x, vcn_y, cols * COL_W + SUBNET_EXTRA_W, prov_h,
                           parent=rid, group_type="services", key="services")
         reg.containers["services"] = pid
         _icon_items(d, pid, top_services, cols, reg=reg)
@@ -1146,11 +1215,26 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
 
     osn_id = None
     if osn_items:
-        # the VCN loop already added the trailing column gap: subtracting VCN_COLUMN_GAP
-        # leaves last_right + OSN_GAP, plus the extra VCN_COLUMN_GAP_GW - VCN_COLUMN_GAP
-        # when the last column has right-border gateways whose captions need the room.
-        osn_x = (x - VCN_COLUMN_GAP + OSN_GAP) if (vcn_boxes or top_services) else x
-        osn_id, _, _ = _layout_osn(d, rid, osn_items, osn_x, VCN_Y, ref_h, reg)
+        if ctx["locations"] == "outside":
+            # G5: a full-width band below the VCN stack, so the IGW / NAT connectors
+            # to the Internet box never have to cross it. The Service Gateway is on
+            # the bottom border facing it (_gateway_side).
+            stack_right = (x - VCN_COLUMN_GAP) if (vcn_boxes or top_services) else (PAD + VCN_MIN_W)
+            band_w = max(VCN_MIN_W, stack_right - PAD)
+            band_cols = max(1, min(len(osn_items), int((band_w - 2 * PAD) // COL_W) or 1))
+            # A bottom-border gateway's slot starts GW_STRADDLE above the VCN's
+            # bottom edge and its caption runs a full ICON_FOOTPRINT_H below
+            # that, so the band has to clear the deepest one.
+            overhang = (ICON_FOOTPRINT_H - GW_STRADDLE + PAD) if any(s["bottom"] for s in all_sides) else 0
+            band_y = vcn_y + ref_h + max(OSN_BAND_GAP, overhang)
+            osn_id, _, _ = _layout_osn(d, rid, osn_items, PAD, band_y, 0, reg,
+                                       min_w=band_w, cols=band_cols)
+        else:
+            # the VCN loop already added the trailing column gap: subtracting VCN_COLUMN_GAP
+            # leaves last_right + OSN_GAP, plus the extra VCN_COLUMN_GAP_GW - VCN_COLUMN_GAP
+            # when the last column has right-border gateways whose captions need the room.
+            osn_x = (x - VCN_COLUMN_GAP + OSN_GAP) if (vcn_boxes or top_services) else x
+            osn_id, _, _ = _layout_osn(d, rid, osn_items, osn_x, vcn_y, ref_h, reg)
         # spec section 12: a schema-1 edge addressed to "services:<vcn>" must keep resolving
         # when the split left that VCN without a services panel of its own
         for _vcn in vcns:
@@ -1160,23 +1244,34 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
 
     pairs = {(str(e.get("source")), str(e.get("target"))) for e in (model.get("edges") or [])}
     if nested_hub:
-        _layout_hub(d, rid, nested_hub, VCN_Y, ref_h, reg, explicit_pairs=pairs)
+        _layout_hub(d, rid, nested_hub, vcn_y, ref_h, reg, explicit_pairs=pairs)
 
     pending = []
     if drgs:
-        pending = _layout_drg_column(d, rid, drgs, drg_col_x, VCN_Y, ref_h, requested, reg,
+        pending = _layout_drg_column(d, rid, drgs, drg_col_x, vcn_y, ref_h, requested, reg,
                                      d.layout_info["drg_style"])
 
     d.fit_to_children(rid, pad=PAD)
-    canvas = _layout_locations(d, rid, ctx, hub if not nested_hub else None, drgs, VCN_Y, ref_h,
+    canvas = _layout_locations(d, rid, ctx, hub if not nested_hub else None, drgs, vcn_y, ref_h,
                                reg, explicit_pairs=pairs)
     d.layout_info["canvas"] = canvas
 
     if osn_id is not None:
         for _i, side, g, gid in edge_gateways:
-            if side == "right" and _is_sgw(g):
+            if _is_sgw(g):     # G5: the SGW faces the OSN on whichever border it took
                 d.add_edge(gid, osn_id, "", kind="attachment",
                            key=f"{g['address']}-osn" if g.get("address") else None)
+
+    internet_id = canvas.get("internet")
+    if internet_id:
+        # Every Internet Gateway is tied to the Internet box exactly as the
+        # Service Gateway is tied to the OSN: an attachment connector, no
+        # arrowhead, no label. Nothing is drawn when there is no Internet box
+        # (the nested canvas, or a model without an IGW).
+        for _i, _side, g, gid in edge_gateways:
+            if _gateway_type(g) == "igw":
+                d.add_edge(gid, internet_id, "", kind="attachment",
+                           key=f"{g['address']}-internet" if g.get("address") else None)
 
     if model.get("notes"):
         d.add_text(escape_label(model["notes"]), TITLE_BOX[0] + TITLE_BOX[2] + 20, TITLE_BOX[1],

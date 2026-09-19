@@ -160,7 +160,7 @@ def wide_vcn(name):
 
 
 MODEL_GW = {
-    "subject": "gw", "region": "us-ashburn-1",
+    "subject": "gw", "region": "us-ashburn-1", "locations": "nested",
     "vcns": [simple_vcn("a", gateways=[
         gw("igw", "internet_gateway", "Internet\nGateway", "igw"),
         gw("nat", "nat_gateway", "NAT\nGateway", "nat"),
@@ -222,7 +222,7 @@ class GatewayPlacementTests(unittest.TestCase):
 
 class LpgSideTests(unittest.TestCase):
     def _model(self, peer_a="lpg-b", peer_b="lpg-a"):
-        return {"subject": "peering", "region": "us-ashburn-1", "vcns": [
+        return {"subject": "peering", "region": "us-ashburn-1", "locations": "nested", "vcns": [
             simple_vcn("a", gateways=[gw("lpg", "remote_peering_gateway", "LPG\nlpg-a", "lpg-a", peer=peer_a)]),
             simple_vcn("b", gateways=[gw("lpg", "remote_peering_gateway", "LPG\nlpg-b", "lpg-b", peer=peer_b)])],
             "edges": [{"source": "lpg-a", "target": "lpg-b", "label": "Local Peering", "kind": "attachment"}]}
@@ -279,7 +279,7 @@ class BottomGatewayWidthTests(unittest.TestCase):
                gw("nat", "nat_gateway", "NAT\nGateway", "nat"),
                gw("lpg", "remote_peering_gateway", "LPG\nno peer", "lpg"),
                gw("igw", "internet_gateway", "Internet\nGateway 2", "igw2")][:n]
-        return {"subject": "gw-width", "region": "us-ashburn-1",
+        return {"subject": "gw-width", "region": "us-ashburn-1", "locations": "nested",
                 "vcns": [simple_vcn("a", gateways=gws), wide_vcn("b")]}
 
     def test_three_bottom_gateways_widen_the_vcn_and_stay_inside_it(self):
@@ -301,12 +301,12 @@ class BottomGatewayWidthTests(unittest.TestCase):
 
     def test_the_guard_leaves_a_gateway_less_vcn_at_the_minimum_width(self):
         d = quiet(ol.build_diagram, {"subject": "plain", "region": "us-ashburn-1",
-                                     "vcns": [simple_vcn("a")]})
+                                     "locations": "nested", "vcns": [simple_vcn("a")]})
         self.assertEqual(d.abs_bbox("vcn-a")[2], ol.VCN_MIN_W)
 
     def test_a_next_column_left_gateway_widens_the_previous_column_gap(self):
         """A17: the gap must hold the widest caption of either facing border."""
-        model = {"subject": "peer", "region": "us-ashburn-1", "vcns": [
+        model = {"subject": "peer", "region": "us-ashburn-1", "locations": "nested", "vcns": [
             simple_vcn("a"),
             simple_vcn("b", gateways=[gw("lpg", "remote_peering_gateway",
                                          "Local Peering\nGateway", "lpg-b", peer="a")])]}
@@ -327,7 +327,7 @@ def svc(icon, address, **extra):
 
 class OsnPanelTests(unittest.TestCase):
     def test_regional_services_move_to_the_osn_panel_right_of_the_vcn(self):
-        model = {"subject": "svc", "region": "us-ashburn-1", "vcns": [simple_vcn(
+        model = {"subject": "svc", "region": "us-ashburn-1", "locations": "nested", "vcns": [simple_vcn(
             "a", gateways=[gw("sgw", "service_gateway", "Service\nGateway", "sgw")],
             services=[svc("logging", "log"), svc("buckets", "bkt"), svc("file_storage", "fss")])]}
         d = quiet(ol.build_diagram, model)
@@ -359,7 +359,7 @@ class OsnPanelTests(unittest.TestCase):
         self.assertEqual(errors_of(d), [])
 
     def test_regional_override_and_top_level_services(self):
-        model = {"subject": "svc", "region": "us-ashburn-1",
+        model = {"subject": "svc", "region": "us-ashburn-1", "locations": "nested",
                  "vcns": [simple_vcn("a", services=[svc("logging", "log", regional=False)]),
                           simple_vcn("b", services=[])],
                  "services": [svc("vault", "vault"), svc("bastion", "bastion", regional=False)]}
@@ -1323,6 +1323,125 @@ class LocationCanvasTests(unittest.TestCase):
 
     def test_the_canvas_passes_the_strict_gate(self):
         self.assertEqual(quiet(self.d.check_overlaps, True), [])
+
+
+class GatewayEdgeTests(unittest.TestCase):
+    def _model(self, **kw):
+        model = copy.deepcopy(CANVAS_HYBRID)
+        model.update(kw)
+        return model
+
+    def test_igw_over_nat_on_the_internet_facing_border(self):
+        """G4 / B01: the right border faces the Internet box; IGW slot 0, NAT slot 1."""
+        d = quiet(ol.build_diagram, CANVAS_HYBRID)
+        vx, vy, vw, _vh = d.abs_bbox("vcn-hub")
+        for slot, cid in enumerate(("igw", "nat")):
+            x, y, _w, _h = d.abs_bbox(cid)
+            self.assertEqual(x + ol.GW_SIDE_DX, vx + vw, cid)
+            self.assertEqual(y, vy + ol.SIDE_GW_Y0 + slot * ol.SIDE_GW_PITCH, cid)
+        self.assertEqual(errors_of(d), [])
+
+    def test_the_service_gateway_faces_the_osn_band(self):
+        """G5: with the OSN below the stack the SGW moves to the VCN's bottom border."""
+        d = quiet(ol.build_diagram, CANVAS_HYBRID)
+        vx, vy, _vw, vh = d.abs_bbox("vcn-hub")
+        sx, sy, _sw, _sh = d.abs_bbox("sgw")
+        self.assertEqual(sy + ol.GW_STRADDLE, vy + vh)
+        self.assertEqual(sx, vx + ol.PAD)
+        ox, oy, ow, _oh = d.abs_bbox("osn")
+        self.assertGreaterEqual(oy, vy + vh + ol.OSN_BAND_GAP - 1)
+        self.assertLessEqual(ox, vx)
+        self.assertGreaterEqual(ox + ow, vx)            # the band spans the stack
+        edges = [e for e in d._cells.values() if e["kind"] == "edge" and e.get("source") == "sgw"]
+        self.assertEqual([e["target"] for e in edges], ["osn"])
+
+    def test_gateway_edge_top_puts_the_igw_in_the_rightmost_top_slot(self):
+        d = quiet(ol.build_diagram, self._model(gateway_edge="top"))
+        vx, vy, vw, _vh = d.abs_bbox("vcn-hub")
+        ix, iy, _iw, _ih = d.abs_bbox("igw")
+        nx, ny, _nw, _nh = d.abs_bbox("nat")
+        self.assertEqual(iy + ol.GW_STRADDLE, vy)
+        self.assertEqual(ix, vx + vw - ol.TOP_GW_X0 - db.ICON_W)
+        self.assertEqual(ny, iy)
+        self.assertEqual(ix - nx, ol.GW_PITCH)
+        caption = d._cells["igw"]["label_id"]
+        self.assertLess(d._cells[caption]["y"], d._cells["igw"]["y"])
+        self.assertEqual(style_of(d, caption)["fillColor"], db.COLORS["region_fill"])
+        self.assertEqual(errors_of(d), [])
+        self.assertEqual(quiet(d.check_overlaps, True), [])
+
+    def test_gateway_edge_bottom_restores_the_130_choice(self):
+        d = quiet(ol.build_diagram, self._model(gateway_edge="bottom"))
+        vx, vy, _vw, vh = d.abs_bbox("vcn-hub")
+        for slot, cid in enumerate(("igw", "nat", "sgw")):
+            x, y, _w, _h = d.abs_bbox(cid)
+            self.assertEqual(y + ol.GW_STRADDLE, vy + vh, cid)
+            self.assertEqual(x, vx + ol.PAD + slot * ol.GW_PITCH, cid)
+
+    def test_a_per_gateway_side_wins(self):
+        model = self._model()
+        model["vcns"][0]["gateways"][0]["side"] = "left"
+        d = quiet(ol.build_diagram, model)
+        vx, vy, _vw, _vh = d.abs_bbox("vcn-hub")
+        self.assertEqual(d.abs_bbox("igw")[0] + ol.GW_SIDE_DX - 1, vx)
+        self.assertEqual(d.abs_bbox("nat")[1], vy + ol.SIDE_GW_Y0)      # NAT is now slot 0 on the right
+
+    def test_an_unknown_side_raises(self):
+        model = self._model()
+        model["vcns"][0]["gateways"][0]["side"] = "sideways"
+        with self.assertRaises(ValueError) as cm:
+            quiet(ol.build_diagram, model)
+        self.assertIn("side", str(cm.exception))
+
+    def test_the_order_is_igw_nat_sgw_lpg_whatever_the_model_says(self):
+        model = self._model(gateway_edge="bottom")
+        model["vcns"][0]["gateways"] = list(reversed(model["vcns"][0]["gateways"]))
+        d = quiet(ol.build_diagram, model)
+        vx = d.abs_bbox("vcn-hub")[0]
+        xs = [d.abs_bbox(cid)[0] - vx for cid in ("igw", "nat", "sgw")]
+        self.assertEqual(xs, sorted(xs))
+        self.assertEqual(xs[0], ol.PAD)
+
+    def test_the_130_three_argument_call_is_unchanged(self):
+        self.assertEqual(ol._gateway_side(gw("igw", "internet_gateway", "x", "i"), 0, {}), "bottom")
+        self.assertEqual(ol._gateway_side(gw("sgw", "service_gateway", "x", "s"), 0, {}), "right")
+
+    def test_only_the_rightmost_column_faces_the_internet_box_on_its_right_border(self):
+        """G4: a left-hand column's right border faces the next VCN, so its
+        Internet-facing gateways take the top border instead."""
+        model = self._model()
+        model["vcns"].append({"name": "spoke", "cidr": "10.1.0.0/16", "subnets": [
+            {"name": "sn-web", "cidr": "10.1.1.0/24", "tier": "lb", "public": True,
+             "items": [{"icon": "vm", "label": "Web", "address": "web2"}]}],
+            "gateways": [gw("igw", "internet_gateway", "Internet\nGateway", "igw2")]})
+        d = quiet(ol.build_diagram, model)
+        hx, hy, hw, _hh = d.abs_bbox("vcn-hub")
+        sx, _sy, sw, _sh = d.abs_bbox("vcn-spoke")
+        self.assertEqual(d.abs_bbox("igw")[1] + ol.GW_STRADDLE, hy)            # hub: top border
+        self.assertEqual(d.abs_bbox("igw")[0], hx + hw - ol.TOP_GW_X0 - db.ICON_W)
+        self.assertEqual(d.abs_bbox("nat")[1] + ol.GW_STRADDLE, hy)
+        self.assertEqual(d.abs_bbox("igw2")[0] + ol.GW_SIDE_DX, sx + sw)       # spoke: right border
+        self.assertEqual(errors_of(d), [])
+
+    def test_every_igw_is_tied_to_the_internet_box(self):
+        """One attachment connector per IGW, mirroring SGW -> OSN."""
+        d = quiet(ol.build_diagram, CANVAS_HYBRID)
+        edges = [e for e in d._cells.values()
+                 if e["kind"] == "edge" and e.get("source") == "igw"]
+        self.assertEqual([e["target"] for e in edges], ["internet"])
+        self.assertEqual([e["label"] for e in edges], [""])
+        self.assertIn("igw-internet", d._cells)
+        nested = quiet(ol.build_diagram, self._model(locations="nested"))
+        self.assertEqual([e for e in nested._cells.values()
+                          if e["kind"] == "edge" and e.get("source") == "igw"], [])
+
+    def test_nested_mode_keeps_the_130_sides_and_the_osn_column(self):
+        d = quiet(ol.build_diagram, self._model(locations="nested"))
+        vx, vy, vw, vh = d.abs_bbox("vcn-hub")
+        self.assertEqual(d.abs_bbox("igw")[1] + ol.GW_STRADDLE, vy + vh)
+        self.assertEqual(d.abs_bbox("sgw")[0] + ol.GW_SIDE_DX, vx + vw)
+        self.assertGreater(d.abs_bbox("osn")[0], vx + vw)
+        self.assertEqual(errors_of(d), [])
 
 
 if __name__ == "__main__":
