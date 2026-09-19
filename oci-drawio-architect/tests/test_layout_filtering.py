@@ -61,6 +61,13 @@ class LayoutFilterTests(unittest.TestCase):
         self.assertGreaterEqual(d.layout_info["filter"]["edges_dropped"], 1)
         self.assertNotIn("bastion", icons(d))
 
+    def test_a_location_box_the_filter_empties_is_not_drawn(self):
+        """An On-premises panel with no equipment in it misleads the reader."""
+        full = quiet(ol.build_diagram, TAGGED_MODEL())
+        self.assertIn("hub", full._cells)
+        cut = quiet(ol.build_diagram, TAGGED_MODEL(), filter_spec=["vcn=vcn-app"])
+        self.assertNotIn("hub", cut._cells)
+
     def test_a_filtered_diagram_passes_the_strict_file_gate(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = quiet(ol.write_diagram, TAGGED_MODEL(), Path(tmp) / "f.drawio",

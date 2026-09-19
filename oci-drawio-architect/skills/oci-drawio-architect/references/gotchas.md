@@ -383,8 +383,11 @@ dimensions and OR within one, so `--filter tag:Application=payments --filter tag
 means both, while `--filter vcn=a --filter vcn=b` means either. `exclude` always wins. Structure -
 gateways, DRGs, attachments, subnets, VCNs - is not predicated unless a `vcn=`, `subnet=`, `type=`
 or `name=` expression names it directly; a subnet the filter empties is dropped, and so is a VCN
-with nothing left, unless `keep_empty` is set. An edge whose endpoint disappeared is dropped and
-counted: no stub node is ever drawn.
+with nothing left, unless `keep_empty` is set. A location box (On-premises, Internet, 3rd Party
+Cloud) the filter empties goes the same way - an on-premises panel with no equipment in it tells
+the reader something false - except one that was already empty, which is by design: the Internet
+box is what the IGW faces, and it survives an emptying filter while a gateway still faces it. An
+edge whose endpoint disappeared is dropped and counted: no stub node is ever drawn.
 
 ## 27. `--mode participating` is the default for a live tenancy, not for Terraform
 
