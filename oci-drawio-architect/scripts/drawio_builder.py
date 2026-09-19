@@ -1317,8 +1317,12 @@ def validate_registry(registry: dict, page: str = "", strict: bool = False,
         except ValueError:
             fs = LABEL_FONT_SIZE
         avail = e["w"] - BADGE_RESERVE - 4
-        n = label_lines(e["value"], avail, fs) if avail > 0 else 99
-        if n <= 1:
+        # explicit <br> / newline paragraphs are the author's own line count
+        # (Oracle writes a subnet as name over CIDR); only the lines the
+        # narrowed width forces on top of them run under the badges
+        paragraphs = len(_BR_RE.split(e["value"]))
+        n = label_lines(e["value"], avail, fs) if avail > 0 else paragraphs + 1
+        if n <= paragraphs:
             continue
         warnings.append(
             f"{prefix}WARNING: title '{_label_of(e)}' needs ~{n} lines at {_fmt_num(fs)}px in "
