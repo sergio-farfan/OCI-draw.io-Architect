@@ -1525,6 +1525,24 @@ class GatewayEdgeTests(unittest.TestCase):
         self.assertEqual(d.abs_bbox("igw2")[0] + ol.GW_SIDE_DX, sx + sw)       # spoke: right border
         self.assertEqual(errors_of(d), [])
 
+    def test_the_igw_internet_connector_does_not_ride_a_vcn_border(self):
+        """A top-border IGW's docking point sits exactly on the VCN border
+        line, so the lattice offers a free lane along every other VCN's top
+        border at the same y. The connector must leave that lane."""
+        d = quiet(ol.build_diagram, self._two_column_model())
+        d.validate()
+        poly = d._cells["igw-internet"]["polyline"]
+        self.assertTrue(poly)
+        for cid in ("vcn-hub", "vcn-spoke"):
+            vx, vy, vw, vh = d.abs_bbox(cid)
+            for (x0, y0), (x1, y1) in zip(poly, poly[1:]):
+                if abs(y0 - y1) > 0.01:
+                    continue                                    # vertical run
+                rides = min(abs(y0 - vy), abs(y0 - (vy + vh))) <= db.STRADDLE_TOL
+                overlaps = min(x0, x1) < vx + vw and max(x0, x1) > vx
+                self.assertFalse(rides and overlaps,
+                                 f"{(x0, y0)}->{(x1, y1)} rides a border of {cid}")
+
     def test_every_igw_is_tied_to_the_internet_box(self):
         """One attachment connector per IGW, mirroring SGW -> OSN."""
         d = quiet(ol.build_diagram, CANVAS_HYBRID)
