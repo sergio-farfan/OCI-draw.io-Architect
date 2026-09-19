@@ -1190,6 +1190,54 @@ def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> T
     return m, report
 
 
+# 6.5 / 5: the counts a front end records IN the model, so that the layout can
+# report what was elided before the model was written and not only what its own
+# re-application of the same spec removed (which is always nothing).
+RECORDED_COUNTS = ("items_dropped", "edges_dropped", "containers_dropped",
+                   "groups_dropped", "attachments_dropped", "peers_nulled")
+
+
+def record_cut(model: dict, report: dict) -> dict:
+    """Write a ``filter_model`` report into the model as schema keys; returns the model.
+
+    "The model records what was done, which is what ``layout_info`` then
+    reports" (5). The expressions alone are not enough: the layout re-applies
+    them to an already-cut model, so the counts have to travel with it.
+    """
+    if report.get("include") or report.get("exclude"):
+        spec = model.get("filter")
+        if not isinstance(spec, dict):
+            spec = {"include": list(report.get("include") or ()),
+                    "exclude": list(report.get("exclude") or ())}
+            model["filter"] = spec
+        spec["report"] = {k: int(report.get(k) or 0) for k in RECORDED_COUNTS}
+    pruned = {"items": int(report.get("pruned_items") or 0),
+              "services": int(report.get("pruned_services") or 0)}
+    if pruned["items"] or pruned["services"]:
+        model["pruned"] = pruned
+    return model
+
+
+def merge_cut(model: dict, report: dict) -> dict:
+    """``report`` plus the counts ``model`` already recorded (``record_cut``).
+
+    ``items_kept`` is this run's, because it counts what actually survived into
+    the diagram; every "dropped" count is the sum, so the legend note reads
+    "5 of 6" for a parser cut of one in six followed by a no-op re-application.
+    """
+    spec = model.get("filter")
+    recorded = (spec.get("report") if isinstance(spec, dict) else None) or {}
+    pruned = model.get("pruned") if isinstance(model.get("pruned"), dict) else {}
+    merged = dict(report)
+    for key in RECORDED_COUNTS:
+        merged[key] = int(report.get(key) or 0) + int(recorded.get(key) or 0)
+    merged["items_kept"] = int(report.get("items_kept") or 0)
+    merged["pruned_items"] = int(report.get("pruned_items") or 0) + int(pruned.get("items") or 0)
+    merged["pruned_services"] = (int(report.get("pruned_services") or 0)
+                                 + int(pruned.get("services") or 0))
+    return merged
+
+
 def participating(model: dict, include=()) -> set:
     """Addresses of the items that take part in the architecture (6.6).
 

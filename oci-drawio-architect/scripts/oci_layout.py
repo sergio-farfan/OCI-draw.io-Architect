@@ -1866,6 +1866,10 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         print(note, file=sys.stderr)
     model, filter_report = ov.filter_model(model, view["filter"], mode=view["mode"],
                                            discovery=view["discovery"])
+    # 6.5: what a front end already cut before writing the model, plus what this
+    # run cut on top of it - otherwise the legend reports the re-application of
+    # a spec that has nothing left to remove ("5 of 5" for a cut of 1 in 6).
+    filter_report = ov.merge_cut(model, filter_report)
     for w in filter_report["warnings"]:
         warnings.append(w)
         print(w, file=sys.stderr)

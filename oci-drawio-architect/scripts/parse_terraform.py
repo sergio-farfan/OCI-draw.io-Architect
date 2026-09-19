@@ -641,6 +641,21 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
             ov.parse_filter(model["filter"])
         except ValueError as exc:
             errors.append(f"filter: {exc}")
+        # 6.5: the counts the front end recorded alongside the expressions.
+        recorded = model["filter"].get("report") if isinstance(model["filter"], dict) else None
+        if recorded is not None and _expect(errors, recorded, dict, "filter.report"):
+            for key, value in recorded.items():
+                if key not in ov.RECORDED_COUNTS:
+                    errors.append(f"filter.report: unknown count {key!r} "
+                                  f"(expected {ov.RECORDED_COUNTS})")
+                else:
+                    _expect(errors, value, int, f"filter.report.{key}")
+    if model.get("pruned") is not None and _expect(errors, model["pruned"], dict, "pruned"):
+        for key, value in model["pruned"].items():
+            if key not in ("items", "services"):
+                errors.append(f"pruned: unknown count {key!r} (expected items|services)")
+            else:
+                _expect(errors, value, int, f"pruned.{key}")
     # A41: check the container types before collecting addresses, which walks them.
     drgs_ok = _expect(errors, model.get("drgs"), list, "drgs")
     vcns_ok = _expect(errors, model.get("vcns"), list, "vcns")
@@ -2488,9 +2503,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
     # 5: the model records what was done, which is what layout_info then reports.
+    # The counts travel with it (filter.report / pruned), because the layout
+    # re-applies the recorded spec to the already-cut model and would otherwise
+    # report the no-op re-application instead of this cut.
     model["mode"] = args.mode
-    if report["include"] or report["exclude"]:
-        model["filter"] = {"include": list(report["include"]), "exclude": list(report["exclude"])}
+    ov.record_cut(model, report)
     model["filter_report"] = dict(report)
 
     problems = validate_model(model, _builder_icon_keys())
