@@ -1643,5 +1643,106 @@ class CompartmentTests(unittest.TestCase):
         self.assertIn("cycle", str(cm.exception))
 
 
+OKE_MODEL = {
+    "subject": "oke", "region": "eu-frankfurt-1", "locations": "nested",
+    "vcns": [{"name": "app", "cidr": "10.0.0.0/16",
+              "groups": [{"type": "tier", "label": "Application Tier",
+                          "subnets": ["sn-app", "sn-api"], "key": "tier-app"}],
+              "subnets": [
+                  {"name": "sn-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": True,
+                   "items": [{"icon": "load_balancer", "label": "Public LB", "address": "lb"}]},
+                  {"name": "sn-app", "cidr": "10.0.1.0/24", "tier": "app", "public": False,
+                   "route_table": "rt-app",
+                   "groups": [{"type": "oke_cluster",
+                               "label": "Container Engine for Kubernetes Cluster",
+                               "items": ["oke-main", "np-a", "np-b"], "key": "oke-main-box"}],
+                   "items": [{"icon": "oke", "label": "oke-main", "address": "oke-main",
+                              "nsgs": ["nsg-oke"]},
+                             {"icon": "vm", "label": "Node pool A", "address": "np-a"},
+                             {"icon": "vm", "label": "Node pool B", "address": "np-b"}]},
+                  {"name": "sn-api", "cidr": "10.0.2.0/24", "tier": "app", "public": False,
+                   "items": [{"icon": "api_gateway", "label": "API Gateway", "address": "api"}]}]}],
+    "edges": [{"source": "lb", "target": "oke-main-box", "label": "443", "kind": "data"}],
+}
+
+
+class GroupBoxTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.d = quiet(ol.build_diagram, OKE_MODEL)
+
+    def test_a_non_contiguous_vcn_group_is_refused(self):
+        """G8: a band drawn round rows 1 and 3 would swallow row 2; say so in the model's terms."""
+        model = copy.deepcopy(OKE_MODEL)
+        model["vcns"][0]["groups"][0]["subnets"] = ["sn-lb", "sn-api"]
+        with self.assertRaises(ValueError) as cm:
+            quiet(ol.build_diagram, model)
+        self.assertIn("would enclose", str(cm.exception))
+        self.assertIn("list its members contiguously", str(cm.exception))
+
+    def test_the_oke_box_encloses_and_reparents_exactly_its_members(self):
+        for cid in ("oke-main", "np-a", "np-b"):
+            self.assertEqual(self.d._cells[cid]["parent"], "oke-main-box", cid)
+            self.assertEqual(self.d._cells[self.d._cells[cid]["label_id"]]["parent"], "oke-main-box")
+        self.assertEqual(self.d._cells["oke-main-box"]["parent"], "subnet-sn-app")
+        self.assertEqual(self.d._cells["oke-main-nsg"]["parent"], "oke-main-box")   # the badge follows its host
+        self.assertEqual(style_of(self.d, "oke-main-box")["ociGroup"], "oke_cluster")
+
+    def test_the_box_starts_below_the_subnets_title_strip(self):
+        """Decision 7: GRP_TITLE_H is measured from the subnet's title, not from ROW1_Y."""
+        gx, gy, _gw, _gh = self.d.bbox("oke-main-box")
+        self.assertEqual(gy, db.ROW1_Y)
+        icon_y = self.d.bbox("oke-main")[1] + gy          # slot y in the box + the box's y
+        self.assertEqual(icon_y, db.ROW1_Y + ol.GRP_TITLE_H)
+        self.assertEqual(gx, ol.PAD - ol.GRP_PAD)
+
+    def test_the_subnet_grew_around_the_box(self):
+        sx, sy, sw, sh = self.d.bbox("subnet-sn-app")
+        gx, gy, gw, gh = self.d.bbox("oke-main-box")
+        self.assertGreaterEqual(gx, 0)
+        self.assertGreaterEqual(sw, gx + gw)
+        self.assertGreaterEqual(sh, gy + gh)
+        self.assertEqual(errors_of(self.d), [])
+
+    def test_a_vcn_group_bands_whole_subnet_rows(self):
+        self.assertEqual(self.d._cells["tier-app"]["parent"], "vcn-app")
+        for cid in ("subnet-sn-app", "subnet-sn-api"):
+            self.assertEqual(self.d._cells[cid]["parent"], "tier-app", cid)
+        self.assertEqual(self.d._cells["subnet-sn-lb"]["parent"], "vcn-app")
+        self.assertEqual(style_of(self.d, "tier-app")["ociGroup"], "tier")
+
+    def test_an_edge_may_terminate_on_a_group_box(self):
+        """G8 / slide 32: the load balancer connects to the OKE box, not to an icon inside it."""
+        edges = [e for e in self.d._cells.values() if e["kind"] == "edge" and e.get("source") == "lb"]
+        self.assertEqual([e["target"] for e in edges], ["oke-main-box"])
+
+    def test_the_router_treats_the_box_as_a_container(self):
+        """Decision 9: it is in the lattice's group set with a centred title obstacle."""
+        groups, obstacles = self.d._routing_shapes(0)
+        self.assertIn("oke-main-box", groups)
+        title = obstacles["oke-main-box#title"]
+        box = groups["oke-main-box"]
+        self.assertAlmostEqual(title.cx, box.cx, delta=1.0)
+
+    def test_a_member_that_is_not_in_the_container_raises(self):
+        model = copy.deepcopy(OKE_MODEL)
+        model["vcns"][0]["subnets"][1]["groups"][0]["items"].append("api")
+        with self.assertRaises(ValueError) as cm:
+            quiet(ol.build_diagram, model)
+        self.assertIn("'api'", str(cm.exception))
+        self.assertIn("not a member", str(cm.exception))
+
+    def test_two_interleaving_groups_raise(self):
+        model = copy.deepcopy(OKE_MODEL)
+        model["vcns"][0]["subnets"][1]["groups"].append(
+            {"type": "tier", "label": "Workers", "items": ["np-b"]})
+        with self.assertRaises(ValueError) as cm:
+            quiet(ol.build_diagram, model)
+        self.assertIn("may not overlap", str(cm.exception))
+
+    def test_the_grouped_diagram_passes_the_strict_gate(self):
+        self.assertEqual(quiet(self.d.check_overlaps, True), [])
+
+
 if __name__ == "__main__":
     unittest.main()
