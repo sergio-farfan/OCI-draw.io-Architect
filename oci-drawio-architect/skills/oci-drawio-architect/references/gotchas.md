@@ -391,7 +391,10 @@ or `name=` expression names it directly; a subnet the filter empties is dropped,
 with nothing left, unless `keep_empty` is set. A location box (On-premises, Internet, 3rd Party
 Cloud) the filter empties goes the same way - an on-premises panel with no equipment in it tells
 the reader something false - except one that was already empty, which is by design: the Internet
-box is what the IGW faces, and it survives an emptying filter while a gateway still faces it. An
+box is what the IGW faces, and it survives an emptying filter while a gateway still faces it. A
+dropped 3rd Party Cloud box leaves a `null` hole in `third_party[]` instead of closing the list
+up, because the recipe keys those boxes by position: the survivors keep the cell ids
+(`thirdparty-<i>`) they had before the cut, and an edge that names one still resolves. An
 edge whose endpoint disappeared is dropped and counted: no stub node is ever drawn.
 
 ## 27. `--mode participating` is the default for a live tenancy, not for Terraform

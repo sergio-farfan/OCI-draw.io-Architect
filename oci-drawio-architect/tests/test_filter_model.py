@@ -274,6 +274,20 @@ class FilterModelTests(unittest.TestCase):
         out, _ = ov.filter_model(m, ["type=oci_core_instance"])
         self.assertEqual(out["third_party"], [])
 
+    def test_a_dropped_third_party_box_leaves_its_index_to_the_survivors(self):
+        """The recipe keys these boxes by position (``thirdparty:<i>``), so closing the
+        list up would hand the second box the first one's cell id."""
+        m = model()
+        m["third_party"] = [
+            {"name": "Peer A Cloud", "items": [
+                {"icon": "vm", "label": "Peer A VM", "type": "other", "address": "peer-a"}]},
+            {"name": "Peer B Cloud", "items": [
+                {"icon": "vm", "label": "Peer B VM", "type": "other", "address": "peer-b"}]}]
+        out, report = ov.filter_model(m, ["!name=Peer A VM"])
+        self.assertIsNone(out["third_party"][0])
+        self.assertEqual(out["third_party"][1]["name"], "Peer B Cloud")
+        self.assertEqual(report["containers_dropped"], 1)
+
     def test_an_edge_whose_endpoint_disappeared_is_dropped_and_counted(self):
         out, report = ov.filter_model(model(), ["name=App Broker VM"])
         self.assertEqual(out["edges"], [])
