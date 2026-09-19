@@ -1,6 +1,6 @@
 ---
 name: drawio-architect
-description: Generate an OCI architecture .drawio diagram (and PNG) from a Terraform directory, a terraform show -json file, a VCN name or a description, using the deterministic v1.4.0 layout recipe
+description: Generate an OCI architecture .drawio diagram (and PNG) from a Terraform directory, a terraform show -json file, a VCN name or a description, using the deterministic v1.5.0 layout recipe with purpose, detail-level, label-mode, layer and filter controls
 argument-hint: [terraform-dir | plan.json | vcn-name | "description"]
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash, AskUserQuestion
 ---
@@ -31,6 +31,7 @@ region_label: "Frankfurt"
 oci_profile: "DEFAULT"
 compartment: "prod"
 vcns: [{"name": "app-vcn", "cidr": "10.0.0.0/16"}]
+purpose: "network"
 logo_light: "logos/company_logo_dark.png"
 terraform_dir: "terraform/environments/prod"
 ---
@@ -40,11 +41,24 @@ Detected on YYYY-MM-DD by /drawio-architect. Edit values above; delete the file 
 ```
 
 5. The file may contain OCIDs: make sure the project `.gitignore` has the line `.claude/*.local.md` (`grep -qxF '.claude/*.local.md' .gitignore 2>/dev/null || echo '.claude/*.local.md' >> .gitignore`).
-6. View choices (not settings, never detected): the canvas is `locations: "outside"` and the subnet labels are two lines unless the user asks otherwise. Offer `show_compartments` only when the tenancy has more than one compartment in play and the user asks "show the compartments" - a view with every compartment drawn is unreadable, which is why it is off by default. The same five choices exist as flags on the layout CLI: `--locations`, `--gateway-edge`, `--subnet-label`, `--attachment-style`, `--show-compartments`.
+6. View choices are never *detected*, only answered. The canvas is `locations: "outside"` and the subnet labels are two lines unless the user asks otherwise. Offer `show_compartments` only when the tenancy has more than one compartment in play and the user asks "show the compartments" - a view with every compartment drawn is unreadable, which is why it is off by default. The v1.4.0 choices are flags on the layout CLI: `--locations`, `--gateway-edge`, `--subnet-label`, `--attachment-style`, `--show-compartments`.
+7. **`purpose` is the one view choice that is remembered.** If the settings file has `purpose:`, use it and say so; otherwise Step 1 asks for it and you write it back into the settings file. Nothing else about the view is persisted: `detail`, `label_mode`, `label_fields`, `layers`, `filter`, `mode` and `global_services` are per-run choices, and a remembered filter that has gone stale silently produces a wrong diagram.
 
-## Step 1 - Input
+## Step 1 - Input and purpose
 
-Classify `$ARGUMENTS`; if empty, ask one AskUserQuestion with these five options.
+1. Classify `$ARGUMENTS`; if empty, ask one AskUserQuestion with these five options.
+2. **Ask the diagram's purpose** with a second `AskUserQuestion` - unless `purpose:` is already in the settings file, in which case state which one is in force and move on. The six options, verbatim:
+
+| Option | `--purpose` | Pick it when |
+|--------|-------------|--------------|
+| Network topology | `network` | The reader asks "how is this wired" - subnets, gateways, route tables, security lists. Today's default look |
+| Application / data flow | `dataflow` | The reader follows a request through the system; only the participating resources, ports on every connector |
+| Security architecture | `security` | The reader audits controls - NSGs and security lists in front, IAM and policies in their own tenancy bucket |
+| Resource / inventory view | `inventory` | The reader wants what exists and where, not how it talks - no connectors, compartments drawn |
+| Dependency / relationship view | `dependency` | The reader asks what depends on what, and wants to know how each relationship was discovered |
+| Deployment / high-availability architecture | `ha` | The reader checks resiliency - availability and fault domains in every caption |
+
+3. Write the answer back into `.claude/oci-drawio-architect.local.md` as `purpose: "<value>"`.
 
 | Input | Recognise by | Model source (Step 2) |
 |-------|--------------|-----------------------|
@@ -56,8 +70,8 @@ Classify `$ARGUMENTS`; if empty, ask one AskUserQuestion with these five options
 
 ## Step 2 - Build the model
 
-1. Terraform present: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/parse_terraform.py" [TF_DIR] [--plan-json FILE | --state-json FILE] [--vcn NAME] --out model.json`, then read `model.json`. Add `--no-inferred-edges` when you want only edges backed by explicit Terraform references.
-2. Live tenancy (EXPERIMENTAL, needs the OCI CLI): `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/query_tenancy.py" --compartment-id OCID [--vcn-id OCID] [--profile P] [--region R] [--from-json FILE] --out model.json`. Tell the user the mode is experimental and to verify resource counts.
+1. Terraform present: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/parse_terraform.py" [TF_DIR] [--plan-json FILE | --state-json FILE] [--vcn NAME] --out model.json`, then read `model.json`. Add `--no-inferred-edges` when you want only edges backed by explicit Terraform references. Scope it with `--filter EXPR` (repeatable), or its sugar `--tag K=V`, `--compartment NAME`, `--subnet NAME`, `--resource-type TYPE`. **`--mode` defaults to `all` here**: a Terraform configuration is already a curated set. Pass `--mode participating` to keep only what takes part in the architecture. A plan or state JSON also carries the private IPs, the lifecycle states and the tags that the label modes and the filters need - prefer it over bare HCL when it exists.
+2. Live tenancy (EXPERIMENTAL, needs the OCI CLI): `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/query_tenancy.py" --compartment-id OCID [--vcn-id OCID] [--profile P] [--region R] [--from-json FILE] --out model.json`. Tell the user the mode is experimental and to verify resource counts. **`--mode` defaults to `participating` here**, because a tenancy dump is not curated; `--mode all` shows everything. Cut a live tenancy down **before the model is written** - with `--filter` / `--tag` / `--resource-type` / `--subnet-id` on this command, not by editing `model.json` afterwards - so the counts you report are the counts you drew.
 3. Otherwise write the MODEL dict by hand (schema: SKILL.md section 2; template: `${CLAUDE_PLUGIN_ROOT}/examples/generate_reference_layout.py`).
 4. Enrich every model, in this order:
    1. `subject` = VCN name for a single VCN, else the system name; `region`, `region_label`, `compartment`, `tenancy_name` from settings.
@@ -73,6 +87,9 @@ Classify `$ARGUMENTS`; if empty, ask one AskUserQuestion with these five options
    11. A DRG's route tables go in `drgs[].route_table` (a name, `{"name", "address"}`, or a list - Oracle creates one table for VCN attachments and one for everything else); the recipe draws up to two badges under the DRG glyph.
    12. Compartment names are already in `model.compartments` and `vcn.compartment` after parsing; add `"show_compartments": True` only when the user asked for them, and use the object form `{"name", "parent", "vcns"}` when the compartments nest.
    13. Grouping boxes are opt-in: add a `subnet.groups[]` entry of type `oke_cluster` around an OKE cluster and its node pools (the parser does this for you when they share a subnet), and `tier` / `user_group` boxes only when the user asks for them. Members must live in the container that owns the box.
+   14. **Captions are rendered, not hand-written, since 1.5.0.** Put the display name in `label` and the rest in `metadata`: `private_ip`, `public_ip`, `fqdn`, `ports` (`"TCP/22, 8088"`), `compartment`, `availability_domain`, `fault_domain`, `lifecycle_state`, `shape`. The default `label_mode: "network"` renders name + private IP + ports; `minimal` renders the name alone and `detailed` adds AD / FD and the compartment. **An OCID is never rendered in a caption in any mode** - it belongs in `metadata` and the tooltip. A value that is already in the authored `label` is never repeated, so a hand-written caption keeps rendering exactly as written.
+   15. Tags go in `item["tags"] = {"freeform": {...}, "defined": {"<ns>.<key>": ...}}`, never in `metadata` (which is scalars only). They are what `--filter tag:K=V`, `env=` and `app=` match on.
+   16. The view keys go at the top level of the model: `purpose`, `detail`, `label_mode`, `label_fields`, `label_tag_keys`, `layers`, `hidden_layers`, `filter`, `mode`, `global_services`, `show_edges`. The equivalent layout-CLI flags are `--purpose`, `--detail`, `--label-mode`, `--label-fields`, `--label-tag-keys`, `--layers`, `--hidden-layers`, `--filter`, `--mode`, `--discovery`, `--annotate-discovery`, `--global-services`, `--no-edges`. An explicit key always beats the purpose.
 
 ## Step 3 - Generate `generate_<subject>_drawio.py`
 
@@ -127,13 +144,14 @@ write_diagram(MODEL, "app-prod_Architecture.drawio", render_fmt="png")
 1. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" "<Subject>_Architecture.drawio"` must exit 0 (1 = errors, 2 = unreadable/unparsable file). Add `--strict` to make crossings blocking.
 2. Fix every `ERROR`/`OVERLAP` line (table below). Read every `WARNING`: long caption -> shorten to 3 lines; estimated crossing -> look at the PNG, then reorder items, move the item to the right tier/panel, or (custom layouts) add `label_pos`/`route="direct"`; accept only when the PNG shows no real crossing.
 3. If Step 4 did not render: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/render_drawio.py" "<Subject>_Architecture.drawio" -f png` (exit 3 = draw.io absent -> skip and say so).
-4. READ the PNG with the Read tool and check: all glyphs the same size; every caption legible, inside its container, not overlapping; edges run in gutters and cross no icon or caption; on-premises panel and DRG centred on the VCN stack; DRG outside every VCN, attachment boxes beside it; gateways centred on the VCN border; route table / security list badges on the subnets' top-right corners and NSG badges on the top-right of their icons, none of them drawn as captioned icons; no large empty areas. On the default outside canvas: the On-Premises, Internet and 3rd Party boxes are outside the region, the hybrid connection label sits in the gap between the On-Premises box and the region, the IGW and the NAT sit on the border facing the Internet box - the IGW directly above the NAT on the **right** border of the rightmost VCN column, the two side by side on the **top** border with their captions above the glyphs for every other column (`gateway_edge` / `gateways[].side` override both) - the Oracle Services Network is a band under the VCN stack, and subnet labels are two lines. With `locations: "nested"`: nothing but the title, notes and legend outside the region, and the OSN panel right of the VCNs. When a legend is drawn, it has one row per badge kind actually used.
+4. READ the PNG with the Read tool and check: **every caption carries the fields the label mode promises and no OCID**; when `layers` is on, the layers panel lists the expected layers with the expected visibility (open it with `Cmd+Shift+L` / `Ctrl+Shift+L`; a PNG export renders only the visible layers); all glyphs the same size; every caption legible, inside its container, not overlapping; edges run in gutters and cross no icon or caption; on-premises panel and DRG centred on the VCN stack; DRG outside every VCN, attachment boxes beside it; gateways centred on the VCN border; route table / security list badges on the subnets' top-right corners and NSG badges on the top-right of their icons, none of them drawn as captioned icons; no large empty areas. On the default outside canvas: the On-Premises, Internet and 3rd Party boxes are outside the region, the hybrid connection label sits in the gap between the On-Premises box and the region, the IGW and the NAT sit on the border facing the Internet box - the IGW directly above the NAT on the **right** border of the rightmost VCN column, the two side by side on the **top** border with their captions above the glyphs for every other column (`gateway_edge` / `gateways[].side` override both) - the Oracle Services Network is a band under the VCN stack, and subnet labels are two lines. With `locations: "nested"`: nothing but the title, notes and legend outside the region, and the OSN panel right of the VCNs. When a legend is drawn, it has one row per badge kind actually used.
 5. Anything failing -> back to Step 2. At most 3 iterations.
 
 ## Step 6 - Report
 
 - Output path and size (expect roughly 7-13 KB per icon; the 31-icon reference is 280 KB), page size (`pageWidth` x `pageHeight` in the file), counts (VCNs, subnets, icons, edges).
 - Settings used (region, compartment, tenancy, profile, logo) and the gate line verbatim (`OK: no container overlaps ...`).
+- **The resolved view**: the purpose, the detail level, the label mode, which layers were created and which are hidden, and the filter counts from `layout_info` (`N of M resources shown`, `K edge(s) dropped`, and what `--mode participating` pruned). Say how to toggle a layer in draw.io (`Cmd+Shift+L` / `Ctrl+Shift+L`, or *Extras > Edit Diagram*), and that hiding the base `Network` layer blanks the page.
 - Assumptions: guessed icons and their fallbacks, inferred tiers, edges not backed by Terraform, resources left out.
 - PNG path, or "render skipped: draw.io desktop not installed".
 - Open the file in draw.io desktop; reopen if fonts look wrong (render cache).
@@ -160,6 +178,7 @@ Split when there are more than 3 VCNs or 45 icons, or when row 1 wraps to a thir
 | `oci_profile`, `oci_auth` | `config_file_profile` / config (`security_token`) | `query_tenancy.py --profile` |
 | `compartment`, `compartment_ocid`, `compartments` | `oci_identity_compartment` resources / vars | title `Compartment:` line, `query_tenancy.py --compartment-id` |
 | `vcns` | `oci_core_vcn` resources / tfvars (`[{"name","cidr"}]`) | VCN-name lookup, subject default |
+| `purpose` | **answered in Step 1, never detected** | `--purpose` on every later run; the only remembered view choice |
 | `logo_light`, `logo_dark` | file scan (`*dark*`/`*black*` -> `logo_light`; `*white*`/`*light*` -> `logo_dark`) | `write_diagram(..., logo=logo_light)` on the white page |
 | `terraform_dir`, `terraform_dirs` | shallowest dir with `provider "oci"`; ties listed | default Terraform input |
 
@@ -187,6 +206,12 @@ Delete the file to re-detect.
 | `WARNING: edge ... is estimated to cross` | Check the PNG; reorder items or change tier; custom: `route="direct"` or `label_pos` |
 | `WARNING: content ... exceeds the page` | Call `fit_page()` last (custom layouts) |
 | checker exit 2 | File missing, not XML, or the checker was moved away from `drawio_builder.py` |
+| `label_fields: 'ocid' is never rendered in a caption` | Remove it; the OCID lives in `metadata` and the tooltip |
+| `filter: '...' is not '[!]<dimension>[:<key>]<op><value>...'` | Use `=` (exact) or `~` (substring), e.g. `tag:Application=payments`, `!type=oci_core_nat_gateway` |
+| A `tag:` filter matches nothing on a live tenancy | The search response carried no tags; the model has none. Re-run with `--mode all` and filter on `name` / `type` instead |
+| The diagram is emptier than expected | `--mode participating` pruned it, or a `--filter` did; `layout_info["pruned"]` and `layout_info["filter"]` say how much. `--mode all` and an empty `--filter` restore everything |
+| The layers panel is empty | `layers` defaults to `off`; pass `--layers auto` |
+| Captions lost the shape line | 1.5.0 moved it to `metadata.shape`; `--label-mode minimal --label-fields display_name,shape` renders the exact 1.4 caption back |
 
 ## Prerequisites
 
