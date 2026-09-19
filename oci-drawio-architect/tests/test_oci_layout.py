@@ -6,6 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parent
@@ -44,6 +45,85 @@ def label_collisions(d):
                 if ob.intersects(lbox):
                     hits.append((cid, oid))
     return hits
+
+
+def docking_points(d):
+    """(endpoint cell id, absolute docking point) for both ends of every edge.
+
+    The point is where the router pinned the connector: the exit / entry
+    fraction of the endpoint's own box, or the first / last waypoint for an
+    edge the router left unpinned.
+    """
+    d.route_edges()
+    out = []
+    for cid, e in d._cells.items():
+        if e["kind"] != "edge":
+            continue
+        tok = style_of(d, cid)
+        poly = e.get("polyline") or []
+        ends = (("source", tok.get("exitX"), tok.get("exitY"), poly[0] if poly else None),
+                ("target", tok.get("entryX"), tok.get("entryY"), poly[-1] if poly else None))
+        for end, fx, fy, fallback in ends:
+            box = d._abs_cell(e[end]) if e[end] in d._cells else None
+            if fx is not None and fy is not None and box is not None:
+                x, y, w, h = box
+                point = (round(x + w * float(fx), 1), round(y + h * float(fy), 1))
+            elif fallback is not None:
+                point = (round(fallback[0], 1), round(fallback[1], 1))
+            else:
+                continue
+            out.append((cid, e[end], point))
+    return out
+
+
+def file_docking_points(path):
+    """Same, read back from a written .drawio; endpoints are keyed per page."""
+    out = []
+    for page_idx, page in enumerate(ET.parse(str(path)).iter("diagram")):
+        cells = {}
+        for el in page.iter():
+            if el.tag in ("object", "UserObject"):       # metadata / link wrapper
+                inner = el.find("mxCell")
+                if inner is not None and el.get("id"):
+                    cells[el.get("id")] = inner
+            elif el.tag == "mxCell" and el.get("id"):
+                cells[el.get("id")] = el
+
+        def abs_box(cid):
+            x = y = w = h = 0.0
+            cur, first, seen = cid, True, set()
+            while cur in cells and cur not in seen:
+                seen.add(cur)
+                g = cells[cur].find("mxGeometry")
+                if g is not None:
+                    x += float(g.get("x") or 0)
+                    y += float(g.get("y") or 0)
+                    if first:
+                        w, h = float(g.get("width") or 0), float(g.get("height") or 0)
+                cur, first = cells[cur].get("parent"), False
+            return x, y, w, h
+
+        for cid, el in cells.items():
+            if el.get("edge") != "1":
+                continue
+            tok = db._style_tokens(el.get("style", ""))
+            for end, fx, fy in (("source", tok.get("exitX"), tok.get("exitY")),
+                                ("target", tok.get("entryX"), tok.get("entryY"))):
+                ref = el.get(end)
+                if ref not in cells or fx is None or fy is None:
+                    continue
+                x, y, w, h = abs_box(ref)
+                out.append((cid, (page_idx, ref),
+                            (round(x + w * float(fx), 1), round(y + h * float(fy), 1))))
+    return out
+
+
+def shared_docking_points(entries):
+    """{(cell, point): [edge ids]} for every point used by more than one edge."""
+    seen = {}
+    for edge_id, cell_id, point in entries:
+        seen.setdefault((cell_id, point), []).append(edge_id)
+    return {k: sorted(v) for k, v in seen.items() if len(v) > 1}
 
 
 def errors_of(d):
@@ -713,6 +793,19 @@ class ExamplesTests(unittest.TestCase):
                 label = db._Box(*d._cells["att-vpn-edge"]["label_box"])
                 self.assertFalse(box.intersects(label))
                 self.assertLessEqual(label.right, box.x)      # on the on-premises side
+
+    def test_reference_gives_every_connector_its_own_docking_point(self):
+        """_PORT_SHARE_COST must stay above a three-bend detour: two arrowheads
+        on one point read as a single connector and the loser rides the glyph
+        border. Checked on the model and on the committed sample."""
+        from generate_reference_layout import MODEL
+        d = quiet(ol.build_diagram, MODEL)
+        shared = shared_docking_points(docking_points(d))
+        self.assertEqual(shared, {}, f"connectors sharing a docking point: {shared}")
+        committed = TESTS_DIR.parent.parent / "OCI_Architecture.drawio"
+        if committed.exists():                                # not shipped in the plugin archive
+            shared = shared_docking_points(file_docking_points(committed))
+            self.assertEqual(shared, {}, f"committed sample shares docking points: {shared}")
 
     def test_committed_reference_diagram_is_not_stale(self):
         from generate_reference_layout import MODEL
