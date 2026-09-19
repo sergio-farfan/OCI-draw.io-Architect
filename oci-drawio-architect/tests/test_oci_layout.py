@@ -1,4 +1,4 @@
-"""Layout tests for scripts/oci_layout.py (v1.4.0 placement enrichments)."""
+"""Layout tests for scripts/oci_layout.py (v1.4.0 placement enrichments; the v1.5.0 view controls have their own modules)."""
 import contextlib
 import copy
 import io

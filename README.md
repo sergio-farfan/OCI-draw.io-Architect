@@ -2,7 +2,7 @@
 
 **A Claude Code plugin that generates production-quality draw.io architecture diagrams for Oracle Cloud Infrastructure (OCI) — from Terraform configurations or free-form descriptions.**
 
-[![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/tag/v1.4.0)
+[![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/tag/v1.5.0)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
@@ -11,7 +11,7 @@
 ---
 
 **Author:** Sergio Farfan · sergio.farfan@gmail.com
-**Version:** 1.4.0 · [Download archive](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.4.0/oci-drawio-architect-v1.4.0.tar.gz) · [Changelog](oci-drawio-architect/CHANGELOG.md)
+**Version:** 1.5.0 · [Download archive](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.5.0/oci-drawio-architect-v1.5.0.tar.gz) · [Changelog](oci-drawio-architect/CHANGELOG.md)
 
 ---
 
@@ -80,7 +80,21 @@ draw.io offers a connector for AI hosts — its hosted MCP server at `mcp.draw.i
 
 ---
 
-## What's new in 1.4.0
+## What's new in 1.5.0
+
+View and detail controls: one discovered topology, several readable views (design: [the v1.5.0 spec](docs/superpowers/specs/2026-09-19-v1.5.0-view-and-detail-controls-design.md), full list in the [changelog](oci-drawio-architect/CHANGELOG.md)):
+
+- **Label modes.** Captions become a rendered field list - `minimal`, `network` (the new default) and `detailed` - over a documented vocabulary (name, type, private/public IP, CIDR, FQDN, port/protocol, compartment, AD/FD, lifecycle, tags). An OCID is never rendered in a caption, in any mode; a hand-written model's caption is unaffected.
+- **View layers.** The diagram can be emitted onto real draw.io layers - `routes`, `security`, `iam`, `dataflow`, `management`, `associations` - over a base layer named `Network`, toggled with `Cmd/Ctrl+Shift+L` without regenerating the file.
+- **Detail levels.** `executive`, `application`, `network` (default, today's output) and `engineering`, each a composition of the label mode, the layer set and a small table of content gates.
+- **Filtering.** One shared predicate over tags, compartment, region, VCN, subnet, resource type, environment and application, applied identically by the Terraform parser, the live-tenancy reader and the layout CLI.
+- **Participating mode.** `all` (every discovered resource, the Terraform default) or `participating` (only what takes part in the architecture, the live-tenancy default).
+- **Relationship provenance.** `edges[].discovery` replaces the old `inferred` boolean with seven named methods and becomes a filter axis; `--annotate-discovery` puts it in the connector tooltip.
+- **Global-services bucket.** IAM, Policies, Audit and public DNS can move into a tenancy-scoped box below the region, distinct from the regional Oracle Services Network.
+- **Purpose presets.** `network`, `dataflow`, `security`, `inventory`, `dependency`, `ha` - the six purposes the team's diagram guidelines name, each a one-flag composition of everything above.
+- The demo (`examples/generate_demo_diagram.py`) grows to six pages: Architecture (the outside canvas with the badge legend), DRG as a box (the nested 1.3.0 canvas), Compartments and OKE, Executive overview, Engineering detail, and Security (the custom-API NSG table).
+
+## What was new in 1.4.0
 
 Placement enrichments: where things go now follows Oracle's Location Canvas and the toolkit's grouping specs (design: [the v1.4.0 spec](docs/superpowers/specs/2026-09-18-v1.4.0-placement-enrichments-design.md), full list in the [changelog](oci-drawio-architect/CHANGELOG.md)):
 
@@ -146,7 +160,7 @@ The plugin bundles 159 OCI SVG icons (12 categories, about 1.4 MB); no external 
 ### One-line install
 
 ```bash
-curl -fsSL https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.4.0/oci-drawio-architect-v1.4.0.tar.gz | tar -xz && ./oci-drawio-architect/install.sh
+curl -fsSL https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.5.0/oci-drawio-architect-v1.5.0.tar.gz | tar -xz && ./oci-drawio-architect/install.sh
 ```
 
 This will:

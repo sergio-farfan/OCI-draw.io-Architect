@@ -136,7 +136,7 @@ write_diagram(MODEL, "app-prod_Architecture.drawio", render_fmt="png")
 
 2. Optional `write_diagram` kwargs: `style_profile="official"|"v1.0"`, `legend=True` (only when asked or with 3+ edge kinds), `logo=<settings logo_light>`, `strict=True` (crossings become errors), `drg_style="box"` (attachments as a dashed `DRG: <name>` group instead of loose boxes), and eight view keywords that each override the model key of the same name: the five v1.4.0 ones `locations`, `gateway_edge`, `subnet_label`, `attachment_style`, `show_compartments`, plus `label_mode`, `label_fields`, `label_tag_keys`. The rest of the view - `purpose`, `detail`, `layers`, `hidden_layers`, `filter`, `mode`, `global_services`, `show_edges` (item 16 above) - has no `write_diagram` kwarg and is read from the model only. A large `model.json` may be loaded with `json.load` instead of inlined.
 3. `write_diagram` validates, refuses to write on errors (`SystemExit`), writes the file and renders the PNG when draw.io desktop is installed.
-4. Custom layout ONLY when the recipe cannot express the architecture (availability/fault domains, nested compartments, several regions, third-party cloud, rule tables, extra pages). Then use `DrawioBuilder` from the same `scripts` directory with `place_icons` -> `fit_to_children` (innermost first) -> `fit_page` -> `validate` gate exactly as in SKILL.md section 6; never hand-compute container sizes.
+4. Custom layout ONLY when the recipe cannot express the architecture (availability/fault domains, nested compartments, several regions, third-party cloud, rule tables, extra pages). Then use `DrawioBuilder` from the same `scripts` directory with `place_icons` -> `fit_to_children` (innermost first) -> `fit_page` -> `validate` gate exactly as in SKILL.md section 7; never hand-compute container sizes.
 
 ## Step 4 - Run
 
@@ -166,7 +166,7 @@ write_diagram(MODEL, "app-prod_Architecture.drawio", render_fmt="png")
 | Single VCN | one `vcns` entry, optional `hub`, services in `vcn.services` | one |
 | Hub-and-spoke | `model.hub` (CPE) + `model.drgs` (one DRG, one attachment per spoke) + spoke VCN columns; regional services in the OSN panel | one while <= 3 VCNs and <= 40 icons |
 | Multi-VCN overview | several VCNs, LPG pairs via `gateways[].peer`, edges between `vcn:<name>` endpoints | one |
-| Service inventory | custom layout: `compartment` groups + `place_icons`, no subnets (SKILL.md section 6) | one |
+| Service inventory | custom layout: `compartment` groups + `place_icons`, no subnets (SKILL.md section 7) | one |
 
 Split when there are more than 3 VCNs or 45 icons, or when row 1 wraps to a third row (row budget 1000 px): one file per VCN plus an overview, or extra pages via `add_page()` in a custom layout (rule tables on page 2).
 

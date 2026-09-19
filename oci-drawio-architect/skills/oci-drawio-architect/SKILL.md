@@ -3,9 +3,9 @@ name: oci-drawio-architect
 description: Generate deterministic draw.io diagrams of Oracle Cloud Infrastructure architectures (Redwood container styles, embedded OCI icons, auto-routed edges) from Terraform or a description. Use when the user says "draw.io OCI", "diagram this architecture", "drawio with OCI icons", "OCI architecture diagram" or "Terraform to draw.io".
 ---
 
-# OCI draw.io Architect (plugin v1.4.0)
+# OCI draw.io Architect (plugin v1.5.0)
 
-Diagrams are data: a MODEL dict laid out by `scripts/oci_layout.py` on top of `scripts/drawio_builder.py` (DrawioBuilder v1.4.0). The `/drawio-architect` command is the workflow; this skill holds the conventions, the schema and the API. Always `sys.path.insert(0, "<abs>/oci-drawio-architect/scripts")` and import from the plugin - never copy `drawio_builder.py` into a project (the copy loses the icon directory and drifts from the plugin).
+Diagrams are data: a MODEL dict laid out by `scripts/oci_layout.py` on top of `scripts/drawio_builder.py` (DrawioBuilder v1.5.0). The `/drawio-architect` command is the workflow; this skill holds the conventions, the schema and the API. Always `sys.path.insert(0, "<abs>/oci-drawio-architect/scripts")` and import from the plugin - never copy `drawio_builder.py` into a project (the copy loses the icon directory and drifts from the plugin).
 
 ## 1. Target look (the reference sample, `examples/generate_reference_layout.py`)
 
@@ -37,7 +37,18 @@ MODEL = {
   "drg_style": "auto",                # auto | icon | box (CLI --drg-style overrides)
   "locations": "outside",             # outside (default) | nested - where the location boxes go
   "gateway_edge": "auto",             # auto | internet | top | bottom - Internet-facing gateway border
-  "subnet_label": "twoline",          # twoline (default) | inline
+  "subnet_label": "twoline",          # twoline (default) | inline | name (no CIDR)
+  "purpose": None,                    # network|dataflow|security|inventory|dependency|ha - sets the defaults below
+  "detail": "network",                # executive | application | network (default) | engineering
+  "label_mode": "network",            # minimal | network (default) | detailed - caption field list
+  "label_fields": None,               # explicit field list (see section 4); wins over label_mode
+  "label_tag_keys": [],               # which tag keys the "tags" caption field renders, in order
+  "layers": "off",                    # off (default) | auto | [layer name, ...] - real draw.io layers
+  "hidden_layers": [],                # layers created with visible="0"
+  "filter": {},                       # {"include": [expr], "exclude": [expr], "keep_empty": False}
+  "mode": "all",                      # all (default) | participating - keep only what takes part
+  "global_services": "osn",           # osn (default) | bucket - IAM/Policies/Audit/DNS in a tenancy box
+  "show_edges": True,                 # False draws no model connectors (the inventory purpose)
   "attachment_style": "solid",        # solid (default) | dotted - DRG attachment connectors
   "show_compartments": False,         # draw compartment containers around the VCNs
   "compartments": ["Network"],        # names, or [{"name", "parent", "vcns"}] for explicit nesting
@@ -57,8 +68,14 @@ MODEL = {
      "groups": [{"type": "tier", "label": "Application Tier", "subnets": ["sn-priv-app"], "key": "tier-app"}],
      "subnets": [{"name": "sn-priv-lb", "cidr": "10.0.0.0/24", "tier": "lb", "public": False,
                   "items": [{"icon": "load_balancer", "label": "Load Balancer\n10.0.0.23",
-                             "address": "lb", "metadata": {"ocid": "..."}, "tooltip": "...",
-                             "nsgs": ["nsg-lb"]}],
+                             "address": "lb", "metadata": {"ocid": "...", "private_ip": "10.0.0.23",
+                             "public_ip": "203.0.113.10", "fqdn": "lb.sub.oraclevcn.com",
+                             "ports": "HTTPS/443", "compartment": "app-prod",
+                             "availability_domain": "Uocm:PHX-AD-1", "fault_domain": "FAULT-DOMAIN-2",
+                             "lifecycle_state": "AVAILABLE"},
+                             "tooltip": "...", "nsgs": ["nsg-lb"],
+                             "tags": {"freeform": {"Environment": "prod"},
+                                      "defined": {"Operations": {"CostCenter": "cc-1"}}}}],
                   "groups": [{"type": "oke_cluster", "label": "Container Engine for Kubernetes Cluster",
                               "items": ["oke-main", "np-a"], "key": "oke-main-box"}],
                   "route_table": "rt-lb", "security_lists": ["sl-lb"]}],
@@ -70,7 +87,8 @@ MODEL = {
                    "peer": "lpg-b"}]
   }],
   "services": [],                                 # more regional services; join the OSN panel
-  "edges": [{"source": "lb", "target": "app-vm", "label": "3000 / 8000", "kind": "data"}],
+  "edges": [{"source": "lb", "target": "app-vm", "label": "3000 / 8000", "kind": "data",
+             "discovery": "association"}],         # association|config|reachability|tag|observed|user|heuristic
   "notes": None,                                  # free text placed right of the title
 }
 ```
@@ -87,12 +105,14 @@ Rules:
 9. View keys are authored, never parsed: `locations`, `gateway_edge`, `subnet_label`, `attachment_style` and `show_compartments` are choices about the drawing, not facts about the Terraform, so `parse_terraform.py` never sets them. Every one of them has a `build_diagram(...)` keyword and an `oci_layout.py` flag of the same name that overrides the model.
 10. Compartments: `compartments[]` accepts plain names (what the parser emits) and objects `{"name", "parent", "vcns"}`, mixed in one list; an object wins over a string of the same name. Membership is `compartments[].vcns` first, then `vcn.compartment`; a VCN naming no known compartment is drawn beside the boxes, not in one. An unknown `parent` or a cycle raises `ValueError`. Nothing is drawn unless `show_compartments` is true.
 11. Grouping boxes: `vcn.groups[]` bands whole subnet rows (`subnets`), `subnet.groups[]` encloses items (`items`); `type` in `oke_cluster | tier | user_group | other`, optional `key` (else `group:<parent>:<type>:<slug>`). Members must belong to the same container and two entries in one container may not interleave - both raise `ValueError` from `build_diagram`. The box is a container: its members are re-parented into it, and its `key` is a valid edge endpoint (deck slide 32 connects the load balancer to the OKE box, not to an icon inside it).
+12. View keys added in v1.5.0 - `purpose`, `detail`, `label_mode`, `label_fields`, `label_tag_keys`, `layers`, `hidden_layers`, `filter`, `mode`, `global_services`, `show_edges` - are resolved exactly like the v1.4.0 view keys of rule 9 (CLI flag / `build_diagram` kwarg beats the model key), with two preset layers of their own beneath the model; see section 4 for the full order, the purpose table, the label-field vocabulary and the layer table.
+13. `item["tags"]` (and the same key on a subnet or VCN): `{"freeform": {k: v}, "defined": {namespace: {k: v}}}`, both optional; the `tags` caption field renders `label_tag_keys` from either bucket. New `metadata` keys the parser and the live-tenancy reader write: `private_ip`, `public_ip`, `fqdn`, `hostname_label`, `lifecycle_state`, `compartment`, `ports`, plus the already-existing `shape` (no longer folded into `label`) and `availability_domain`/`fault_domain`. `edges[].discovery` (`association | config | reachability | tag | observed | user | heuristic`) replaces the old `inferred` boolean as the source of truth; `inferred` is still written (`True` only for `heuristic`) for anything that still reads it. An OCID (`metadata["ocid"]` / an `address` from a live tenancy) is never rendered in a caption, in any label mode - it stays in the tooltip and the metadata.
 
 ## 3. Layout recipe (`build_diagram`)
 
 `build_diagram(model, style_profile="default", legend=False, logo=None, page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None, locations=None, gateway_edge=None, subnet_label=None, attachment_style=None, show_compartments=None) -> DrawioBuilder` and `write_diagram(model, out_path, strict=False, render_fmt=None, **opts) -> Path` (build + `validate` + `write`, optional draw.io export; `**opts` are the `build_diagram` keywords). Each of the five view keywords defaults to `None` = take the model's value, which itself defaults to the value in section 2. CLI: `python3 oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo FILE] [--strict] [--render png|svg|pdf] [--drg-style auto|icon|box] [--locations outside|nested] [--gateway-edge auto|internet|top|bottom] [--subnet-label twoline|inline] [--attachment-style solid|dotted] [--show-compartments]`.
 
-Order of operations: migrate legacy model -> classify topology -> title -> region -> compartment / tenancy containers (only with `show_compartments`) -> for each VCN: subnet rows (each subnet: icons with their NSG badges -> `subnet.groups[]` boxes around their members -> `fit_to_children(subnet)` -> route table / security list badges on the subnet's top-right corner) -> VCN-resident services panel -> data subnets -> `vcn.groups[]` bands -> `fit_to_children(vcn)` -> border gateways (children of the VCN's container) -> optional region-level OCI Services panel -> Oracle Services Network panel (right column under `locations: "nested"`, full-width band below the VCN stack under `outside`) -> on-premises panel (region child only under `nested`) -> DRG column with its route-table badge strip -> `fit_to_children(region)` -> **page-level location pass** (translate the region right, emit the On-Premises / Internet / 3rd Party sibling boxes, then re-centre the DRG clusters and the on-premises items on the VCN stack) -> SGW -> OSN connectors -> attachment connectors -> model edges -> optional legend -> `fit_page()`. Nothing inside the region is recomputed by the location pass: the region is *translated* with `resize(rid, x=...)` and every descendant moves with it.
+Order of operations: migrate legacy model -> **resolve the view** (`_view_ctx` -> `oci_view.resolve_view`, section 4) -> **filter and prune the model** (`oci_view.filter_model`, section 4) -> classify topology -> title -> region -> compartment / tenancy containers (only with `show_compartments`) -> for each VCN: subnet rows (each subnet: icons with their NSG badges -> `subnet.groups[]` boxes around their members -> `fit_to_children(subnet)` -> route table / security list badges on the subnet's top-right corner) -> VCN-resident services panel -> data subnets -> `vcn.groups[]` bands -> `fit_to_children(vcn)` -> border gateways (children of the VCN's container) -> optional region-level OCI Services panel -> Oracle Services Network panel (right column under `locations: "nested"`, full-width band below the VCN stack under `outside`) -> on-premises panel (region child only under `nested`) -> DRG column with its route-table badge strip -> `fit_to_children(region)` -> **page-level location pass** (translate the region right, emit the On-Premises / Internet / 3rd Party sibling boxes, then re-centre the DRG clusters and the on-premises items on the VCN stack) -> **global-services bucket** (only with `global_services: "bucket"`) -> SGW -> OSN connectors -> attachment connectors -> model edges (each on its layer) -> optional legend -> `fit_page()` -> **layer pass** (assign the enabled layers over the base layer `Network`, re-parent badges onto them; edges were already parented to their layer when added). Nothing inside the region is recomputed by the location pass: the region is *translated* with `resize(rid, x=...)` and every descendant moves with it. Every view key is resolved in one fixed order, most specific first: **explicit CLI flag -> `build_diagram` kwarg -> explicit model key -> the `detail` preset -> the `purpose` preset -> the `detail` preset the purpose selected -> hard default** - so a generating agent can predict which setting wins when several are given at once.
 
 | Constant | Value | Constant | Value |
 |----------|-------|----------|-------|
@@ -118,7 +138,105 @@ Order of operations: migrate legacy model -> classify topology -> title -> regio
 | `CMP_PAD` / `CMP_TITLE_H` / `CMP_GAP` | 30 / 40 / 40 | `TEN_PAD` / `TEN_TITLE_H` | 25 / 40 |
 | `GRP_PAD` / `GRP_TITLE_H` | 15 / 30 | `DRG_RT_GAP` / `DRG_RT_MAX` | 6 / 2 |
 
-## 4. Icon selection
+## 4. Views: purposes, label fields and layers (`oci_view.py`)
+
+`oci_view.py` is the one place every view key is resolved (`resolve_view`), a caption is rendered
+(`render_caption`) and the model is filtered (`filter_model`). It imports nothing from the plugin,
+mirroring `oci_topology.py`. The resolution order of section 3 - CLI flag > `build_diagram` kwarg >
+explicit model key > the `detail` preset > the `purpose` preset > the `detail` preset the purpose
+selected > hard default - is what lets a generating agent pass `--purpose network` and still
+override one field (say `--label-mode detailed`) without fighting the preset.
+
+### 4.1 Purpose presets (`PURPOSES`)
+
+A purpose is a named composition asked once, in the command's Step 1, with the six titles verbatim
+from the team's diagram guidelines; `--purpose` / `purpose` / `build_diagram(purpose=)` produce the
+identical result to setting the individual keys by hand.
+
+| Purpose | Guideline title | `detail` | Label fields | Layers: visible / hidden | `mode` | Other | Pick it when |
+|---|---|---|---|---|---|---|---|
+| `network` | Network topology | `network` | `network` mode (name, private IP, port/protocol) | routes, security, dataflow, management / - | `all` | today's default look | the ask is "show me the architecture" with no other qualifier |
+| `dataflow` | Application / data flow | `application` | `display_name, port_protocol` | dataflow, management / routes, security | `participating` | edge labels on | the ask is about what talks to what, not the network plumbing |
+| `security` | Security architecture | `network` | `display_name, private_ip` | security, routes, iam, management / dataflow | `all` | `global_services: "bucket"`, `legend: true` | the ask centres on NSGs, security lists, IAM or the audit surface |
+| `inventory` | Resource / inventory view | `executive` | `display_name, resource_type, compartment` | iam / - | `all` | `show_edges: false`, `show_compartments: true` | the ask is "what do we have and where", not how it connects |
+| `dependency` | Dependency / relationship view | `application` | `display_name` | dataflow, management, associations / routes, security | `participating` | `--annotate-discovery` on | the ask is about relationships and their provenance, e.g. before a change |
+| `ha` | Deployment / high-availability architecture | `network` | `display_name, ad_fd` | routes / security | `all` | AD/FD as caption fields only - AD/FD **containers** are out of scope | the ask is about resiliency placement, not full network detail |
+
+No purpose sets a `filter`: a filter is about *this* tenancy, a purpose is about *this* diagram. A
+purpose only ever sets **defaults** - any explicit key, CLI flag or `detail` override still wins.
+
+**A purpose's `hidden_layers` is a no-op unless `--layers auto` (or an explicit layer list) is also
+given.** Layers default to `"off"` (A5) - the base `Network` layer plus whatever content the gates
+draw, no cell-layer split at all - so with layers off a "hidden" layer's content is simply **not
+drawn**, not emitted-and-hidden. `--purpose security` alone draws the security purpose's content
+with layers off; `--purpose security --layers auto` is what actually produces a toggleable
+`dataflow` layer that starts hidden.
+
+### 4.2 Label-field vocabulary (`LABEL_FIELDS`, section 2 rule 12)
+
+| Field | Renders as | Model source |
+|---|---|---|
+| `display_name` | line 1, the item's authored `label` verbatim (V5 dedupe against later fields) | `item["label"]` |
+| `resource_type` | `Instance` - the human default from `RESOURCE_ICONS[type][1]`; for a gateway, its human short-type name (`Service gateway`, not `Sgw`) | `item["type"]` |
+| `shape` | `VM.Standard.E5.Flex` - the line the 1.4.0 parser used to append to the caption itself | `metadata["shape"]` |
+| `private_ip` | `10.0.2.47` | `metadata["private_ip"]`, else `metadata["ip_address"]` |
+| `public_ip` | `203.0.113.10` | `metadata["public_ip"]` |
+| `cidr` | `10.0.2.0/24` | containers only (subnet / VCN title, not an icon caption) |
+| `fqdn` | `broker.sub01...` (elided to the caption width) | `metadata["fqdn"]` |
+| `port_protocol` | `HTTPS/443` | `metadata["ports"]` |
+| `compartment` | `Compartment: app-prod` | `metadata["compartment"]` |
+| `ad_fd` | `AD-1 / FD-2` - reduced to the trailing `AD-n` / `FD-n` | `metadata["availability_domain"]`, `metadata["fault_domain"]` |
+| `lifecycle` | `AVAILABLE` (only when it is not the healthy state) | `metadata["lifecycle_state"]` |
+| `tags` | `Environment=prod` per key in `label_tag_keys`, in that order | `item["tags"]["freeform"]` / `["defined"][ns]` |
+| `ocid` | **never rendered in a caption, in any mode** - tooltip and metadata only | `item["address"]` under `query_tenancy.py` |
+
+`label_mode` presets: `minimal` = `[display_name]`; `network` (default) = `[display_name,
+private_ip, port_protocol]`; `detailed` = `[display_name, private_ip, ad_fd, compartment]`.
+`label_fields` overrides the preset outright; an unknown field name raises `ValueError`. A field
+with no value is skipped silently, and a field whose text already occurs in the caption rendered so
+far is skipped too (V5) - a hand-written `"Load Balancer\n10.0.0.23"` caption still renders as
+written in every mode. The exact 1.4.0 caption of a **parsed** model comes back with
+`label_mode="minimal", label_fields=["display_name", "shape"]` (`shape` is a field of its own).
+
+### 4.3 View layers (`VIEW_LAYERS`, section 1 item 2 revisited)
+
+A draw.io layer is a child of the root and a cell belongs to the layer of its top-level ancestor
+(`gotchas.md` #24), so only six of the team's twelve guideline layers can be real cell layers; the
+rest are the base layer, a label field (4.2) or build-time content gated by `detail` / `filter` /
+`mode`.
+
+| Guideline layer | Mechanism | What it is in 1.5.0 | Default visibility |
+|---|---|---|---|
+| Network | base layer | Cell `"1"`, renamed `Network`: region, location boxes, every container and icon, gateways, the DRG cluster and attachment boxes, attachment connectors, title, notes, legend | visible (hiding it blanks the page) |
+| Application resources | build-time | Workload icons, children of their subnet; gated by `detail`, `filter` and `mode` | - |
+| Routes | cell layer `routes` | Subnet route-table badges, DRG route-table badges | visible |
+| Security | cell layer `security` | Security-list badges, NSG badges (WAF / bastion / firewall stay build-time icons) | visible |
+| IAM | cell layer `iam` | The global-services bucket (4.4) and its icons; not created when `global_services: "osn"` | visible |
+| Observability | build-time | Logging / Monitoring / Notifications icons, children of the OSN panel | - |
+| Data flows | cell layer `dataflow` | Edges of kind `data`, `analytics`, `datalake` | visible |
+| Management paths | cell layer `management` | Edges of kind `control` | visible |
+| Associations (plugin addition beyond the guidelines' twelve) | cell layer `associations` | Edges of kind `association`; `attachment` edges stay on the base layer - they are structure | visible |
+| Compartments | build-time | A compartment container holds the VCNs, so it cannot move to another layer; `show_compartments` is the toggle | off |
+| AD / FD | out of scope | No AD / FD containers exist in this release | - |
+| Resource IPs | label field | `private_ip` / `public_ip` in `label_fields`; `--layers ips` is accepted and rewritten to that field, with a note on stderr | per label mode |
+| Ports and protocols | label field | `port_protocol` in `label_fields`, plus the connector labels, which travel with the edge's own layer | per label mode |
+
+Fixed z-order when layers are enabled, all above the base layer: `routes, security, iam, dataflow,
+management, associations`. `layers: "auto"` turns on every layer a resource actually populates;
+an explicit `[layer, ...]` list turns on exactly those; a layer nothing populates is never created,
+even if named. `hidden_layers` marks a created layer `visible="0"` without removing its content.
+
+### 4.4 Global-services bucket (`global_services`)
+
+`"osn"` (default) keeps IAM, Policies, Audit and public DNS in the regional Oracle Services Network
+panel, as Oracle's own deck slides 29-31 draw them (`oracle-styles.md` conflict **V7**). `"bucket"`
+draws them instead in a `tenancy`-styled container below the region (cell id `global`), with the
+compartment list (`global-compartments`) when compartment containers are not drawn - the layout the
+team's diagram guidelines ask for. The bucket is page-level, so its icons sit on the `iam` layer
+when layers are on; no connector is ever drawn to it, because a global service is not reached
+through the regional network path.
+
+## 5. Icon selection
 
 1. Keys are either a short alias (206, `drawio_builder.ICON_ALIASES`) or an SVG file stem (159, e.g. `compute_virtual_machine_vm`); both forms are listed in `references/icon-catalog.md`. Unknown keys raise `Unknown icon_key ... Did you mean ...` - use the suggestion, never invent a key.
 2. Fallback: the closest catalog key by service family (compute -> `vm`, database -> `generic_database`, networking -> `vcn`, storage -> `block_storage`, anything else -> `cloud`) and say so in the report.
@@ -165,7 +283,7 @@ Order of operations: migrate legacy model -> classify topology -> title -> regio
 | `oci_cloud_guard_*` / `oci_data_safe_*` / `oci_vulnerability_scanning_*` | `cloud_guard` / `data_safe` / `vuln_scanning` | `services` (`regional: true`, OSN panel) |
 | `oci_core_public_ip` / `oci_core_vtap` / `oci_*_private_endpoint` | `ip_pools` / `vtap` / `private_endpoint` | lb subnet / mgmt / data |
 
-## 5. Style rules
+## 6. Style rules
 
 | Profile | Use when | Differences |
 |---------|----------|-------------|
@@ -177,7 +295,7 @@ Order of operations: migrate legacy model -> classify topology -> title -> regio
 2. Colours come from `drawio_builder.COLORS`; full table and every container style string in `references/oracle-styles.md`. The ones you will meet: Bark `#312D2A` (text, edges, services border), Sienna `#AE562C` (VCN/subnet/compartment borders, analytics edges), Neutral 3 `#9E9892` (region/tenancy/AD/FD borders), Neutral 1 `#F5F4F2` (region/onprem fill), Rose `#A36472` (Oracle Services Network), `#7B61FF` (datalake edges, project extension).
 3. Never restyle cells by hand (`style_extra` is for one-off tweaks such as `fontStyle=2`); container looks are fixed per `group_type`.
 
-## 6. Custom layouts with DrawioBuilder
+## 7. Custom layouts with DrawioBuilder
 
 Use only when the recipe cannot express the architecture (availability/fault domains, nested compartments, several regions, third-party cloud, tables, extra pages). Order: containers with provisional sizes -> `place_icons` -> `fit_to_children` innermost first -> position siblings from `bbox()` + `GAP` -> edges -> `fit_page` -> `validate` gate -> `write`.
 
@@ -241,15 +359,17 @@ Metadata, tooltips, links: `metadata={"ocid": "...", "shape": "VM.Standard.E5.Fl
 
 Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_page(0)` to return); call `add_title`/`fit_page` per page; `validate()` covers all pages. Legend: `_, _, _, bottom = d.content_bbox(); d.add_legend(PAD, bottom + GAP)` before `fit_page()`. Table: `d.add_table([["Direction", "Source", "Ports"], ["Ingress", "0.0.0.0/0", "443"]], PAD, 75, col_widths=[80, 170, 60], title="nsg-app (1 rule)")`. Demonstration of the recipe on a two-VCN hybrid model (the outside canvas with the badge legend, then the same model with `locations="nested"` and `drg_style="box"`), a third page with compartments, a tenancy wrapper, an OKE cluster box and a tier band, and a fourth built with the custom API (`add_table` for an NSG rule list): `examples/generate_demo_diagram.py`.
 
-## 7. Acceptance criteria (all mandatory)
+## 8. Acceptance criteria (all mandatory)
 
 1. `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py" <file>.drawio` exits 0 and prints `OK: no container overlaps or layout errors (...)`.
 2. Zero `ERROR:`/`OVERLAP:` lines (unknown parents or endpoints, intersecting containers, shapes outside their parent, icon/caption collisions).
 3. Every `WARNING:` line was read and either fixed (caption > 3 lines; estimated crossing; content exceeds page) or confirmed harmless in the PNG.
 4. PNG self-review (`render_drawio.py <file> -f png`, then Read the PNG): glyphs uniform; captions legible, 3 lines max, inside their container, no overlaps; edges in gutters, none across icons or captions, labels readable; on-premises panel and DRG column centred on the VCN stack; DRG outside every VCN with its attachment boxes beside it; gateways centred on the VCN border; route tables and security lists as badges on the subnets' top-right corners and NSGs as shield badges on their resources, never as workload icons; no large empty area; title and region label follow section 1. Under the default `locations: "outside"` canvas also: the On-Premises, Internet and 3rd Party Cloud boxes sit **outside** the region, the hybrid connection label (`Site-to-Site VPN` / `FastConnect` / `Remote Peering`) sits in the gap between the On-Premises box and the region, the IGW and the NAT straddle the VCN border facing the Internet box - the IGW above the NAT on the **right** border of the rightmost VCN column, the two side by side on the **top** border with their captions above the glyphs for every other column (`gateway_edge` / `gateways[].side` override both) - the Oracle Services Network is a full-width band under the VCN stack fed by a bottom-border Service Gateway, and every subnet label is two lines (name + Public/Private, then the CIDR). Under `locations: "nested"` the 1.3.0 checks apply instead (on-premises panel inside the region, OSN panel right of the VCNs). Nothing but the title, the notes, the legend and the location boxes is outside the region.
 5. The generated script imports from the plugin `scripts` directory and contains no copied builder code; file size is roughly 7-13 KB per icon (the 31-icon reference is 280 KB).
+6. No caption contains an OCID, in any label mode.
+7. Every layer the file creates is non-empty, and the base layer is named `Network` whenever layers are on.
 
-## 8. Failure handling
+## 9. Failure handling
 
 | Message | Fix |
 |---------|-----|
@@ -268,11 +388,11 @@ Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_
 | `draw.io desktop not found` (render exit 3) | skip the PNG and say so; `DRAWIO_BIN=/path/to/drawio` overrides discovery |
 | `detect_settings.py` slow / `cli_warning` | rerun with `--no-cli` |
 
-## 9. Key references
+## 10. Key references
 
 - Command workflow: `${CLAUDE_PLUGIN_ROOT}/commands/drawio-architect.md`
 - Layout recipe and MODEL schema: `${CLAUDE_PLUGIN_ROOT}/scripts/oci_layout.py`
-- Builder API: `${CLAUDE_PLUGIN_ROOT}/scripts/drawio_builder.py` (v1.4.0, standard library only)
+- Builder API: `${CLAUDE_PLUGIN_ROOT}/scripts/drawio_builder.py` (v1.5.0, standard library only)
 - Model producers: `${CLAUDE_PLUGIN_ROOT}/scripts/parse_terraform.py` (Terraform dir / plan / state -> model.json), `${CLAUDE_PLUGIN_ROOT}/scripts/query_tenancy.py` (experimental as-built via OCI CLI)
 - Topology helpers: `${CLAUDE_PLUGIN_ROOT}/scripts/oci_topology.py`
 - Gate and tools: `${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/render_drawio.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/detect_settings.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/smoke_test.sh`
