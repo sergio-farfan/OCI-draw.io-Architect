@@ -874,6 +874,114 @@ def prune_dangling(model: dict, known=None) -> dict:
     return dropped
 
 
+def _group_scope(vcn, subnet=None) -> str:
+    """Identity of one ``groups[]`` scope, stable across a filter (it renames nothing)."""
+    def ident(entry) -> str:
+        for field in ("name", "address"):
+            if isinstance((entry or {}).get(field), str):
+                return str(entry[field])
+        return ""
+    return f"{ident(vcn)}/{ident(subnet) if subnet is not None else ''}"
+
+
+def _group_members_of(vcn, subnet=None) -> set:
+    """The names a ``groups[]`` member of this container may resolve to, right now.
+
+    The recipe resolves a subnet box's members against the ADDRESSES of that
+    subnet's items and a VCN box's members against the NAME or the address of
+    that VCN's subnets (``oci_layout._layout_subnet`` / ``_layout_vcn``).
+    """
+    if subnet is not None:
+        return {str(i["address"]) for i in _list(subnet.get("items"))
+                if isinstance(i, dict) and isinstance(i.get("address"), str)}
+    return {str(sn[f]) for sn in _list(vcn.get("subnets")) if isinstance(sn, dict)
+            for f in ("name", "address") if isinstance(sn.get(f), str)}
+
+
+def group_member_keys(model: dict) -> Dict[str, set]:
+    """Every ``groups[]`` scope of the model mapped to its resolvable member names.
+
+    Per scope, not one flat set: a member that names an item of ANOTHER subnet
+    was always a model error, and folding every container into one set would
+    let a filter that removes that item silently repair the error away instead
+    of letting the recipe report it. Taken on the model BEFORE a filter runs,
+    this is ``prune_groups``' ``known`` map.
+    """
+    out: Dict[str, set] = {}
+    for vcn in _list(model.get("vcns")):
+        if not isinstance(vcn, dict):
+            continue
+        out[_group_scope(vcn)] = _group_members_of(vcn)
+        for sn in _list(vcn.get("subnets")):
+            if isinstance(sn, dict):
+                out[_group_scope(vcn, sn)] = _group_members_of(vcn, sn)
+    return out
+
+
+def prune_groups(model: dict, known=None) -> dict:
+    """Drop ``groups[]`` members the filter removed, and any box left with none (6.5).
+
+    ``_layout_group_boxes`` raises ``groups[] box 'X': 'y' is not a member of
+    this container`` for a member it cannot resolve, so without this repair a
+    filter that removes one member of an OKE box (the shape
+    ``parse_terraform`` emits for every cluster and its node pools) kills the
+    whole diagram instead of cutting it down.
+
+    ``known`` is the ``group_member_keys(model)`` map of the model BEFORE the
+    filter ran - the members this pruner is allowed to judge, exactly as
+    ``prune_dangling`` takes the pre-filter addresses. A member that container
+    never held is a model error, not a filter casualty, and is left alone so
+    the recipe still reports it with its own precise message. ``known=None``
+    drops every member that cannot be resolved.
+
+    Mutates ``model``; returns ``{"members": n, "boxes": n, "keys": [...]}``,
+    where ``keys`` holds the cell ids of the boxes that went, so the caller can
+    let ``prune_dangling`` judge the edges that terminated on them. A box with
+    no explicit ``key`` is absent from that list: its id is derived from its
+    label by the recipe, and an edge naming a derived id still reaches the
+    recipe's own "edge endpoint not found" error rather than a wrong diagram.
+    """
+    dropped: Dict[str, object] = {"members": 0, "boxes": 0, "keys": []}
+
+    def repair(container, member_key, alive, judgeable) -> None:
+        entries = container.get("groups")
+        if not isinstance(entries, (list, tuple)):
+            return                       # malformed: normalise_groups reports it, not us
+        kept_entries = []
+        for entry in entries:
+            members = entry.get(member_key) if isinstance(entry, dict) else None
+            if not isinstance(members, (list, tuple)) or not members:
+                kept_entries.append(entry)   # malformed too; same reason
+                continue
+            kept = [m for m in members
+                    if not (isinstance(m, str) and m not in alive
+                            and (judgeable is None or m in judgeable))]
+            dropped["members"] += len(members) - len(kept)
+            if kept:
+                if len(kept) != len(members):
+                    entry[member_key] = kept
+                kept_entries.append(entry)
+                continue
+            dropped["boxes"] += 1
+            if isinstance(entry.get("key"), str):
+                dropped["keys"].append(entry["key"])
+        if len(kept_entries) != len(entries):
+            container["groups"] = kept_entries
+
+    def judge(scope):
+        return None if known is None else set(known.get(scope) or ())
+
+    for vcn in _list(model.get("vcns")):
+        if not isinstance(vcn, dict):
+            continue
+        repair(vcn, "subnets", _group_members_of(vcn), judge(_group_scope(vcn)))
+        for sn in _list(vcn.get("subnets")):
+            if isinstance(sn, dict):
+                repair(sn, "items", _group_members_of(vcn, sn),
+                       judge(_group_scope(vcn, sn)))
+    return dropped
+
+
 def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> Tuple[dict, dict]:
     """Apply the shared predicate and the participating mode; return (new model, report).
 
@@ -883,18 +991,23 @@ def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> T
     (6.5). A subnet the filter empties is dropped, and so is a VCN with no
     subnets and no services, unless ``keep_empty`` is set - its gateways do not
     keep it alive, because they were never predicated in the first place.
+    A ``groups[]`` box that loses members to the filter is repaired by
+    ``prune_groups`` and reported as ``groups_dropped``.
     """
     mode = choice(mode, MODES, DEFAULTS["mode"], "mode")
     parsed = parse_filter(spec)
     # The endpoint names this model knew before anything was removed; see
     # prune_dangling's docstring for why an unknown endpoint form is kept.
     known_before = set(model_addresses(model))
+    # The groups[] member names the model could resolve before the filter ran;
+    # see prune_groups' docstring for why an unknown member is kept.
+    known_group_members = group_member_keys(model)
     m = copy.deepcopy(model)
     report = {"include": tuple(e["raw"] for e in parsed["include"]),
               "exclude": tuple(e["raw"] for e in parsed["exclude"]),
               "items_kept": 0, "items_dropped": 0, "edges_dropped": 0,
-              "containers_dropped": 0, "pruned_items": 0, "pruned_services": 0,
-              "mode": mode, "warnings": []}
+              "containers_dropped": 0, "groups_dropped": 0, "pruned_items": 0,
+              "pruned_services": 0, "mode": mode, "warnings": []}
     has_filter = bool(parsed["include"] or parsed["exclude"])
 
     # A region expression is a whole-model predicate: it either keeps or empties.
@@ -1031,7 +1144,13 @@ def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> T
                          if str(i.get("address") or "") in keep]
         report["pruned_services"] += before - len(m["services"])
 
-    report["edges_dropped"] += prune_dangling(m, known=known_before)["edges"]
+    # Last, because every pass above can take a groups[] box's members away:
+    # repair the boxes, then let prune_dangling judge the edges that ended on a
+    # box that went (its key joins the endpoint whitelist for that one call).
+    groups_report = prune_groups(m, known=known_group_members)
+    report["groups_dropped"] = groups_report["boxes"]
+    report["edges_dropped"] += prune_dangling(
+        m, known=known_before | set(groups_report["keys"]))["edges"]
     return m, report
 
 

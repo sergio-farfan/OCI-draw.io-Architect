@@ -136,3 +136,90 @@ class CliTests(unittest.TestCase):
             text = out.read_text(encoding="utf-8")
             self.assertIn("App Broker VM", text)
             self.assertNotIn("Web LB", text)
+
+
+def oke_model(members=("broker", "batch")):
+    """The tagged model with the OKE box ``parse_terraform`` emits for a cluster.
+
+    ``parse_terraform._build_oke_groups`` keys the box on the cluster's address
+    and lists the cluster plus its node pools, so any parsed model with OKE in
+    it meets the filter in exactly this shape.
+    """
+    m = TAGGED_MODEL()
+    m["vcns"][0]["subnets"][1]["groups"] = [
+        {"type": "oke_cluster", "label": "OKE cluster", "key": "oke:cluster-1",
+         "items": list(members)}]
+    return m
+
+
+def group_boxes(d):
+    return {cid for cid, e in d._cells.items()
+            if e["kind"] == "group" and e.get("group_type") == "oke_cluster"}
+
+
+class GroupBoxRepairTests(unittest.TestCase):
+    """A filter must cut a groups[] box down, not kill the diagram with it."""
+
+    def test_a_box_whose_member_the_filter_removed_still_builds(self):
+        d = quiet(ol.build_diagram, oke_model(), filter_spec=["tag:Application=payments"])
+        self.assertIn("broker", icons(d))
+        self.assertNotIn("batch", icons(d))
+        self.assertEqual(len(group_boxes(d)), 1)
+        self.assertEqual(d.layout_info["filter"]["groups_dropped"], 0)
+
+    def test_a_vcn_box_over_a_dropped_subnet_still_builds(self):
+        m = TAGGED_MODEL()
+        m["vcns"][0]["groups"] = [{"type": "oke_cluster", "label": "Tiers",
+                                   "subnets": ["sn-web", "sn-app"]}]
+        d = quiet(ol.build_diagram, m, filter_spec=["subnet=sn-web"])
+        self.assertEqual(len(group_boxes(d)), 1)
+        self.assertEqual(d.layout_info["filter"]["groups_dropped"], 0)
+
+    def test_a_box_that_loses_every_member_is_dropped_and_counted(self):
+        d = quiet(ol.build_diagram, oke_model(members=("batch",)),
+                  filter_spec=["tag:Application=payments"])
+        self.assertEqual(group_boxes(d), set())
+        self.assertEqual(d.layout_info["filter"]["groups_dropped"], 1)
+
+    def test_an_edge_onto_a_box_that_went_is_dropped_with_it(self):
+        m = oke_model(members=("batch",))
+        m["edges"].append({"source": "lb", "target": "oke:cluster-1", "label": "443",
+                           "kind": "data", "discovery": "association"})
+        base = quiet(ol.build_diagram, TAGGED_MODEL(), filter_spec=["tag:Application=payments"])
+        d = quiet(ol.build_diagram, m, filter_spec=["tag:Application=payments"])
+        self.assertEqual(d.layout_info["filter"]["edges_dropped"],
+                         base.layout_info["filter"]["edges_dropped"] + 1)
+
+    def test_an_edge_onto_a_box_that_survived_is_kept(self):
+        m = oke_model()
+        m["edges"].append({"source": "lb", "target": "oke:cluster-1", "label": "443",
+                           "kind": "data", "discovery": "association"})
+        d = quiet(ol.build_diagram, m, filter_spec=["tag:Application=payments"])
+        box = group_boxes(d).pop()
+        self.assertTrue([e for e in d._cells.values()
+                         if e["kind"] == "edge" and box in (e.get("source"), e.get("target"))])
+
+    def test_a_member_the_model_never_had_still_raises(self):
+        """Only a member the filter took away is repaired; a typo is a model error."""
+        for spec in (None, ["tag:Application=payments"]):
+            with self.assertRaises(ValueError) as ctx:
+                quiet(ol.build_diagram, oke_model(members=("broker", "nope")), filter_spec=spec)
+            self.assertIn("'nope' is not a member of this container", str(ctx.exception))
+
+    def test_a_member_of_another_container_still_raises_once_the_filter_removes_it(self):
+        """The whitelist is per container: only the box's OWN members are repaired."""
+        with self.assertRaises(ValueError) as ctx:
+            quiet(ol.build_diagram, oke_model(members=("broker", "bastion")),
+                  filter_spec=["tag:Application=payments"])       # drops bastion, in vcn-ops
+        self.assertIn("'bastion' is not a member of this container", str(ctx.exception))
+
+    def test_a_repaired_box_passes_the_strict_file_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = quiet(ol.write_diagram, oke_model(), Path(tmp) / "g.drawio",
+                        filter_spec=["tag:Application=payments"])
+            self.assertEqual(quiet(check_overlaps.main, ["--strict", str(out)]), 0)
+
+    def test_the_caller_s_model_keeps_its_members(self):
+        m = oke_model()
+        quiet(ol.build_diagram, m, filter_spec=["tag:Application=payments"])
+        self.assertEqual(m["vcns"][0]["subnets"][1]["groups"][0]["items"], ["broker", "batch"])
