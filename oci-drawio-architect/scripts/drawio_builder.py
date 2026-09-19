@@ -1154,37 +1154,60 @@ def _badge_host(entry: dict):
 
 
 def _attach_captions(registry: dict, boxes: dict) -> None:
-    """Name icon cells after the caption text cell sitting right below them."""
+    """Name icon cells after the caption text cell sitting right below them.
+
+    Two passes. A caption normally sits *below* its glyph, so every
+    below-candidate is bound first; only then may an icon that still has no
+    caption claim a text cell *above* it (``add_icon(caption_above=True)``,
+    slide 31), and only one no other icon already owns. A single combined
+    pass would let a caption-less icon steal the caption of the icon above it
+    in a stacked column - the stolen ``owner`` feeds the straddle exemptions
+    in validator rules 3 and 7 and would turn a valid diagram into an error.
+    """
     texts = [(cid, e) for cid, e in registry.items()
              if e.get("vertex") == "1" and _kind(e) == "text" and cid in boxes]
-    for cid, e in registry.items():
-        if e.get("vertex") != "1" or _kind(e) != "icon" or cid not in boxes:
-            continue
-        if _badge_host(e) is not None:
-            continue                      # badges have no caption
+    icons = [(cid, e) for cid, e in registry.items()
+             if e.get("vertex") == "1" and _kind(e) == "icon" and cid in boxes
+             and _badge_host(e) is None]   # badges have no caption
+
+    def bind(cid, e, te):
+        e["caption"] = re.sub(r"\s+", " ", _html.unescape(_TAG_RE.sub(" ", te.get("value", "")))).strip()
+        te["owner"] = cid
+
+    # Pass 1: captions below their glyph.
+    unbound = []
+    for cid, e in icons:
         ib = boxes[cid]
-        best = above_best = None
+        best = None
         for tid, te in texts:
             if te.get("parent") != e.get("parent"):
                 continue
             tb = boxes[tid]
             if not (tb.x - 1 <= ib.cx <= tb.right + 1):
                 continue
-            # a caption sits below its glyph; an above-caption is only used when
-            # the icon has none below it (add_icon(caption_above=True), slide 31)
             below = tb.y - ib.bottom
-            if -2 <= below <= 40:
-                if best is None or below < best[0]:
-                    best = (below, te)
+            if -2 <= below <= 40 and (best is None or below < best[0]):
+                best = (below, te)
+        if best is None:
+            unbound.append((cid, e))
+        else:
+            bind(cid, e, best[1])
+
+    # Pass 2: captions above their glyph, from the text cells nobody claimed.
+    for cid, e in unbound:
+        ib = boxes[cid]
+        best = None
+        for tid, te in texts:
+            if te.get("parent") != e.get("parent") or te.get("owner") is not None:
+                continue
+            tb = boxes[tid]
+            if not (tb.x - 1 <= ib.cx <= tb.right + 1):
                 continue
             above = ib.y - tb.bottom
-            if -2 <= above <= 40 and (above_best is None or above < above_best[0]):
-                above_best = (above, te)
-        best = best or above_best
+            if -2 <= above <= 40 and (best is None or above < best[0]):
+                best = (above, te)
         if best is not None:
-            _, te = best
-            e["caption"] = re.sub(r"\s+", " ", _html.unescape(_TAG_RE.sub(" ", te.get("value", "")))).strip()
-            te["owner"] = cid
+            bind(cid, e, best[1])
 
 
 def _seg_hits_box(a, b, box: _Box, tol=0.5) -> bool:
