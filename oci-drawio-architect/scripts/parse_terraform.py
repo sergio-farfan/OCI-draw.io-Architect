@@ -237,13 +237,11 @@ GATEWAY_TYPES: Dict[str, str] = {
     "oci_core_service_gateway": "sgw",
     "oci_core_local_peering_gateway": "lpg",
 }
-# hub-side resource -> the link it implies (documentation; parser output sets hub.link_label to None)
-HUB_TYPES: Dict[str, Optional[str]] = {
-    "oci_core_cpe": None,
-    "oci_core_ipsec": "IPSec VPN",
-    "oci_core_virtual_circuit": "FastConnect",
-    "oci_core_remote_peering_connection": None,
-}
+# Hub-side resources: they become items of the on-premises / remote-region panel.
+# (The per-type link labels this table used to carry were never read - the parser
+# always emits hub.link_label = None and the layout draws attachment connectors.)
+HUB_TYPES = frozenset({"oci_core_cpe", "oci_core_ipsec", "oci_core_virtual_circuit",
+                       "oci_core_remote_peering_connection"})
 # Security constructs drawn as badges by the layout (subnet corner: route table + security
 # lists; resource icon: NSGs) instead of workload icons. ``controls`` keeps the inventory.
 # A subnet may use the VCN's default route table / security list instead of a managed one
@@ -258,7 +256,8 @@ ROUTE_TABLE_TYPES = frozenset({ROUTE_TABLE_TYPE, DEFAULT_ROUTE_TABLE_TYPE})
 SECURITY_LIST_TYPES = frozenset({SECURITY_LIST_TYPE, DEFAULT_SECURITY_LIST_TYPE})
 CONTROL_TYPES = ROUTE_TABLE_TYPES | SECURITY_LIST_TYPES | frozenset({NSG_TYPE})
 NSG_ATTRS = ("nsg_ids", "network_security_group_ids")
-VNIC_ATTACHMENT_TYPES = frozenset({"oci_core_vnic_attachment", "oci_core_vnic"})
+# Only the attachment is a managed resource; oci_core_vnic exists as a data source only.
+VNIC_ATTACHMENT_TYPES = frozenset({"oci_core_vnic_attachment"})
 LB_TYPES = frozenset({"oci_load_balancer_load_balancer", "oci_load_balancer",
                       "oci_network_load_balancer_network_load_balancer"})
 LB_BACKEND_TYPES = frozenset({"oci_load_balancer_backend", "oci_network_load_balancer_backend"})
