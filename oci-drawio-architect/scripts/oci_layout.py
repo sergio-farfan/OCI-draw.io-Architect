@@ -193,6 +193,8 @@ ATT_VGAP = ATT_PITCH - ATT_H     # gap between stacked attachment boxes, whateve
 ATT_FONT_SIZE = LABEL_FONT_SIZE  # BOX_STYLE font size (label_lines / height estimate)
 ATT_TEXT_PAD = 4                 # text inset each side of an attachment box
 DRG_CLUSTER_GAP = 40             # between stacked DRG clusters
+DRG_RT_GAP = 6                   # DRG caption bottom -> route-table badge strip
+DRG_RT_MAX = 2                   # Oracle creates two default DRG route tables (managingDRGs.htm)
 
 # B05 / B06 / G6: one grouping mechanism - a box around named items in a
 # subnet (the slide-32 OKE cluster) or around whole subnet rows in a VCN.
@@ -1145,14 +1147,26 @@ def _drg_cluster_geometry(drg: dict, style: str) -> dict:
     right_w = ATT_W + ATT_GAP if right else caption_pad
     left_h, left_block = _att_block(left)
     right_h, right_block = _att_block(right)
-    body_h = max(ICON_FOOTPRINT_H, left_block, right_block)
+    # B09: the route-table badge strip hangs under the DRG caption, so the icon
+    # side of the cluster is that much taller and the attachment stacks stay
+    # centred on the same axis.
+    rt = drg_route_tables(drg)
+    rt_h = (DRG_RT_GAP + BADGE_SIZE) if rt else 0
+    body_h = max(ICON_FOOTPRINT_H + rt_h, left_block, right_block)
     inner_w = left_w + ICON_W + right_w
     cluster_h = body_h
     if style == "box":
         inner_w += 2 * PAD
         cluster_h += ROW1_Y + PAD
+        if rt:
+            # the glyph is centred on body_h, so its slot starts below ROW1_Y;
+            # the badge strip under its caption must still fit inside the box.
+            # cluster_h is also what centres the whole column, so it has to be
+            # right here rather than grown by fit_to_children afterwards.
+            slot_y = int(round(ROW1_Y + body_h / 2 - GW_STRADDLE))
+            cluster_h = max(cluster_h, slot_y + ICON_FOOTPRINT_H + rt_h + PAD)
     return {"left": left, "right": right, "left_w": left_w, "inner_w": inner_w,
-            "body_h": body_h, "cluster_h": cluster_h,
+            "body_h": body_h, "cluster_h": cluster_h, "rt": rt,
             "heights": {"left": left_h, "right": right_h},
             "blocks": {"left": left_block, "right": right_block}}
 
@@ -1197,8 +1211,40 @@ def _drg_display_name(drg: dict, index: int) -> str:
     return str(drg.get("address") or "").strip() or f"drg-{index + 1}"
 
 
+def _drg_route_table_badges(d: DrawioBuilder, parent, did, name: str, refs: list,
+                            slot_x, slot_y, key: str, reg, warnings: list) -> list:
+    """B09 / decision 8: up to DRG_RT_MAX route-table glyphs as one strip under the DRG caption.
+
+    Oracle creates two default DRG route tables - one for VCN attachments and
+    one for every other attachment (managingDRGs.htm) - and a hub-and-spoke
+    diagram routinely shows both. A third is dropped with a warning.
+    """
+    if not refs:
+        return []
+    drawn = refs[:DRG_RT_MAX]
+    if len(refs) > DRG_RT_MAX:
+        message = (f"WARNING: DRG {name!r} has {len(refs)} route tables; "
+                   f"only the first {DRG_RT_MAX} are drawn")
+        if message not in warnings:
+            warnings.append(message)
+            print(message, file=sys.stderr)
+    strip_w = len(drawn) * BADGE_SIZE + (len(drawn) - 1) * BADGE_GAP
+    cx0 = slot_x + ICON_W / 2 - strip_w / 2 + BADGE_SIZE / 2
+    cy = slot_y + ICON_FOOTPRINT_H + DRG_RT_GAP + BADGE_SIZE / 2
+    ids = []
+    for i, ref in enumerate(drawn):
+        bid = d.add_badge("route_table", cx0 + i * (BADGE_SIZE + BADGE_GAP), cy, parent=parent,
+                          host=did, key=f"{key}-rt" if i == 0 else f"{key}-rt{i + 1}",
+                          tooltip=_badge_tooltip("DRG route table", [ref]),
+                          metadata={"drg_route_table": ref["name"]})
+        _register_badge(reg, [ref], bid)
+        reg.badge_kinds.add("drg_route_table")
+        ids.append(bid)
+    return ids
+
+
 def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_h, requested, reg,
-                       style_out) -> list:
+                       style_out, warnings=None) -> list:
     """DRG icon(s) with their attachment boxes at region level, centred on the VCN stack.
 
     Returns the pending attachment connectors: {"source", "vcn", "target", "label", "key"}.
@@ -1228,6 +1274,8 @@ def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_
         (did,), _ = d.place_icons(parent, [spec], cols=1, x0=slot_x, y0=slot_y)
         reg.add_item({"address": addr, "label": label}, did)
         reg.containers[f"drg:{name}"] = did
+        _drg_route_table_badges(d, parent, did, name, g["rt"], slot_x, slot_y, addr, reg,
+                                warnings if warnings is not None else [])
         for side, atts in (("right", g["right"]), ("left", g["left"])):
             if not atts:
                 continue
@@ -1247,7 +1295,13 @@ def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_
                                 "label": attachment_link_label(att),
                                 "key": f"{akey}-edge" if akey else None})
         if style == "box":
-            d.fit_to_children(gid, pad=PAD)
+            # badges are skipped by fit_to_children, so the strip's height has to
+            # be reserved explicitly - it hangs DRG_RT_GAP + BADGE_SIZE below the
+            # DRG icon's own footprint, whose top is slot_y
+            rt_h = (DRG_RT_GAP + BADGE_SIZE) if g["rt"] else 0
+            need_h = slot_y + ICON_FOOTPRINT_H + rt_h + PAD
+            _w, box_h = d.fit_to_children(gid, pad=PAD, min_h=max(g["cluster_h"], need_h))
+            g["cluster_h"] = max(g["cluster_h"], box_h)   # keep the stack pitch honest
         style_out[addr] = style
         y += g["cluster_h"] + DRG_CLUSTER_GAP
     return pending
@@ -1494,7 +1548,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     pending = []
     if drgs:
         pending = _layout_drg_column(d, rid, drgs, drg_col_x, vcn_y, ref_h, requested, reg,
-                                     d.layout_info["drg_style"])
+                                     d.layout_info["drg_style"], d.layout_info["warnings"])
 
     # The Oracle Services Network panel is emitted after every other region child:
     # under the Location Canvas it is a band that has to clear all of them.
