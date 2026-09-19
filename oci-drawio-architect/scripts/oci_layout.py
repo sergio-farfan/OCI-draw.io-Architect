@@ -127,6 +127,7 @@ PANEL_GAP = 40        # between row 1 and the services panel
 GW_PITCH = 180        # gateway icon pitch
 SUBNET_EXTRA_W = 50   # 2 cols -> 310 wide like the sample
 SUBNET_TITLE_PAD = 10  # spacingLeft + right inset of a container title
+TITLE_LINE2_FONT = 10  # second (CIDR) line of a two-line container title
 SUBNET_BOTTOM_PAD = 28
 HUB_X = 15
 HUB_W = 180
@@ -293,7 +294,7 @@ def _two_line(line1: str, line2: str) -> str:
     # font-weight: normal is required, not cosmetic: the enclosing vcn / subnet
     # container style carries fontStyle=1, and the nested <font> would inherit
     # bold, so slide 18's "Text2: 9pt, light" line would render bold.
-    return (f'{top}<br><font style="font-size: 10px; font-weight: normal" '
+    return (f'{top}<br><font style="font-size: {TITLE_LINE2_FONT}px; font-weight: normal" '
             f'color="{COLORS["text_primary"]}">{escape_label(line2)}</font>')
 
 
@@ -322,13 +323,46 @@ def _subnet_label(subnet: dict, mode: str = "twoline") -> str:
     return _two_line(lines[0], lines[1] if len(lines) > 1 else "")
 
 
-def _vcn_label(vcn: dict, mode: str = "twoline") -> str:
+def _vcn_title_lines(vcn: dict, mode: str = "twoline") -> list:
+    """The VCN title as plain text lines - what the width estimate measures."""
     name = vcn.get("name", "vcn")
     cidr = vcn.get("cidr")
     if mode == "inline":
-        return escape_label(f"VCN: {name} ({cidr})" if cidr else f"VCN: {name}")
+        return [f"VCN: {name} ({cidr})" if cidr else f"VCN: {name}"]
     line1, line2 = label_parts(f"VCN: {name}", cidr)
-    return _two_line(line1, line2)
+    return [ln for ln in (line1, line2) if ln]
+
+
+def _vcn_label(vcn: dict, mode: str = "twoline") -> str:
+    lines = _vcn_title_lines(vcn, mode)
+    if mode == "inline":
+        return escape_label(lines[0])
+    return _two_line(lines[0], lines[1] if len(lines) > 1 else "")
+
+
+def _vcn_title_w(vcn: dict, d: DrawioBuilder, mode: str = "twoline") -> float:
+    """Widest line of the VCN's own title, each line at the size it is drawn in."""
+    lines = _vcn_title_lines(vcn, mode)
+    if not lines:
+        return 0.0
+    sizes = [d.profile["vcn_font"]] + [TITLE_LINE2_FONT] * (len(lines) - 1)
+    return max(edge_label_extent(ln, sz)[0] for ln, sz in zip(lines, sizes))
+
+
+def _top_gw_min_w(vcn: dict, d: DrawioBuilder, n_top: int, mode: str = "twoline") -> int:
+    """VCN width that keeps the last top-border gateway slot clear of the VCN title.
+
+    Top slots are counted from the VCN's RIGHT edge inwards, so the leftmost of
+    them - slot ``n_top - 1`` - is the one that can reach the container's own
+    top-left title band. The title is not a cell, so ``validate()`` cannot see
+    the collision (drawio_builder keeps it as a routing obstacle only): the room
+    has to be reserved here instead.
+    """
+    if n_top <= 0:
+        return 0
+    need = (_vcn_title_w(vcn, d, mode) + SUBNET_TITLE_PAD + PAD
+            + TOP_GW_X0 + ICON_W + (n_top - 1) * GW_PITCH)
+    return int(math.ceil(need))
 
 
 def _vcn_order(vcns) -> dict:
@@ -1504,9 +1538,9 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
             VCN_MIN_W,
             (PAD + (len(sides["bottom"]) - 1) * GW_PITCH + ICON_W + PAD) if sides["bottom"] else 0,
         )
-        need_w = max(need_w,
-                     (TOP_GW_X0 + ICON_W + (len(sides["top"]) - 1) * GW_PITCH + PAD)
-                     if sides["top"] else 0)
+        # A top-border slot is measured from the VCN's right edge, so the room
+        # reserved must also clear the VCN's own title band on the left.
+        need_w = max(need_w, _top_gw_min_w(vcn, d, len(sides["top"]), ctx["subnet_label"]))
         need_h = max(
             200,
             (SIDE_GW_Y0 + (len(sides["right"]) - 1) * SIDE_GW_PITCH + ICON_FOOTPRINT_H + PAD) if sides["right"] else 0,

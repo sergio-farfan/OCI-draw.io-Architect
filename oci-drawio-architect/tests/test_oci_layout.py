@@ -1432,6 +1432,41 @@ class GatewayEdgeTests(unittest.TestCase):
         self.assertEqual(errors_of(d), [])
         self.assertEqual(quiet(d.check_overlaps, True), [])
 
+    def test_a_top_border_gateway_never_covers_the_vcns_own_title(self):
+        """Top slots are counted from the right edge, so the VCN must also be
+        wide enough for its own title band: a container title is not a cell, so
+        validate() cannot see a glyph sitting on top of it."""
+        narrow = self._two_column_model()
+        # the narrowest hub there is: one small subnet, no services panel, so
+        # nothing but the reservation itself can widen the box
+        narrow["vcns"][0]["subnets"] = narrow["vcns"][0]["subnets"][:1]
+        narrow["vcns"][0].pop("services", None)
+        for label, model in (("explicit", self._model(gateway_edge="top")),
+                             ("auto", self._two_column_model()),
+                             ("narrow", narrow)):
+            d = quiet(ol.build_diagram, model)
+            vcn = model["vcns"][0]
+            vx, vy, _vw, _vh = d.abs_bbox("vcn-" + vcn["name"])
+            title_right = vx + d.profile["spacing_left"] + ol._vcn_title_w(vcn, d)
+            tops = [cid for cid in ("igw", "nat")
+                    if abs(d.abs_bbox(cid)[1] + ol.GW_STRADDLE - vy) < 0.5]
+            self.assertEqual(tops, ["igw", "nat"], label)
+            for cid in tops:
+                self.assertGreaterEqual(d.abs_bbox(cid)[0], title_right, (label, cid))
+            self.assertEqual(errors_of(d), [], label)
+            self.assertEqual(quiet(d.check_overlaps, True), [], label)
+
+    def test_a_long_vcn_name_widens_the_vcn_under_its_top_gateways(self):
+        """The reservation is measured, not a constant: a longer title pushes
+        the top-border slots further right and the VCN box out with them."""
+        short = quiet(ol.build_diagram, self._model(gateway_edge="top"))
+        long_model = self._model(gateway_edge="top")
+        long_model["vcns"][0]["name"] = "hub-with-a-very-long-display-name"
+        long_d = quiet(ol.build_diagram, long_model)
+        wide = long_d.abs_bbox("vcn-hub-with-a-very-long-display-name")[2]
+        self.assertGreater(wide, short.abs_bbox("vcn-hub")[2])
+        self.assertEqual(errors_of(long_d), [])
+
     def test_gateway_edge_bottom_restores_the_130_choice(self):
         d = quiet(ol.build_diagram, self._model(gateway_edge="bottom"))
         vx, vy, _vw, vh = d.abs_bbox("vcn-hub")
@@ -1468,14 +1503,19 @@ class GatewayEdgeTests(unittest.TestCase):
         self.assertEqual(ol._gateway_side(gw("igw", "internet_gateway", "x", "i"), 0, {}), "bottom")
         self.assertEqual(ol._gateway_side(gw("sgw", "service_gateway", "x", "s"), 0, {}), "right")
 
-    def test_only_the_rightmost_column_faces_the_internet_box_on_its_right_border(self):
-        """G4: a left-hand column's right border faces the next VCN, so its
-        Internet-facing gateways take the top border instead."""
+    def _two_column_model(self):
+        """The hub-and-spoke shape: the hub column's IGW / NAT take the top border."""
         model = self._model()
         model["vcns"].append({"name": "spoke", "cidr": "10.1.0.0/16", "subnets": [
             {"name": "sn-web", "cidr": "10.1.1.0/24", "tier": "lb", "public": True,
              "items": [{"icon": "vm", "label": "Web", "address": "web2"}]}],
             "gateways": [gw("igw", "internet_gateway", "Internet\nGateway", "igw2")]})
+        return model
+
+    def test_only_the_rightmost_column_faces_the_internet_box_on_its_right_border(self):
+        """G4: a left-hand column's right border faces the next VCN, so its
+        Internet-facing gateways take the top border instead."""
+        model = self._two_column_model()
         d = quiet(ol.build_diagram, model)
         hx, hy, hw, _hh = d.abs_bbox("vcn-hub")
         sx, _sy, sw, _sh = d.abs_bbox("vcn-spoke")
