@@ -2,7 +2,21 @@
 
 Generate production-quality draw.io diagrams for Oracle Cloud Infrastructure architectures using Python, embedded SVG icons, and Oracle template styles.
 
-## What's new in 1.4.0
+## What's new in 1.5.0
+
+View and detail controls: one discovered topology, several readable views (design: [the v1.5.0 spec](https://github.com/sergio-farfan/OCI-draw.io-Architect/blob/main/docs/superpowers/specs/2026-09-19-v1.5.0-view-and-detail-controls-design.md), full list in the [changelog](CHANGELOG.md)):
+
+- **Label modes.** Captions become a rendered field list - `minimal`, `network` (the new default) and `detailed` - over a documented vocabulary (name, type, private/public IP, CIDR, FQDN, port/protocol, compartment, AD/FD, lifecycle, tags). An OCID is never rendered in a caption, in any mode; a hand-written model's caption is unaffected.
+- **View layers.** The diagram can be emitted onto real draw.io layers - `routes`, `security`, `iam`, `dataflow`, `management`, `associations` - over a base layer named `Network`, toggled with `Cmd/Ctrl+Shift+L` without regenerating the file.
+- **Detail levels.** `executive`, `application`, `network` (default, today's output) and `engineering`, each a composition of the label mode, the layer set and a small table of content gates.
+- **Filtering.** One shared predicate over tags, compartment, region, VCN, subnet, resource type, environment and application, applied identically by the Terraform parser, the live-tenancy reader and the layout CLI.
+- **Participating mode.** `all` (every discovered resource, the Terraform default) or `participating` (only what takes part in the architecture, the live-tenancy default).
+- **Relationship provenance.** `edges[].discovery` replaces the old `inferred` boolean with seven named methods and becomes a filter axis; `--annotate-discovery` puts it in the connector tooltip.
+- **Global-services bucket.** IAM, Policies, Audit and public DNS can move into a tenancy-scoped box below the region, distinct from the regional Oracle Services Network.
+- **Purpose presets.** `network`, `dataflow`, `security`, `inventory`, `dependency`, `ha` - the six purposes the team's diagram guidelines name, each a one-flag composition of everything above.
+- The demo (`examples/generate_demo_diagram.py`) grows to six pages: Architecture (the outside canvas with the badge legend), DRG as a box (the nested 1.3.0 canvas), Compartments and OKE, Executive overview, Engineering detail, and Security (the custom-API NSG table).
+
+## What was new in 1.4.0
 
 Placement enrichments: where things go now follows Oracle's Location Canvas and the toolkit's grouping specs (design: [the v1.4.0 spec](https://github.com/sergio-farfan/OCI-draw.io-Architect/blob/main/docs/superpowers/specs/2026-09-18-v1.4.0-placement-enrichments-design.md), full list in the [changelog](CHANGELOG.md)):
 
@@ -52,7 +66,7 @@ Driven by the full code review and output-quality audit of 1.1.0. Highlights (fu
 ## Installation
 
 ```bash
-tar -xzf oci-drawio-architect-v1.4.0.tar.gz
+tar -xzf oci-drawio-architect-v1.5.0.tar.gz
 ./oci-drawio-architect/install.sh
 ```
 
@@ -161,7 +175,7 @@ Diagrams are built locally by these scripts; the plugin does not use draw.io's M
 ```
 oci-drawio-architect/
 ├── .claude-plugin/
-│   └── plugin.json                    # Plugin manifest (version 1.4.0)
+│   └── plugin.json                    # Plugin manifest (version 1.5.0)
 ├── commands/
 │   └── drawio-architect.md            # /drawio-architect slash command
 ├── skills/
@@ -173,7 +187,7 @@ oci-drawio-architect/
 │           ├── gotchas.md             # Known pitfalls and workarounds
 │           └── templates/             # physical_example_*.svg composites (docs only)
 ├── scripts/
-│   ├── drawio_builder.py              # DrawioBuilder (v1.4.0): icons, styles, routing, validation
+│   ├── drawio_builder.py              # DrawioBuilder (v1.5.0): icons, styles, routing, validation
 │   ├── oci_layout.py                  # Model dict/JSON -> .drawio layout recipe (CLI + API)
 │   ├── check_overlaps.py              # Validator CLI: --strict, --quiet; exit 0/1/2
 │   ├── render_drawio.py               # PNG/SVG/PDF export via draw.io desktop; exit 0/1/3
@@ -215,7 +229,7 @@ python3 scripts/oci_layout.py model.json -o out.drawio [--profile default|offici
                               [--locations outside|nested] [--gateway-edge auto|internet|top|bottom] [--subnet-label twoline|inline]
                               [--attachment-style solid|dotted] [--show-compartments]
 python3 scripts/build_icon_catalog.py --check   # after touching icons/
-./pack.sh [/output/dir]                         # oci-drawio-architect-v1.4.0.tar.gz + SHA256
+./pack.sh [/output/dir]                         # oci-drawio-architect-v1.5.0.tar.gz + SHA256
 ```
 
 Generated files weigh roughly 7-13 KB per embedded icon (the four-page demo with 59 icons is about 550 KB; the reference sample with 27 icons and 4 badges about 280 KB).

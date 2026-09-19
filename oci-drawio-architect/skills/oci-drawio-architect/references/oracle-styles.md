@@ -1,6 +1,6 @@
-# Oracle draw.io Template Styles (v1.4.0)
+# Oracle draw.io Template Styles (v1.5.0)
 
-Every value below was read back from `scripts/drawio_builder.py` 1.4.0 with Python
+Every value below was read back from `scripts/drawio_builder.py` 1.5.0 with Python
 probes (`DrawioBuilder(style_profile=...)._group_styles[...]`, a test diagram written
 to `/tmp` and inspected). `{FONT_STACK}` in a style string stands for the value of
 `drawio_builder.FONT_STACK` (see section 8); everything else is literal.
@@ -124,7 +124,7 @@ The location style with a centred label (logical-swatch alignment) for external 
 ```
 whiteSpace=wrap;html=1;fontFamily={FONT_STACK};verticalAlign=top;rounded=0;strokeWidth=1;dashed=1;fillColor=none;strokeColor=#9E9892;fontSize=12;fontStyle=0;fontColor=#312D2A;align=left;spacingLeft=5;ociGroup=tenancy;container=1;collapsible=0;expand=0;recursiveResize=0;
 ```
-Dashed Neutral 3 border, no fill, square corners, **regular-weight** (`fontStyle=0`) label - the only non-bold container, per the PPTX and the library.
+Dashed Neutral 3 border, no fill, square corners, **regular-weight** (`fontStyle=0`) label - the only non-bold container, per the PPTX and the library. Deck slide 18's Tenancy grouping spec reads "Align: Top/Left, Font: 9pt Regular, Color: Bark, Line: 1pt dashed Neutral 3, Fill: No Fill" - the 9pt/12px mapping and `align=left` match every other location-group label in this document. Since 1.5.0 this is also the style of the global-services bucket (6.7 / `oci_layout._global_services_bucket`, cell id `global`): `global_services: "bucket"` draws IAM, Policies, Audit and public DNS in one `tenancy`-styled container below the region, distinct from the `tenancy_name` wrapper this style already drew for `show_compartments` in 1.4.0 - the two never appear stacked, because the bucket sits below the region while the compartment wrapper sits beside the DRG column.
 
 ### availability_domain
 ```
@@ -415,3 +415,21 @@ fonts).
 Override per builder with `DrawioBuilder(font_family="Calibri")` - it is applied to
 container labels, captions, edges, text, titles, tables and legends - or per text cell with
 `add_text(..., font_family=...)` / `add_title(..., font_family=...)`.
+
+## 9. View layers
+
+Layers are project convention (**project**): no Oracle source names or orders them. When
+`layers` resolves to anything but `"off"`, the base layer (page cell `"1"`) is renamed `Network`
+(`set_base_layer_name`) and up to six more draw.io layers are added above it, in this fixed
+z-order: `routes, security, iam, dataflow, management, associations`. A layer nothing populates is
+never created; a created but hidden one is `visible="0"` in the XML and stays hidden across a
+save/reopen cycle. Toggling is `Extras > Edit Diagram` or the layers panel, `Cmd/Ctrl+Shift+L`; a
+PNG/PDF export renders only the currently visible layers.
+
+**Recorded conflict V7**: Oracle's own deck slides 29-31 draw IAM, Auditing and Policies **inside**
+the Oracle Services Network box - a regional grouping. The team's diagram guidelines instead want a
+tenancy-scoped global bucket, separate from any one region. The plugin follows Oracle by default
+(`global_services: "osn"`) and offers the guidelines' bucket as an explicit opt-in
+(`global_services: "bucket"`, section 4's `tenancy` style) - a case, like the compartment label
+colour and the OSN border colour elsewhere in this document, where the plugin picks one official
+source over another rather than inventing a third look.

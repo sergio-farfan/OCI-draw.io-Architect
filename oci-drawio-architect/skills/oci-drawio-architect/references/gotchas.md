@@ -1,7 +1,7 @@
-# draw.io + OCI Icons - Gotchas & Workarounds (v1.4.0)
+# draw.io + OCI Icons - Gotchas & Workarounds (v1.5.0)
 
-23 verified pitfalls. Every claim below was reproduced against `scripts/drawio_builder.py`
-1.4.0 (error texts are quoted verbatim). Items marked *migration* matter when updating a
+27 verified pitfalls. Every claim below was reproduced against `scripts/drawio_builder.py`
+1.5.0 (error texts are quoted verbatim). Items marked *migration* matter when updating a
 v1.0/v1.1 script.
 
 ## 1. URL-encode SVG data URIs - `;base64,` breaks the style tokenizer
@@ -352,3 +352,43 @@ Two rules that bite when you do turn them on:
   Compartment, but the plugin's DRG column is shared by every VCN and may serve VCNs in
   different compartments, so region level is the only placement that is always correct - and
   a DRG drawn inside a VCN is still the hard error of section 19.
+
+## 24. A nested cell cannot be on its own layer
+
+In draw.io a layer is a child of the root and a cell belongs to the layer of its **top-level
+ancestor**, so hiding a layer hides whole subtrees. A workload icon inside a subnet cannot be
+toggled independently of its subnet, and emitting the IP as a separate text cell does not help -
+that cell would be a child of the same subnet. This is why only page-level annotation is layered
+(the badges, which are re-parented after layout, and the connectors) and why "Resource IPs" and
+"Ports and protocols" are caption FIELDS rather than layers; `--layers ips` is accepted and
+rewritten to `private_ip,public_ip` with a note on stderr. Hiding the base `Network` layer blanks
+the page.
+
+## 25. *migration* - v1.5.0 changes parsed captions; one key brings the old ones back
+
+`label_mode` defaults to `network`: name, private IP, port / protocol. For a **hand-written** model
+nothing changes - the authored caption is kept verbatim and a field whose value it already contains
+is skipped. For a **parser- or tenancy-produced** model two things change: the compute / database
+shape line moves out of the caption into `metadata.shape`, and a private IP and a port list appear
+when the input carries them (a plan / state JSON, or a live tenancy; bare HCL has neither).
+`--label-mode minimal` gives the bare display name; `--label-mode minimal --label-fields
+display_name,shape` renders the exact 1.4 caption back, because `shape` is a caption field of its
+own. Everything else added in 1.5.0 is off by default: `layers: "off"`, `detail: "network"`, an empty `filter`, `mode: "all"`,
+`global_services: "osn"`, `show_edges: true`, no `purpose`.
+
+## 26. An empty `include` means everything
+
+`filter: {"include": [], "exclude": []}` is the identity, not "nothing". Expressions AND across
+dimensions and OR within one, so `--filter tag:Application=payments --filter tag:Environment=prod`
+means both, while `--filter vcn=a --filter vcn=b` means either. `exclude` always wins. Structure -
+gateways, DRGs, attachments, subnets, VCNs - is not predicated unless a `vcn=`, `subnet=`, `type=`
+or `name=` expression names it directly; a subnet the filter empties is dropped, and so is a VCN
+with nothing left, unless `keep_empty` is set. An edge whose endpoint disappeared is dropped and
+counted: no stub node is ever drawn.
+
+## 27. `--mode participating` is the default for a live tenancy, not for Terraform
+
+A Terraform configuration is already a curated set, so `parse_terraform.py` defaults to
+`--mode all`. A tenancy dump is not, so `query_tenancy.py` defaults to `--mode participating` and
+routinely drops dozens of regional services that have no edge. `layout_info["pruned"]` always says
+how many. If a diagram looks emptier than the tenancy, that is the first thing to check.
