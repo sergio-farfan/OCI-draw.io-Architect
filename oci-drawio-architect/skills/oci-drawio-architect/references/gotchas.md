@@ -320,8 +320,10 @@ Two model keys changed their default in 1.4.0 and nothing else about an unmodifi
 - `locations` now defaults to `"outside"`. The On-Premises box, an Internet box and any 3rd
   Party Cloud box are page-level siblings of the region (toolkit Location Canvas, deck slide
   12); the hybrid connection label moves into the gap left of the region; the IGW and the NAT
-  move to the VCN border facing the Internet box, IGW above NAT; the Service Gateway moves to
-  the bottom border and the Oracle Services Network becomes a full-width band under the VCN
+  move to the VCN border facing the Internet box - the right border (IGW above NAT) for the
+  rightmost VCN column, the top border (IGW rightmost, captions above the glyphs) for every
+  other column, because a left-hand column's right border faces the next VCN; the Service
+  Gateway moves to the bottom border and the Oracle Services Network becomes a full-width band under the VCN
   stack. `"locations": "nested"` in the model, `locations="nested"` on `build_diagram` /
   `write_diagram`, or `--locations nested` on the CLI restores the v1.3.x geometry exactly -
   the region is *translated*, never rebuilt, so every interior coordinate and cell id is the
