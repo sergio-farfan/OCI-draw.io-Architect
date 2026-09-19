@@ -22,6 +22,17 @@ def icons(d):
     return {cid for cid, e in d._cells.items() if e["kind"] == "icon" and not e.get("badge")}
 
 
+def third_party_model():
+    """The tagged model with two 3rd Party Cloud boxes, one item each."""
+    m = TAGGED_MODEL()
+    m["third_party"] = [
+        {"name": "Peer A Cloud", "items": [
+            {"icon": "vm", "label": "Peer A VM", "type": "other", "address": "peer-a"}]},
+        {"name": "Peer B Cloud", "items": [
+            {"icon": "vm", "label": "Peer B VM", "type": "other", "address": "peer-b"}]}]
+    return m
+
+
 class LayoutFilterTests(unittest.TestCase):
     def test_no_filter_keeps_everything_and_reports_zeroes(self):
         d = quiet(ol.build_diagram, TAGGED_MODEL())
@@ -67,6 +78,25 @@ class LayoutFilterTests(unittest.TestCase):
         self.assertIn("hub", full._cells)
         cut = quiet(ol.build_diagram, TAGGED_MODEL(), filter_spec=["vcn=vcn-app"])
         self.assertNotIn("hub", cut._cells)
+
+    def test_the_location_boxes_of_an_unfiltered_model_keep_their_positional_ids(self):
+        d = quiet(ol.build_diagram, third_party_model())
+        self.assertIn("thirdparty-0", d._cells)
+        self.assertIn("thirdparty-1", d._cells)
+
+    def test_a_third_party_box_the_filter_empties_leaves_the_survivor_its_id(self):
+        """Regression: compacting the list renumbered the survivors, so the second box
+        answered to ``thirdparty-0`` and an edge that named ``thirdparty:1`` could not
+        be resolved at all."""
+        m = third_party_model()
+        m["edges"].append({"source": "lb", "target": "thirdparty:1", "label": "peering",
+                           "kind": "data", "discovery": "association"})
+        d = quiet(ol.build_diagram, m, filter_spec=["!name=Peer A VM"])
+        self.assertNotIn("thirdparty-0", d._cells)
+        self.assertIn("thirdparty-1", d._cells)
+        self.assertTrue([e for e in d._cells.values()
+                         if e["kind"] == "edge" and e.get("target") == "thirdparty-1"])
+        self.assertEqual(quiet(d.check_overlaps, True), [])
 
     def test_a_filtered_diagram_passes_the_strict_file_gate(self):
         with tempfile.TemporaryDirectory() as tmp:

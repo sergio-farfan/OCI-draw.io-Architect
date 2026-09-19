@@ -1228,11 +1228,20 @@ def _layout_location_hub(d: DrawioBuilder, hub: dict, x, y, w, h, centre_y, reg,
 
 
 def _loc_boxes(ctx: dict) -> list:
-    """The right column's boxes, top to bottom: ``(cell key, spec, group type)``."""
+    """The right column's boxes, top to bottom: ``(cell key, spec, group type)``.
+
+    The key is the box's POSITION in ``third_party`` and nothing else, so the
+    cell id a reader or an edge names (``thirdparty:<i>`` -> ``thirdparty-<i>``)
+    survives a filter: a box a filter emptied is a ``None`` hole in the list
+    (``oci_view.filter_model``), which is skipped here without renumbering the
+    boxes after it. A hand-written ``None`` entry is skipped the same way.
+    """
     boxes = []
     if ctx["internet"]:
         boxes.append(("internet", ctx["internet"], "internet"))
     for i, tp in enumerate(ctx["third_party"]):
+        if not isinstance(tp, dict):
+            continue
         boxes.append((f"thirdparty:{i}", tp, "third_party_cloud"))
     return boxes
 
@@ -1337,7 +1346,10 @@ def _layout_locations(d: DrawioBuilder, rid, ctx: dict, hub, drgs, stack_y, stac
     if hub and any(is_onprem_item(it) for it in (hub.get("items") or [])):
         left_gap += ICON_W - GW_SIDE_DX
     left_w = (LOC_W + left_gap) if hub else 0
-    right_w = (LOC_W + LOC_GAP_RIGHT) if (ctx["internet"] or ctx["third_party"]) else 0
+    # Read through _loc_boxes, not off ctx: a third_party list that holds only
+    # holes (a filter emptied every box) draws nothing, so it must not reserve
+    # the column's width either.
+    right_w = (LOC_W + LOC_GAP_RIGHT) if _loc_boxes(ctx) else 0
     need_h = max(_right_column_min_h(ctx, view),
                  (HUB_ICON_Y0 + _hub_block_h(list((hub or {}).get("items") or []), view) + PAD)
                  if hub else 0)

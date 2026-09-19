@@ -1150,20 +1150,30 @@ def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> T
             m[box_key] = None
             report["containers_dropped"] += 1
             dropped_boxes.append(box_key)
+    # A dropped 3rd Party Cloud box leaves a ``None`` hole rather than closing
+    # the list up: the recipe keys these boxes by POSITION (``thirdparty:<i>``
+    # -> cell id ``thirdparty-<i>``, ``oci_layout._loc_boxes``), so compacting
+    # would renumber every survivor - the second box would answer to the first
+    # one's id and an edge that named it would resolve to the wrong box.
+    # ``_loc_boxes`` skips the holes, so nothing is drawn for one.
     if isinstance(m.get("third_party"), list):
-        kept_boxes = []
+        nulled = set()
         for i, box in enumerate(m["third_party"]):
             if not isinstance(box, dict):
-                kept_boxes.append(box)
                 continue
             had_items = bool(_list(box.get("items")))
             box["items"] = keep_items(box.get("items"))
             if emptied(box, had_items):
                 report["containers_dropped"] += 1
                 dropped_boxes.append(f"thirdparty:{i}")
-            else:
-                kept_boxes.append(box)
-        m["third_party"] = kept_boxes
+                m["third_party"][i] = None
+                nulled.add(i)
+        # A hole only has to hold an index a later box still uses; a trailing
+        # one numbers nothing, so the common single-box case still cuts down to
+        # an empty list.
+        while nulled and len(m["third_party"]) - 1 in nulled:
+            nulled.discard(len(m["third_party"]) - 1)
+            m["third_party"].pop()
 
     # 6.8: the discovery selector and the discovery= expressions prune edges only.
     # Read through _as_tuple, not tuple(): a front end may hand this the raw
