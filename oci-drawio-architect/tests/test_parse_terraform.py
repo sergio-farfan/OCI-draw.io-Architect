@@ -510,7 +510,8 @@ class LpgPeerMirrorTests(unittest.TestCase):
     def _gw(model, address):
         return next(g for v in model["vcns"] for g in v["gateways"] if g["address"] == address)
 
-    def parse(self, peer_a="peer_id     = oci_core_local_peering_gateway.b.id", peer_b=""):
+    def parse(self, peer_a="peer_id     = oci_core_local_peering_gateway.b.id", peer_b="",
+              vcn_b="oci_core_vcn.b.id"):
         body = """
 provider "oci" {
   region = "eu-frankfurt-1"
@@ -533,11 +534,11 @@ resource "oci_core_local_peering_gateway" "a" {
 }
 
 resource "oci_core_local_peering_gateway" "b" {
-  vcn_id       = oci_core_vcn.b.id
+  vcn_id       = %s
   display_name = "lpg-b"
   %s
 }
-""" % (peer_a, peer_b)
+""" % (peer_a, vcn_b, peer_b)
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "main.tf").write_text(body)
             return pt.parse_terraform_dir(Path(tmp))
@@ -563,6 +564,17 @@ resource "oci_core_local_peering_gateway" "b" {
         for address in ("oci_core_local_peering_gateway.a", "oci_core_local_peering_gateway.b"):
             self.assertIsNone(self._gw(model, address)["peer"], address)
         self.assertEqual([e for e in model["edges"] if e["label"] == "Local Peering"], [])
+
+    def test_a_peer_lpg_missing_from_the_model_is_cleared(self):
+        """A42: an LPG whose own vcn_id does not resolve never reaches the model, so the
+        peer address its requestor declares must not survive into model['gateways'][].peer."""
+        model = self.parse(vcn_b="var.peer_vcn_ocid")
+        self.assertEqual([g["address"] for v in model["vcns"] for g in v["gateways"]],
+                         ["oci_core_local_peering_gateway.a"])
+        self.assertIsNone(self._gw(model, "oci_core_local_peering_gateway.a")["peer"])
+        self.assertTrue(any("is not in the model" in w for w in model["warnings"]),
+                        model.get("warnings"))
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
 
 
 class DrgAttachmentTfvarsVcnTests(unittest.TestCase):
