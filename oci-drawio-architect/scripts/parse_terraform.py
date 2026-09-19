@@ -1945,6 +1945,13 @@ class ModelBuilder:
             label = "Node pool"
         metadata = {k: r.attrs[k] for k in METADATA_KEYS
                     if k in r.attrs and isinstance(r.attrs[k], (str, int, float, bool))}
+        # 6.3 / 11: the "shape" caption field reads metadata["shape"] only, but the
+        # provider spells the attribute "shape_name" on some types (a MySQL DB
+        # system), which the 1.4.0 label line read as well. Normalise onto "shape"
+        # so the "1.4 caption" recipe restores those captures too; "shape_name" is
+        # kept as captured.
+        if "shape" not in metadata and isinstance(metadata.get("shape_name"), str):
+            metadata["shape"] = metadata["shape_name"]
         # 6.3: the OCI Terraform provider exports the lifecycle attribute as
         # "state" (oci_core_instance, oci_core_vcn, oci_core_subnet,
         # oci_database_autonomous_database all do); "lifecycle_state" is the

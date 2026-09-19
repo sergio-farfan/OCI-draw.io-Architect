@@ -95,6 +95,26 @@ class CaptionMetadataTests(unittest.TestCase):
         self.assertEqual(broker["label"], "App Broker VM")
         self.assertEqual(broker["metadata"]["shape"], "VM.Standard.E5.Flex")
 
+    def test_a_shape_name_attribute_also_reaches_the_shape_field(self):
+        """11: the "1.4 caption" recipe has to restore a MySQL system's shape too.
+
+        The provider spells the attribute "shape_name" there, and the 1.4.0 label
+        line read either spelling, so "shape" has to carry the value as well.
+        """
+        model = quiet(pt.parse_show_json, FIXTURES / "plan.json", "plan")
+        meta = item(model, "oci_mysql_mysql_db_system.db")["metadata"]
+        self.assertEqual(meta["shape"], "MySQL.VM.Standard.E4.1.8GB")
+        self.assertEqual(meta["shape_name"], "MySQL.VM.Standard.E4.1.8GB")
+
+    def test_the_one_four_caption_recipe_restores_both_shape_spellings(self):
+        model = quiet(pt.parse_show_json, FIXTURES / "plan.json", "plan")
+        view = ov.resolve_view({}, label_mode="minimal",
+                               label_fields=["display_name", "shape"])
+        self.assertEqual(ov.render_caption(item(model, "oci_mysql_mysql_db_system.db"), view),
+                         "mysql-app\nMySQL.VM.Standard.E4.1.8GB")
+        self.assertEqual(ov.render_caption(item(model, "oci_core_instance.app[0]"), view),
+                         "app-0\nVM.Standard.E4.Flex")
+
     def test_the_private_ip_comes_from_a_state_json(self):
         model = quiet(pt.parse_show_json, FIXTURES / "tagged_app" / "state.json", "state")
         self.assertEqual(item(model, "oci_core_instance.broker")["metadata"]["private_ip"],
