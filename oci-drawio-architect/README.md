@@ -2,7 +2,17 @@
 
 Generate production-quality draw.io diagrams for Oracle Cloud Infrastructure architectures using Python, embedded SVG icons, and Oracle template styles.
 
-## What's new in 1.3.0
+## What's new in 1.3.1
+
+Patch release: correctness fixes and coverage, no new features and no intentional layout change.
+
+- Two DRGs without a `name` no longer abort the build; an unnamed DRG takes its name from the second line of its label, its address or its position.
+- The Terraform parser no longer invents a DRG attachment for an IPSec connection, a private virtual circuit or a remote peering connection that names no DRG, and says so when it falls back to a single unambiguous DRG.
+- Validator: a DRG caption inside a VCN whose border the glyph only straddles is now an error, a leaf inside nested foreign containers is reported once, and a badged container's title is measured against the width its badges leave.
+- Layout: badges and captions get the room they need (NSG badge on a custom slot, subnet title beside its corner badges, DRG caption on a bare cluster side, the gap between two VCN columns with facing gateways).
+- The hub panel accepts an optional `kind` (`onprem` | `remote_region`) that selects its title.
+
+## What was new in 1.3.0
 
 Topology-aware placement: the layout recipe now follows how the team's diagram guidelines and Oracle's own reference architectures draw connectivity infrastructure (full list in [CHANGELOG.md](CHANGELOG.md)):
 
@@ -31,7 +41,7 @@ Driven by the full code review and output-quality audit of 1.1.0. Highlights (fu
 ## Installation
 
 ```bash
-tar -xzf oci-drawio-architect-v1.3.0.tar.gz
+tar -xzf oci-drawio-architect-v1.3.1.tar.gz
 ./oci-drawio-architect/install.sh
 ```
 
@@ -140,7 +150,7 @@ Diagrams are built locally by these scripts; the plugin does not use draw.io's M
 ```
 oci-drawio-architect/
 ├── .claude-plugin/
-│   └── plugin.json                    # Plugin manifest (version 1.3.0)
+│   └── plugin.json                    # Plugin manifest (version 1.3.1)
 ├── commands/
 │   └── drawio-architect.md            # /drawio-architect slash command
 ├── skills/
@@ -152,7 +162,7 @@ oci-drawio-architect/
 │           ├── gotchas.md             # Known pitfalls and workarounds
 │           └── templates/             # physical_example_*.svg composites (docs only)
 ├── scripts/
-│   ├── drawio_builder.py              # DrawioBuilder (v1.3.0): icons, styles, routing, validation
+│   ├── drawio_builder.py              # DrawioBuilder (v1.3.1): icons, styles, routing, validation
 │   ├── oci_layout.py                  # Model dict/JSON -> .drawio layout recipe (CLI + API)
 │   ├── check_overlaps.py              # Validator CLI: --strict, --quiet; exit 0/1/2
 │   ├── render_drawio.py               # PNG/SVG/PDF export via draw.io desktop; exit 0/1/3
@@ -192,7 +202,7 @@ python3 scripts/parse_terraform.py <tf_dir> [--vcn NAME] [--plan-json F | --stat
 python3 scripts/check_overlaps.py --strict out.drawio
 python3 scripts/oci_layout.py model.json -o out.drawio [--profile default|official|v1.0] [--legend] [--logo f] [--render png] [--drg-style auto|icon|box]
 python3 scripts/build_icon_catalog.py --check   # after touching icons/
-./pack.sh [/output/dir]                         # oci-drawio-architect-v1.3.0.tar.gz + SHA256
+./pack.sh [/output/dir]                         # oci-drawio-architect-v1.3.1.tar.gz + SHA256
 ```
 
 Generated files weigh roughly 7-13 KB per embedded icon (the three-page demo with 26 icons is about 300 KB; the reference sample with 27 icons and 4 badges about 280 KB).

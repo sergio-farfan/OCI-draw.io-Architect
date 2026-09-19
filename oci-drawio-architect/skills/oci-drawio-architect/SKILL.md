@@ -3,9 +3,9 @@ name: oci-drawio-architect
 description: Generate deterministic draw.io diagrams of Oracle Cloud Infrastructure architectures (Redwood container styles, embedded OCI icons, auto-routed edges) from Terraform or a description. Use when the user says "draw.io OCI", "diagram this architecture", "drawio with OCI icons", "OCI architecture diagram" or "Terraform to draw.io".
 ---
 
-# OCI draw.io Architect (plugin v1.3.0)
+# OCI draw.io Architect (plugin v1.3.1)
 
-Diagrams are data: a MODEL dict laid out by `scripts/oci_layout.py` on top of `scripts/drawio_builder.py` (DrawioBuilder v1.3.0). The `/drawio-architect` command is the workflow; this skill holds the conventions, the schema and the API. Always `sys.path.insert(0, "<abs>/oci-drawio-architect/scripts")` and import from the plugin - never copy `drawio_builder.py` into a project (the copy loses the icon directory and drifts from the plugin).
+Diagrams are data: a MODEL dict laid out by `scripts/oci_layout.py` on top of `scripts/drawio_builder.py` (DrawioBuilder v1.3.1). The `/drawio-architect` command is the workflow; this skill holds the conventions, the schema and the API. Always `sys.path.insert(0, "<abs>/oci-drawio-architect/scripts")` and import from the plugin - never copy `drawio_builder.py` into a project (the copy loses the icon directory and drifts from the plugin).
 
 ## 1. Target look (the reference sample, `examples/generate_reference_layout.py`)
 
@@ -246,7 +246,7 @@ Multi-page: `d.add_page("Security", 800, 400)` makes the new page current (`use_
 
 - Command workflow: `${CLAUDE_PLUGIN_ROOT}/commands/drawio-architect.md`
 - Layout recipe and MODEL schema: `${CLAUDE_PLUGIN_ROOT}/scripts/oci_layout.py`
-- Builder API: `${CLAUDE_PLUGIN_ROOT}/scripts/drawio_builder.py` (v1.3.0, standard library only)
+- Builder API: `${CLAUDE_PLUGIN_ROOT}/scripts/drawio_builder.py` (v1.3.1, standard library only)
 - Model producers: `${CLAUDE_PLUGIN_ROOT}/scripts/parse_terraform.py` (Terraform dir / plan / state -> model.json), `${CLAUDE_PLUGIN_ROOT}/scripts/query_tenancy.py` (experimental as-built via OCI CLI)
 - Topology helpers: `${CLAUDE_PLUGIN_ROOT}/scripts/oci_topology.py`
 - Gate and tools: `${CLAUDE_PLUGIN_ROOT}/scripts/check_overlaps.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/render_drawio.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/detect_settings.py`, `${CLAUDE_PLUGIN_ROOT}/scripts/smoke_test.sh`

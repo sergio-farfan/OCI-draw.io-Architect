@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**oci-drawio-architect** is a Claude Code plugin (v1.3.0) that generates production-quality `.drawio` architecture diagrams for Oracle Cloud Infrastructure (OCI) from Terraform configs, a live tenancy, or free-form descriptions. Input is normalized into a small diagram model; a deterministic layout recipe (`oci_layout.py`) and a stdlib-only builder (`drawio_builder.py`) turn it into a validated, Oracle-styled diagram. The plugin is distributed as a reproducible archive (`oci-drawio-architect-v1.3.0.tar.gz`) built by `pack.sh`.
+**oci-drawio-architect** is a Claude Code plugin (v1.3.1) that generates production-quality `.drawio` architecture diagrams for Oracle Cloud Infrastructure (OCI) from Terraform configs, a live tenancy, or free-form descriptions. Input is normalized into a small diagram model; a deterministic layout recipe (`oci_layout.py`) and a stdlib-only builder (`drawio_builder.py`) turn it into a validated, Oracle-styled diagram. The plugin is distributed as a reproducible archive (`oci-drawio-architect-v1.3.1.tar.gz`) built by `pack.sh`.
 
 **Author:** Sergio Farfan
 
@@ -39,7 +39,7 @@ oci-drawio-architect/
 │       ├── gotchas.md                    # Common pitfalls
 │       └── templates/                    # physical_example_*.svg composites (docs only)
 ├── scripts/
-│   ├── drawio_builder.py                 # Core builder (v1.3.0)
+│   ├── drawio_builder.py                 # Core builder (v1.3.1)
 │   ├── oci_layout.py                     # Model -> diagram recipe (CLI + build_diagram/write_diagram)
 │   ├── check_overlaps.py                 # Validator CLI (mandatory workflow gate)
 │   ├── render_drawio.py                  # draw.io desktop export (PNG/SVG/PDF)

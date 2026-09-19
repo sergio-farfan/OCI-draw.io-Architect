@@ -1,6 +1,6 @@
-# Oracle draw.io Template Styles (v1.3.0)
+# Oracle draw.io Template Styles (v1.3.1)
 
-Every value below was read back from `scripts/drawio_builder.py` 1.3.0 with Python
+Every value below was read back from `scripts/drawio_builder.py` 1.3.1 with Python
 probes (`DrawioBuilder(style_profile=...)._group_styles[...]`, a test diagram written
 to `/tmp` and inspected). `{FONT_STACK}` in a style string stands for the value of
 `drawio_builder.FONT_STACK` (see section 8); everything else is literal.

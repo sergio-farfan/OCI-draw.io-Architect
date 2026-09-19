@@ -1,7 +1,7 @@
-# draw.io + OCI Icons - Gotchas & Workarounds (v1.3.0)
+# draw.io + OCI Icons - Gotchas & Workarounds (v1.3.1)
 
 20 verified pitfalls. Every claim below was reproduced against `scripts/drawio_builder.py`
-1.3.0 (error texts are quoted verbatim). Items marked *migration* matter when updating a
+1.3.1 (error texts are quoted verbatim). Items marked *migration* matter when updating a
 v1.0/v1.1 script.
 
 ## 1. URL-encode SVG data URIs - `;base64,` breaks the style tokenizer

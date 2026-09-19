@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Demo / smoke test for oci-drawio-architect v1.3.0.
+"""Demo / smoke test for oci-drawio-architect v1.3.1.
 
 Page 1 "Architecture": the layout recipe (oci_layout.build_diagram) on a two-VCN
 hybrid model - on-premises panel with a CPE, a region-level DRG with two VCN

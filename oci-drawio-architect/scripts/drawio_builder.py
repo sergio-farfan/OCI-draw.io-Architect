@@ -1,4 +1,4 @@
-"""Reusable draw.io builder for OCI architecture diagrams (v1.3.0).
+"""Reusable draw.io builder for OCI architecture diagrams (v1.3.1).
 
 Requires Python 3.9+ and only the standard library. Pillow is optional and
 is needed only for PNG/JPEG logos passed to ``add_image()``; SVG logos and
@@ -83,7 +83,7 @@ import zlib
 from pathlib import Path
 from typing import Optional
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 # ---------------------------------------------------------------------------
 # Icon directory resolution

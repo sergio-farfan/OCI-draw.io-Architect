@@ -2,7 +2,7 @@
 
 **A Claude Code plugin that generates production-quality draw.io architecture diagrams for Oracle Cloud Infrastructure (OCI) — from Terraform configurations or free-form descriptions.**
 
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/tag/v1.3.0)
+[![Version](https://img.shields.io/badge/version-1.3.1-blue.svg)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/tag/v1.3.1)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
@@ -11,7 +11,7 @@
 ---
 
 **Author:** Sergio Farfan · sergio.farfan@gmail.com
-**Version:** 1.3.0 · [Download archive](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.3.0/oci-drawio-architect-v1.3.0.tar.gz) · [Changelog](oci-drawio-architect/CHANGELOG.md)
+**Version:** 1.3.1 · [Download archive](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.3.1/oci-drawio-architect-v1.3.1.tar.gz) · [Changelog](oci-drawio-architect/CHANGELOG.md)
 
 ---
 
@@ -80,7 +80,17 @@ draw.io offers a connector for AI hosts — its hosted MCP server at `mcp.draw.i
 
 ---
 
-## What's new in 1.3.0
+## What's new in 1.3.1
+
+Patch release: correctness fixes and coverage, no new features and no intentional layout change.
+
+- Two DRGs without a `name` no longer abort the build; an unnamed DRG takes its name from the second line of its label, its address or its position.
+- The Terraform parser no longer invents a DRG attachment for an IPSec connection, a private virtual circuit or a remote peering connection that names no DRG, and says so when it falls back to a single unambiguous DRG.
+- Validator: a DRG caption inside a VCN whose border the glyph only straddles is now an error, a leaf inside nested foreign containers is reported once, and a badged container's title is measured against the width its badges leave.
+- Layout: badges and captions get the room they need (NSG badge on a custom slot, subnet title beside its corner badges, DRG caption on a bare cluster side, the gap between two VCN columns with facing gateways).
+- The hub panel accepts an optional `kind` (`onprem` | `remote_region`) that selects its title.
+
+## What was new in 1.3.0
 
 Topology-aware placement: the layout recipe now follows how the team's diagram guidelines and Oracle's own reference architectures draw connectivity infrastructure (see the [changelog](oci-drawio-architect/CHANGELOG.md) for the complete list):
 
@@ -125,7 +135,7 @@ The plugin bundles 159 OCI SVG icons (12 categories, about 1.4 MB); no external 
 ### One-line install
 
 ```bash
-curl -fsSL https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.3.0/oci-drawio-architect-v1.3.0.tar.gz | tar -xz && ./oci-drawio-architect/install.sh
+curl -fsSL https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.3.1/oci-drawio-architect-v1.3.1.tar.gz | tar -xz && ./oci-drawio-architect/install.sh
 ```
 
 This will:
