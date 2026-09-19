@@ -27,6 +27,12 @@ Model schema v2 (JSON-serialisable dict; every key optional except vcns/subject)
       "subject": "Spoke-VCN-D", "region": "us-ashburn-1", "region_label": "Ashburn",
       "compartment": "Spoke-VCN-D", "tenancy_name": null,
       "drg_style": "auto",                # auto | icon | box (CLI --drg-style overrides)
+      "locations": "outside",             # outside (default) | nested - CLI --locations
+      "gateway_edge": "auto",             # auto | internet | top | bottom
+      "subnet_label": "twoline",          # twoline (default; name + (Public)/(Private), CIDR
+                                          # on line 2) | inline (the v1.3.0 single line)
+      "attachment_style": "solid",        # solid (default) | dotted
+      "show_compartments": false,         # draw each compartment as a container
       "hub": {"kind": "onprem",           # onprem (default) | remote_region - selects the default title
               "name": "On-premises",      # optional override; on-prem side only: CPE, IPSec, VC, RPC peer
               "items": [{"icon": "cpe", "label": "Corp VPN\\n(10.0.0.0/8)", "address": "cpe"}],
@@ -73,7 +79,10 @@ item's icon slot. Badges have no caption; names go to the tooltip and metadata. 
 Usage (CLI):
     python3 oci_layout.py model.json -o out.drawio [--profile default|official|v1.0]
                           [--legend] [--logo file] [--strict] [--render png|svg|pdf]
-                          [--drg-style auto|icon|box]
+                          [--drg-style auto|icon|box] [--locations outside|nested]
+                          [--gateway-edge auto|internet|top|bottom]
+                          [--subnet-label twoline|inline] [--attachment-style solid|dotted]
+                          [--show-compartments]
 
 Usage (Python):
     from oci_layout import build_diagram, write_diagram
@@ -96,7 +105,8 @@ from drawio_builder import (  # noqa: E402
     escape_label, is_warning, label_lines, render, wrap_hints,
 )
 from oci_topology import (  # noqa: E402
-    GROUP_BOX_TYPES, HUB_TITLES, attachment_label, attachment_link_label, attachment_style_of,
+    ATTACHMENT_STYLE_MODES, GATEWAY_EDGES, GROUP_BOX_TYPES, HUB_TITLES, LOCATION_MODES,
+    SUBNET_LABEL_MODES, attachment_label, attachment_link_label, attachment_style_of,
     attachment_type, badge_refs, choose_drg_style, classify_topology, compartment_tree,
     drg_route_tables, gateway_edge_mode, hub_kind, is_onprem_item, is_regional, label_parts,
     locations_mode, migrate_legacy_model, normalise_groups, subnet_label_mode,
@@ -142,6 +152,13 @@ VCN_COLUMN_GAP_GW = 110          # column gap after a VCN with right-border gate
                                  # captions on facing borders must not touch (>= LABEL_W + 1)
 SGW_ICONS = ("service_gateway", "sgw", "networking_service_gateway")
 LPG_ICONS = ("remote_peering_gateway", "rpg", "networking_remote_peering_gateway")
+# Icon key -> gateway type, for models that give an icon but no "type".
+GW_ICON_TYPES = {
+    "internet_gateway": "igw", "igw": "igw", "networking_internet_gateway": "igw",
+    "nat_gateway": "nat", "nat": "nat", "networking_nat_gateway": "nat",
+    "service_gateway": "sgw", "sgw": "sgw", "networking_service_gateway": "sgw",
+    "remote_peering_gateway": "lpg", "rpg": "lpg", "networking_remote_peering_gateway": "lpg",
+}
 
 OSN_GAP = 45                     # last VCN column -> Oracle Services Network panel
 OSN_LABEL = "Oracle Services Network"
@@ -173,6 +190,43 @@ def load_model(path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _gateway_type(gw: dict) -> str:
+    """``igw`` | ``nat`` | ``sgw`` | ``lpg`` | ``""`` - the declared type wins over the icon."""
+    gtype = str(gw.get("type") or "").strip().lower()
+    return gtype or GW_ICON_TYPES.get(str(gw.get("icon") or ""), "")
+
+
+def _view_ctx(model: dict, locations=None, gateway_edge=None, subnet_label=None,
+              attachment_style=None, show_compartments=None) -> dict:
+    """The view choices of one diagram: model keys, with the build_diagram kwargs winning.
+
+    ``internet`` is synthesised with no items when the canvas is the Location
+    Canvas and some VCN has an Internet Gateway, so the IGW always has
+    something to face (spec section 5).
+    """
+    m = dict(model or {})
+    for key, value in (("locations", locations), ("gateway_edge", gateway_edge),
+                       ("subnet_label", subnet_label), ("attachment_style", attachment_style)):
+        if value is not None:
+            m[key] = value
+    if show_compartments is not None:
+        m["show_compartments"] = bool(show_compartments)
+    mode = locations_mode(m)
+    internet = m.get("internet")
+    has_igw = any(_gateway_type(g) == "igw"
+                  for v in (m.get("vcns") or []) for g in (v.get("gateways") or []))
+    if internet is None and mode == "outside" and has_igw:
+        internet = {"name": "Internet", "items": []}
+    return {"locations": mode,
+            "gateway_edge": gateway_edge_mode(m),
+            "subnet_label": subnet_label_mode(m),
+            "attachment_style": attachment_style_of(m),
+            "show_compartments": show_compartments_of(m),
+            "internet": internet,
+            "third_party": list(m.get("third_party") or []),
+            "has_internet": bool(internet)}
+
+
 def _tier(subnet: dict) -> str:
     t = (subnet.get("tier") or "").lower()
     if t in ROW_TIERS or t in DATA_TIERS:
@@ -196,19 +250,47 @@ def _grid(n: int, max_cols: int):
     return rows, cols
 
 
-def _subnet_label(subnet: dict) -> str:
+def _two_line(line1: str, line2: str) -> str:
+    """Oracle's two-line container title (slide 18): bold name, light Bark CIDR below it."""
+    top = escape_label(line1)
+    if not line2:
+        return top
+    return (f'{top}<br><font style="font-size: 10px" color="{COLORS["text_primary"]}">'
+            f'{escape_label(line2)}</font>')
+
+
+def _subnet_title_lines(subnet: dict, mode: str = "twoline") -> list:
+    """The subnet title as plain text lines - what the width estimate measures."""
     name = subnet.get("name", "subnet")
     cidr = subnet.get("cidr")
-    label = f"{name} ({cidr})" if cidr else name
-    if subnet.get("public") and "public" not in label.lower():
-        label += " - public"
-    return label
+    if mode == "inline":
+        label = f"{name} ({cidr})" if cidr else name
+        if subnet.get("public") and "public" not in label.lower():
+            label += " - public"
+        return [label]
+    line1, line2 = label_parts(name, cidr, subnet.get("public"))
+    return [ln for ln in (line1, line2) if ln]
 
 
-def _vcn_label(vcn: dict) -> str:
+def _title_width(lines, font_size: float) -> float:
+    return max((edge_label_extent(ln, font_size)[0] for ln in lines), default=0.0)
+
+
+def _subnet_label(subnet: dict, mode: str = "twoline") -> str:
+    """B08 / L4: name (+ Public/Private token) on line 1, CIDR on line 2. HTML in both modes."""
+    lines = _subnet_title_lines(subnet, mode)
+    if mode == "inline":
+        return escape_label(lines[0])
+    return _two_line(lines[0], lines[1] if len(lines) > 1 else "")
+
+
+def _vcn_label(vcn: dict, mode: str = "twoline") -> str:
     name = vcn.get("name", "vcn")
     cidr = vcn.get("cidr")
-    return f"VCN: {name} ({cidr})" if cidr else f"VCN: {name}"
+    if mode == "inline":
+        return escape_label(f"VCN: {name} ({cidr})" if cidr else f"VCN: {name}")
+    line1, line2 = label_parts(f"VCN: {name}", cidr)
+    return _two_line(line1, line2)
 
 
 def _vcn_order(vcns) -> dict:
@@ -299,6 +381,7 @@ class _Registry:
         self.by_address = {}
         self.by_caption = {}
         self.containers = {}
+        self.badge_kinds = set()      # B07: legend rows only for the badges actually drawn
 
     def add_item(self, item: dict, cid: str):
         addr = item.get("address")
@@ -355,6 +438,7 @@ def _add_subnet_badges(d: DrawioBuilder, sid: str, subnet: dict, width, reg) -> 
                           tooltip=_badge_tooltip("Route table", rt),
                           metadata={"route_table": ", ".join(r["name"] for r in rt)})
         _register_badge(reg, rt, bid)
+        reg.badge_kinds.add("route_table")
         ids.append(bid)
         cx -= BADGE_SIZE + BADGE_GAP
     sls = _badge_refs(subnet.get("security_lists"))
@@ -363,6 +447,7 @@ def _add_subnet_badges(d: DrawioBuilder, sid: str, subnet: dict, width, reg) -> 
                           tooltip=_badge_tooltip("Security list", sls),
                           metadata={"security_lists": ", ".join(r["name"] for r in sls)})
         _register_badge(reg, sls, bid)
+        reg.badge_kinds.add("security_list")
         ids.append(bid)
     return ids
 
@@ -377,6 +462,8 @@ def _add_nsg_badge(d: DrawioBuilder, parent, cid: str, item: dict, reg=None):
                       key=f"{cid}-nsg", tooltip=_badge_tooltip("NSG", nsgs),
                       metadata={"nsgs": ", ".join(r["name"] for r in nsgs)})
     _register_badge(reg, nsgs, bid)
+    if reg is not None:
+        reg.badge_kinds.add("nsg")
     return bid
 
 
@@ -399,22 +486,27 @@ def _icon_items(d: DrawioBuilder, parent, items, cols, x0=PAD, y0=ROW1_Y, reg=No
     return ids, bbox
 
 
-def _subnet_min_w(subnet: dict, d: DrawioBuilder) -> int:
-    """Minimum subnet width so a badged subnet's title does not run under its corner badges."""
+def _subnet_min_w(subnet: dict, d: DrawioBuilder, mode: str = "twoline") -> int:
+    """Minimum subnet width so a badged subnet's title does not run under its corner badges.
+
+    Measured per title LINE: the two-line form (B08) puts the CIDR on its own
+    line, so the same subnet needs less width than the 1.3.0 inline form.
+    """
     if not (_badge_refs(subnet.get("route_table")) or _badge_refs(subnet.get("security_lists"))):
         return 0
-    tw, _ = edge_label_extent(_subnet_label(subnet), d.profile["subnet_font"])
+    tw = _title_width(_subnet_title_lines(subnet, mode), d.profile["subnet_font"])
     return int(math.ceil((tw + SUBNET_TITLE_PAD + BADGE_RESERVE) / 10.0) * 10)
 
 
-def _layout_subnet(d: DrawioBuilder, vcn_id, subnet, x, y, max_cols, reg, min_w=None):
+def _layout_subnet(d: DrawioBuilder, vcn_id, subnet, x, y, max_cols, reg, min_w=None,
+                   label_mode="twoline"):
     items = subnet.get("items") or []
     rows, cols = _grid(len(items), max_cols)
-    min_w = max(min_w or 0, _subnet_min_w(subnet, d))
+    min_w = max(min_w or 0, _subnet_min_w(subnet, d, label_mode))
     prov_w = max(cols * COL_W + SUBNET_EXTRA_W, min_w)
     prov_h = ROW1_Y + (rows - 1) * ROW_H + ICON_FOOTPRINT_H + SUBNET_BOTTOM_PAD
-    sid = d.add_group(_subnet_label(subnet), x, y, prov_w, prov_h, parent=vcn_id,
-                      group_type="subnet",
+    sid = d.add_group(_subnet_label(subnet, label_mode), x, y, prov_w, prov_h, parent=vcn_id,
+                      group_type="subnet", raw_html=True,
                       key=f"subnet:{subnet.get('name', '')}" if subnet.get("name") else None,
                       metadata=subnet.get("metadata"), tooltip=subnet.get("tooltip"))
     reg.containers[f"subnet:{subnet.get('name', '')}"] = sid
@@ -434,10 +526,11 @@ def _layout_subnet(d: DrawioBuilder, vcn_id, subnet, x, y, max_cols, reg, min_w=
 
 def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX_ROW_W,
                 inset_left=0, right_pad=PAD, bottom_pad=VCN_BOTTOM_PAD, min_h=200,
-                min_w=VCN_MIN_W):
+                min_w=VCN_MIN_W, label_mode="twoline"):
     """Lay out one VCN box; min_h / min_w are the minimum FINAL height / width (borders
     included), so the caller can reserve room for the gateways that straddle the border."""
-    vid = d.add_group(_vcn_label(vcn), x, y, 400, 300, parent=region_id, group_type="vcn",
+    vid = d.add_group(_vcn_label(vcn, label_mode), x, y, 400, 300, parent=region_id,
+                      group_type="vcn", raw_html=True,
                       key=f"vcn:{vcn.get('name', '')}" if vcn.get("name") else None,
                       metadata=vcn.get("metadata"), tooltip=vcn.get("tooltip"))
     reg.containers[f"vcn:{vcn.get('name', '')}"] = vid
@@ -453,7 +546,7 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
     for s in row_subnets:
         n = len(s.get("items") or [])
         _, cols = _grid(n, 2)
-        est_w = max(cols * COL_W + SUBNET_EXTRA_W, _subnet_min_w(s, d))
+        est_w = max(cols * COL_W + SUBNET_EXTRA_W, _subnet_min_w(s, d, label_mode))
         if cur and cur_w + H_GAP + est_w > max_row_w:
             rows.append(cur)
             cur, cur_w = [], 0.0
@@ -468,7 +561,7 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
         cx = PAD + inset_left
         bottoms = []
         for s in row:
-            sid, w, h = _layout_subnet(d, vid, s, cx, cy, 2, reg)
+            sid, w, h = _layout_subnet(d, vid, s, cx, cy, 2, reg, label_mode=label_mode)
             cx += w + H_GAP
             bottoms.append(cy + h)
         row1_right = max(row1_right, cx - H_GAP)
@@ -494,7 +587,7 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
     for s in data_subnets:
         n = len(s.get("items") or [])
         sid, w, h = _layout_subnet(d, vid, s, PAD + inset_left, cy, max(2, min(5, n or 2)), reg,
-                                   min_w=row_w if row_w else None)
+                                   min_w=row_w if row_w else None, label_mode=label_mode)
         cy += h + V_GAP
 
     w, h = d.fit_to_children(vid, pad=PAD, min_w=VCN_MIN_W, min_h=min_h)
@@ -706,8 +799,36 @@ def _resolve_attachment_target(reg: _Registry, pe: dict):
     return None
 
 
+# B07: badge legend rows, in the order the badges are drawn. The DRG route
+# table reuses the route-table glyph with its own text (Task 9 fills the kind).
+LEGEND_BADGE_ROWS = (("route_table", "route_table", "Route table"),
+                     ("security_list", "security_list", "Security list"),
+                     ("nsg", "nsg", "Network security group"),
+                     ("drg_route_table", "route_table", "DRG route table"))
+
+
+def _legend_entries(d: DrawioBuilder, reg: _Registry) -> list:
+    """The eight default rows, with the attachment row named after the active form (L3),
+    plus one badge row per badge kind the diagram actually drew."""
+    attachment = ("Attachment / association (structural)" if d.attachment_style == "dotted"
+                  else "Attachment (structural)")
+    rows = [("edge", "data", "Data flow (protocol / port)"),
+            ("edge", "control", "Management / administrative traffic"),
+            ("edge", "association", "Association / dependency"),
+            ("edge", "attachment", attachment),
+            ("group", "region", "Region / on-premises"),
+            ("group", "vcn", "VCN"),
+            ("group", "subnet", "Subnet"),
+            ("group", "oracle_services_network", "Oracle Services Network")]
+    rows.extend(("badge", icon, text) for kind, icon, text in LEGEND_BADGE_ROWS
+                if kind in reg.badge_kinds)
+    return rows
+
+
 def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
-                  page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None) -> DrawioBuilder:
+                  page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None,
+                  locations=None, gateway_edge=None, subnet_label=None, attachment_style=None,
+                  show_compartments=None) -> DrawioBuilder:
     """Lay out a normalized model and return the (unwritten) DrawioBuilder.
 
     Schema-1 models are migrated first (DRG hub items / drg gateways -> drgs[]);
@@ -723,8 +844,12 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     choose_drg_style(requested, 0)                     # validates the value early
     topo = classify_topology(model)
     subject = model.get("subject") or (model["vcns"][0].get("name") if model.get("vcns") else "Architecture")
-    d = DrawioBuilder(page_name=page_name or f"{subject} Architecture", style_profile=style_profile)
-    d.layout_info = {"topology": topo, "warnings": list(warnings), "drg_style": {}}
+    ctx = _view_ctx(model, locations=locations, gateway_edge=gateway_edge, subnet_label=subnet_label,
+                    attachment_style=attachment_style, show_compartments=show_compartments)
+    d = DrawioBuilder(page_name=page_name or f"{subject} Architecture", style_profile=style_profile,
+                      attachment_style=ctx["attachment_style"])
+    d.layout_info = {"topology": topo, "warnings": list(warnings), "drg_style": {},
+                     "locations": ctx["locations"]}
     reg = _Registry()
 
     if title:
@@ -782,7 +907,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                                 inset_left=SIDE_INSET if sides["left"] else 0,
                                 right_pad=VCN_SIDE_PAD if sides["right"] else PAD,
                                 bottom_pad=VCN_BOTTOM_PAD_GW if sides["bottom"] else VCN_BOTTOM_PAD,
-                                min_h=need_h, min_w=need_w)
+                                min_h=need_h, min_w=need_w, label_mode=ctx["subnet_label"])
         vcn_boxes.append((vid, x, VCN_Y, w, h))
         for side in ("bottom", "right", "left"):
             for slot, g in enumerate(sides[side]):
@@ -856,7 +981,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
 
     if legend:
         _, _, _, bottom = d.content_bbox()
-        d.add_legend(REGION_XY[0], bottom + GAP)
+        d.add_legend(REGION_XY[0], bottom + GAP, entries=_legend_entries(d, reg))
 
     d.fit_page(margin=PAD)
     return d
@@ -895,13 +1020,29 @@ def main(argv=None) -> int:
                     help="DRG presentation: icon (DRG icon with attachment boxes beside it) or box "
                          "(dashed 'DRG: <name>' group holding them); auto = icon unless a DRG has more "
                          "than 4 attachments (overrides model['drg_style'])")
+    ap.add_argument("--locations", default=None, choices=LOCATION_MODES,
+                    help="canvas: outside (default; On-Premises / Internet / 3rd Party Cloud as "
+                         "page-level siblings of the region) or nested (the v1.3.0 on-premises panel "
+                         "inside the region)")
+    ap.add_argument("--gateway-edge", default=None, choices=GATEWAY_EDGES,
+                    help="which VCN border the Internet-facing gateways take (default auto: the "
+                         "border facing the Internet box, else the bottom)")
+    ap.add_argument("--subnet-label", default=None, choices=SUBNET_LABEL_MODES,
+                    help="subnet / VCN titles: twoline (default; name + Public/Private over the CIDR) "
+                         "or inline (the v1.3.0 single line)")
+    ap.add_argument("--attachment-style", default=None, choices=ATTACHMENT_STYLE_MODES,
+                    help="attachment connectors: solid (default) or dotted")
+    ap.add_argument("--show-compartments", action="store_true", default=None,
+                    help="draw each compartment as a container around its VCNs")
     args = ap.parse_args(argv)
     model = load_model(args.model)
     subject = model.get("subject") or "Architecture"
     out = Path(args.out) if args.out else Path(f"{subject.replace(' ', '_')}_Architecture.drawio")
     write_diagram(model, out, strict=args.strict, render_fmt=args.render,
                   style_profile=args.profile, legend=args.legend, logo=args.logo,
-                  drg_style=args.drg_style)
+                  drg_style=args.drg_style, locations=args.locations,
+                  gateway_edge=args.gateway_edge, subnet_label=args.subnet_label,
+                  attachment_style=args.attachment_style, show_compartments=args.show_compartments)
     return 0
 
 
