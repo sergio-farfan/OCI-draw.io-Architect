@@ -909,6 +909,14 @@ class PlanJsonTests(unittest.TestCase):
         self.assertNotIn("tag-must-not-leak", dump)
         self.assertNotIn("oci_identity_availability_domains", dump)
 
+    def test_plan_json_indexed_instances_get_their_vnic_attachment_nsg(self):
+        """A45: _build_vnic_nsgs must resolve instance_id across count indices in plan JSON."""
+        model = pt.parse_show_json(FIXTURES / "plan.json", "plan")
+        items = {i["address"]: i for v in model["vcns"] for s in v["subnets"] for i in s["items"]}
+        for addr in ("oci_core_instance.app[0]", "oci_core_instance.app[1]"):
+            self.assertIn(addr, items)
+            self.assertEqual([n["name"] for n in items[addr].get("nsgs") or []], ["nsg-mgmt"], addr)
+
     def test_state_mode_uses_values_root_module(self):
         plan = json.loads((FIXTURES / "plan.json").read_text())
         state = {"format_version": "1.0", "values": plan["planned_values"]}

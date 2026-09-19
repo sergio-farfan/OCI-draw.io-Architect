@@ -87,6 +87,29 @@
             "create_vnic_details": [{"assign_public_ip": false}]
           }
         },
+      {
+        "address": "oci_core_network_security_group.mgmt",
+        "mode": "managed",
+        "type": "oci_core_network_security_group",
+        "name": "mgmt",
+        "values": {"display_name": "nsg-mgmt"}
+      },
+      {
+        "address": "oci_core_vnic_attachment.secondary[0]",
+        "mode": "managed",
+        "type": "oci_core_vnic_attachment",
+        "name": "secondary",
+        "index": 0,
+        "values": {"display_name": "vnic-mgmt-0"}
+      },
+      {
+        "address": "oci_core_vnic_attachment.secondary[1]",
+        "mode": "managed",
+        "type": "oci_core_vnic_attachment",
+        "name": "secondary",
+        "index": 1,
+        "values": {"display_name": "vnic-mgmt-1"}
+      },
         {
           "address": "oci_load_balancer_load_balancer.web",
           "mode": "managed",
@@ -204,6 +227,32 @@
             ]
           }
         },
+      {
+        "address": "oci_core_network_security_group.mgmt",
+        "mode": "managed",
+        "type": "oci_core_network_security_group",
+        "name": "mgmt",
+        "expressions": {
+          "display_name": {"constant_value": "nsg-mgmt"},
+          "vcn_id": {"references": ["oci_core_vcn.main.id", "oci_core_vcn.main"]}
+        }
+      },
+      {
+        "address": "oci_core_vnic_attachment.secondary",
+        "mode": "managed",
+        "type": "oci_core_vnic_attachment",
+        "name": "secondary",
+        "count_expression": {"constant_value": 2},
+        "expressions": {
+          "instance_id": {"references": ["oci_core_instance.app[count.index].id", "oci_core_instance.app"]},
+          "create_vnic_details": [
+            {
+              "nsg_ids": {"references": ["oci_core_network_security_group.mgmt.id",
+                                         "oci_core_network_security_group.mgmt"]}
+            }
+          ]
+        }
+      },
         {
           "address": "oci_load_balancer_load_balancer.web", "mode": "managed",
           "type": "oci_load_balancer_load_balancer", "name": "web",
