@@ -1341,6 +1341,20 @@ class TestTopologyCells(TempDirMixin, unittest.TestCase):
         vm = d.add_icon("VM", "vm", 300, 0)
         self.assertNotIn("ociRole", tokens(cell(d.root, vm).get("style")))
 
+    def test_move_translates_a_cell_and_an_icons_slot(self):
+        d = DrawioBuilder()
+        r = d.add_group("R", 0, 0, 600, 400, group_type="region")
+        icon = d.add_icon("VM", "vm", 100, 100, parent=r, key="vm")
+        box = d.add_box("attachment", 300, 100, 100, 44, parent=r, key="att")
+        d.move(icon, dy=50)
+        d.move(box, dx=20, dy=-10)
+        self.assertEqual(d.bbox(icon), (100, 150, db.ICON_W, db.ICON_H))
+        self.assertEqual(d._cells[icon]["y"], d._cells[icon]["slot_y"] + db.GLYPH_TOP
+                         + round((db.GLYPH_H - d._cells[icon]["h"]) / 2))
+        self.assertEqual(d.bbox(box), (320, 90, 100, 44))
+        self.assertEqual(geom(cell(d.root, icon))["y"], d._cells[icon]["y"])
+        self.assertEqual(geom(cell(d.root, box))["y"], 90)
+
 
 # ---------------------------------------------------------------------------
 # 8. validate() / check_overlaps() / validate_file()

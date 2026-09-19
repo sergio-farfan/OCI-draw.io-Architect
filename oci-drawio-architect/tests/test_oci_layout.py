@@ -804,7 +804,11 @@ class ExamplesTests(unittest.TestCase):
                 box = db._Box(*d._abs_cell("att-vpn"))
                 label = db._Box(*d._cells["att-vpn-edge"]["label_box"])
                 self.assertFalse(box.intersects(label))
-                self.assertLessEqual(label.right, box.x)      # on the on-premises side
+                if d.layout_info.get("canvas", {}).get("left_w"):
+                    # G3: the hybrid label lives in the gutter, outside the region
+                    self.assertLess(label.x, d.abs_bbox("region")[0])
+                else:
+                    self.assertLessEqual(label.right, box.x)  # on the on-premises side
 
     def test_reference_gives_every_connector_its_own_docking_point(self):
         """_PORT_SHARE_COST must stay above a three-bend detour: two arrowheads
@@ -1169,6 +1173,127 @@ class LegendRowTests(unittest.TestCase):
         d = quiet(ol.build_diagram, self.MODEL, attachment_style="dotted")
         self.assertEqual(d.attachment_style, "dotted")
         self.assertEqual(quiet(ol.build_diagram, self.MODEL).attachment_style, "solid")
+
+
+CANVAS_HYBRID = {
+    "subject": "canvas", "region": "eu-frankfurt-1", "region_label": "Frankfurt",
+    "hub": {"name": "On-Premises",
+            "items": [{"icon": "cpe", "type": "oci_core_cpe", "label": "cpe-hq", "address": "cpe"}]},
+    "drgs": [{"name": "drg", "address": "drg", "label": "DRG\ndrg", "attachments": [
+        {"type": "vcn", "vcn": "hub", "address": "att-hub", "label": "VCN attachment\nhub"},
+        {"type": "ipsec", "target": "cpe", "address": "att-vpn", "label": "IPSec attachment"}]}],
+    "vcns": [{"name": "hub", "cidr": "10.0.0.0/16", "subnets": [
+        {"name": "sn-lb", "cidr": "10.0.1.0/24", "tier": "lb", "public": True,
+         "items": [{"icon": "load_balancer", "label": "LB", "address": "lb"}]},
+        {"name": "sn-app", "cidr": "10.0.2.0/24", "tier": "app", "public": False,
+         "items": [{"icon": "vm", "label": "App", "address": "app"}]}],
+        "gateways": [gw("igw", "internet_gateway", "Internet\nGateway", "igw"),
+                     gw("nat", "nat_gateway", "NAT\nGateway", "nat"),
+                     gw("sgw", "service_gateway", "Service\nGateway", "sgw")],
+        "services": [{"icon": "buckets", "label": "Object Storage", "address": "buckets"}]}],
+}
+
+
+class LocationCanvasTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.d = quiet(ol.build_diagram, CANVAS_HYBRID)
+
+    def test_the_location_boxes_are_page_level_siblings_of_the_region(self):
+        for cid in ("hub", "internet", "region"):
+            self.assertEqual(self.d._cells[cid]["parent"], "1", cid)
+        self.assertEqual(errors_of(self.d), [])
+
+    def test_the_region_is_shifted_right_by_the_left_column(self):
+        rx, _ry, _rw, _rh = self.d.abs_bbox("region")
+        hx, _hy, hw, _hh = self.d.abs_bbox("hub")
+        self.assertEqual(hx, ol.REGION_XY[0])
+        self.assertEqual(hw, ol.LOC_W)
+        self.assertGreaterEqual(rx - (hx + hw), ol.LOC_GAP_MIN)
+
+    def test_the_internet_box_hugs_the_regions_right_edge(self):
+        rx, ry, rw, rh = self.d.abs_bbox("region")
+        ix, iy, iw, ih = self.d.abs_bbox("internet")
+        self.assertEqual(ix - (rx + rw), ol.LOC_GAP_RIGHT)
+        self.assertEqual((iy, ih, iw), (ry, rh, ol.LOC_W))
+
+    def test_the_right_column_splits_the_region_height_with_a_third_party_box(self):
+        model = copy.deepcopy(CANVAS_HYBRID)
+        model["third_party"] = [{"name": "3rd Party Cloud",
+                                 "items": [{"icon": "cloud", "label": "Partner SaaS", "address": "saas"}]}]
+        d = quiet(ol.build_diagram, model)
+        _rx, ry, _rw, rh = d.abs_bbox("region")
+        _ix, iy, _iw, ih = d.abs_bbox("internet")
+        _tx, ty, _tw, th = d.abs_bbox("thirdparty-0")
+        self.assertEqual(iy, ry)
+        self.assertEqual(ty, iy + ih + ol.LOC_STACK_GAP)
+        self.assertEqual(ih + ol.LOC_STACK_GAP + th, rh)
+        self.assertEqual(ih, round((rh - ol.LOC_STACK_GAP) * ol.INTERNET_SPLIT))
+        self.assertEqual(errors_of(d), [])
+
+    def test_a_right_column_that_does_not_fit_grows_the_region_and_recentres_it(self):
+        """Decision 6: the boxes are floored at LOC_MIN_H first, then the region grows and
+        every region child moves down by half the growth, so the VCN stack stays centred."""
+        model = copy.deepcopy(CANVAS_HYBRID)
+        model["third_party"] = [{"name": "3rd Party Cloud", "items": []},
+                                {"name": "Partner Cloud", "items": []}]
+        small = quiet(ol.build_diagram, CANVAS_HYBRID)
+        d = quiet(ol.build_diagram, model)
+        _rx, ry, _rw, rh = d.abs_bbox("region")
+        need = 3 * ol.LOC_MIN_H + 2 * ol.LOC_STACK_GAP
+        self.assertEqual(rh, max(need, small.abs_bbox("region")[3]))
+        heights = [d.abs_bbox(cid)[3] for cid in ("internet", "thirdparty-0", "thirdparty-1")]
+        self.assertTrue(all(h >= ol.LOC_MIN_H for h in heights), heights)
+        self.assertEqual(sum(heights) + 2 * ol.LOC_STACK_GAP, rh)
+        vy = d.abs_bbox("vcn-hub")[1] - ry
+        self.assertEqual(vy, ol.VCN_Y + (rh - small.abs_bbox("region")[3]) // 2)
+        self.assertEqual(errors_of(d), [])
+
+    def test_the_cpe_straddles_the_on_premises_region_facing_border(self):
+        """Decision 5 / toolkit Template 1: the CPE's glyph centre sits on the box's right edge."""
+        hx, _hy, hw, _hh = self.d.abs_bbox("hub")
+        cx, _cy, _cw, _ch = self.d.abs_bbox("cpe")
+        self.assertEqual(cx + ol.GW_SIDE_DX, hx + hw)
+        caption = self.d._cells["cpe"]["label_id"]
+        self.assertEqual(style_of(self.d, caption)["fillColor"], db.COLORS["region_fill"])
+
+    def test_a_non_on_premises_hub_item_keeps_the_centred_column(self):
+        model = copy.deepcopy(CANVAS_HYBRID)
+        model["hub"]["items"].append({"icon": "rpg", "label": "RPC peer", "address": "rpc"})
+        d = quiet(ol.build_diagram, model)
+        hx, _hy, hw, _hh = d.abs_bbox("hub")
+        self.assertEqual(d.abs_bbox("rpc")[0] - hx, round((ol.LOC_W - db.ICON_W) / 2 / 10) * 10)
+        self.assertEqual(d.abs_bbox("cpe")[0] + ol.GW_SIDE_DX, hx + hw)
+        self.assertEqual(errors_of(d), [])
+
+    def test_the_hybrid_label_edge_crosses_the_region_border(self):
+        eid = next(cid for cid, e in self.d._cells.items()
+                   if e["kind"] == "edge" and e.get("source") == "att-vpn")
+        self.assertEqual(self.d._cells[eid]["label"], "Site-to-Site VPN")
+        self.assertEqual(self.d._cells[eid]["target"], "cpe")
+        self.assertEqual(self.d._cells[eid]["parent"], "1")       # common ancestor of region and hub
+
+    def test_nested_mode_reproduces_the_130_canvas(self):
+        d = quiet(ol.build_diagram, dict(CANVAS_HYBRID, locations="nested"))
+        self.assertEqual(d._cells["hub"]["parent"], "region")
+        self.assertEqual(d._cells["hub"]["x"], ol.HUB_X)
+        self.assertNotIn("internet", d._cells)
+        self.assertEqual(d.abs_bbox("region")[0], ol.REGION_XY[0])
+        self.assertEqual(errors_of(d), [])
+
+    def test_no_internet_box_without_an_igw(self):
+        model = copy.deepcopy(CANVAS_HYBRID)
+        model["vcns"][0]["gateways"] = [gw("sgw", "service_gateway", "Service\nGateway", "sgw")]
+        d = quiet(ol.build_diagram, model)
+        self.assertNotIn("internet", d._cells)
+        # the gutter holds the hybrid label AND the half slot the straddling CPE
+        # pushes out of the On-Premises box (decision 5)
+        gap = (max(ol.LOC_GAP_MIN, ol._hub_gutter(model["drgs"], d.profile["edge_font"]))
+               + db.ICON_W - ol.GW_SIDE_DX)
+        self.assertEqual(d.abs_bbox("region")[0], ol.REGION_XY[0] + ol.LOC_W + gap)
+
+    def test_the_canvas_passes_the_strict_gate(self):
+        self.assertEqual(quiet(self.d.check_overlaps, True), [])
 
 
 if __name__ == "__main__":
