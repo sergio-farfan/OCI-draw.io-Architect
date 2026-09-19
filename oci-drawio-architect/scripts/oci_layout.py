@@ -87,7 +87,7 @@ Usage (CLI):
                           [--label-tag-keys K,K] [--layers off|auto|L,L] [--hidden-layers L,L]
                           [--detail executive|application|network|engineering] [--no-edges]
                           [--filter EXPR ...] [--mode all|participating] [--discovery K,K]
-                          [--annotate-discovery]
+                          [--annotate-discovery] [--global-services osn|bucket]
 
 Usage (Python):
     from oci_layout import build_diagram, write_diagram
@@ -117,7 +117,7 @@ from oci_topology import (  # noqa: E402
     SUBNET_LABEL_MODES, attachment_label, attachment_link_label, attachment_style_of,
     attachment_type, badge_refs, choose_drg_style, classify_topology, compartment_tree,
     drg_route_tables, gateway_edge_mode, hub_kind, is_onprem_item, is_regional, label_parts,
-    locations_mode, migrate_legacy_model, normalise_groups,
+    locations_mode, migrate_legacy_model, normalise_groups, service_scope,
 )
 
 # ---------------------------------------------------------------------------
@@ -178,6 +178,15 @@ GW_ICON_TYPES = {
     "service_gateway": "sgw", "sgw": "sgw", "networking_service_gateway": "sgw",
     "remote_peering_gateway": "lpg", "rpg": "lpg", "networking_remote_peering_gateway": "lpg",
 }
+
+# C06 / 6.7: the tenancy-scoped bucket. A page-level sibling of the region in
+# BOTH canvases, below it and left-aligned with it: tenancy scope is above
+# region scope, it keeps the box out of every containment rule, and page level
+# is what makes the "iam" view layer possible at all (V2).
+GLOBAL_BAND_GAP = 45
+GLOBAL_LABEL = "Global services"
+GLOBAL_MAX_COMPARTMENTS = 12     # then "+N more" - the guidelines list Compartments as global
+GLOBAL_TEXT_H = 40               # a FLOOR: the cell grows with the wrapped line count
 
 OSN_GAP = 45                     # last VCN column -> Oracle Services Network panel (nested canvas)
 OSN_BAND_GAP = 45                # VCN stack bottom -> OSN band top (Location Canvas, G5)
@@ -605,10 +614,21 @@ def _place_edge_gateway(d: DrawioBuilder, parent_id, box, side: str, slot: int, 
     return ids[0]
 
 
-def _split_services(items) -> tuple:
-    """(regional, vcn-resident) using item['regional'] or the icon-key table."""
+def _split_services(items, bucket: bool = False) -> tuple:
+    """``(regional, vcn-resident, global)`` using ``scope`` / ``regional`` / the icon tables.
+
+    With ``bucket`` False (the default, spec 6.7 / A2) the third list is always
+    empty and the seven global keys stay in the regional list, exactly as 1.4.0
+    placed them - Oracle's own slides 29-31 draw IAM, Auditing and Policies
+    inside the Oracle Services Network box.
+    """
     items = list(items or [])
-    return [s for s in items if is_regional(s)], [s for s in items if not is_regional(s)]
+    if not bucket:
+        return [s for s in items if is_regional(s)], [s for s in items if not is_regional(s)], []
+    scopes = [(s, service_scope(s)) for s in items]
+    return ([s for s, sc in scopes if sc == "regional"],
+            [s for s, sc in scopes if sc == "vcn"],
+            [s for s, sc in scopes if sc == "global"])
 
 
 def _layout_osn(d: DrawioBuilder, region_id, items, x, y, min_h, reg, min_w=None, cols=None,
@@ -1692,6 +1712,60 @@ def _apply_layers(d: DrawioBuilder, layers: dict, view: dict, reg: _Registry) ->
     return {"enabled": list(layers), "hidden": hidden, "cells": counts}
 
 
+def _layout_global_bucket(d: DrawioBuilder, view: dict, model: dict, items, reg: _Registry,
+                          region_id: str):
+    """6.7: one tenancy container below the region holding the global services.
+
+    Returns the container id, or None when there is nothing to put in it. No
+    connector is ever drawn to it: a global service is not reached through the
+    Service Gateway, and inventing an edge would contradict the guidelines'
+    section 5 path VCN -> Service Gateway -> Oracle Services Network -> service.
+    """
+    compartments = [str(c.get("name") if isinstance(c, dict) else c)
+                    for c in (model.get("compartments") or [])
+                    if (c.get("name") if isinstance(c, dict) else c)]
+    show_list = bool(compartments) and not view.get("show_compartments")
+    items = list(items or [])
+    if not items and not show_list:
+        return None
+    rx, ry, rw, rh = d.abs_bbox(region_id)
+    label = GLOBAL_LABEL
+    if model.get("tenancy_name"):
+        label = f"{GLOBAL_LABEL} (Tenancy: {model['tenancy_name']})"
+    cols = max(1, min(len(items) or 1, int((rw - 2 * PAD) // COL_W) or 1))
+    rows_n, cols = _grid(len(items), cols)
+    prov_h = (ROW1_Y + (rows_n - 1) * _row_h(view) + (ICON_FOOTPRINT_H if items else 0)
+              + (_label_h(view) - LABEL_H) + SUBNET_BOTTOM_PAD)
+    # The bucket is as wide as it needs to be, never wider: forcing VCN_MIN_W
+    # would make a one-icon bucket span the whole region.
+    prov_w = min(max(int(rw), 1), max(cols * COL_W + 2 * PAD, 240))
+    gid = d.add_group(label, rx, ry + rh + GLOBAL_BAND_GAP, prov_w, prov_h,
+                      parent="1", group_type="tenancy", key="global", label_position="left")
+    reg.containers["global"] = gid
+    bottom = ROW1_Y
+    if items:
+        _icon_items(d, gid, items, cols, reg=reg, view=view)
+        bottom = ROW1_Y + rows_n * _row_h(view)
+    if show_list:
+        shown = compartments[:GLOBAL_MAX_COMPARTMENTS]
+        text = "Compartments: " + ", ".join(shown)
+        if len(compartments) > GLOBAL_MAX_COMPARTMENTS:
+            text += f" +{len(compartments) - GLOBAL_MAX_COMPARTMENTS} more"
+        # The list is unbounded up to GLOBAL_MAX_COMPARTMENTS entries, so the
+        # text cell is sized from the wrapped line count rather than pinned at
+        # GLOBAL_TEXT_H, which twelve names would overflow (rule 5 warning).
+        text_w = max(prov_w - 2 * PAD, 200)
+        text_h = max(GLOBAL_TEXT_H,
+                     int(math.ceil(label_lines(escape_label(text), text_w - 4, 10) * 10 * 1.25)) + 6)
+        d.add_text(escape_label(text), PAD, bottom, text_w, text_h,
+                   parent=gid, font_size=10, key="global-compartments", raw_html=True)
+    d.fit_to_children(gid, pad=PAD, min_w=prov_w)
+    # 6.2: the whole box is page-level, so it - and everything inside it - can
+    # be moved onto the "iam" layer by the post-pass.
+    reg.layer_cells.setdefault("iam", []).append(gid)
+    return gid
+
+
 def _resolve_attachment_target(reg: _Registry, pe: dict):
     """Cell the attachment box connects to: its VCN's border, a hub item, or nothing."""
     if pe.get("vcn") is not None:
@@ -1738,7 +1812,8 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                   show_compartments=None, label_mode=None, label_fields=None,
                   label_tag_keys=None, layers=None, hidden_layers=None,
                   detail=None, show_edges=None, filter_spec=None, mode=None,
-                  discovery=None, annotate_discovery=None) -> DrawioBuilder:
+                  discovery=None, annotate_discovery=None,
+                  global_services=None) -> DrawioBuilder:
     """Lay out a normalized model and return the (unwritten) DrawioBuilder.
 
     Schema-1 models are migrated first (DRG hub items / drg gateways -> drgs[]);
@@ -1757,7 +1832,8 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                            hidden_layers=hidden_layers, detail=detail, show_edges=show_edges,
                            subnet_label=subnet_label, show_compartments=show_compartments,
                            filter=filter_spec, mode=mode, discovery=discovery,
-                           annotate_discovery=annotate_discovery)
+                           annotate_discovery=annotate_discovery,
+                           global_services=global_services)
     for note in view["notes"]:
         print(note, file=sys.stderr)
     model, filter_report = ov.filter_model(model, view["filter"], mode=view["mode"],
@@ -1793,7 +1869,8 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                                  "edges_dropped", "containers_dropped", "groups_dropped")},
                      "pruned": {"items": filter_report["pruned_items"],
                                 "services": filter_report["pruned_services"]},
-                     "edges": edge_mix}
+                     "edges": edge_mix,
+                     "global_services": view["global_services"]}
     reg = _Registry()
 
     if title:
@@ -1810,13 +1887,17 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     hub = model.get("hub")
     drgs = list(model.get("drgs") or [])
     vcns = [dict(v) for v in (model.get("vcns") or [])]
+    bucket_on = view["global_services"] == "bucket"
     osn_items = []
+    global_items = []
     for vcn in vcns:
-        regional, local = _split_services(vcn.get("services"))
+        regional, local, glob = _split_services(vcn.get("services"), bucket_on)
         osn_items.extend(regional)
+        global_items.extend(glob)
         vcn["services"] = local
-    regional, top_services = _split_services(model.get("services"))
+    regional, top_services, glob = _split_services(model.get("services"), bucket_on)
     osn_items.extend(regional)
+    global_items.extend(glob)
     if top_services and len(vcns) == 1:
         vcns[0]["services"] = list(vcns[0].get("services") or []) + top_services
         top_services = []
@@ -1974,6 +2055,10 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     canvas = _layout_locations(d, rid, ctx, hub if not nested_hub else None, drgs, vcn_y, ref_h,
                                reg, explicit_pairs=pairs, view=view)
     d.layout_info["canvas"] = canvas
+    # 6.7: after the region has its final box (the Location Canvas translated
+    # it), before the layers are created - the bucket is what fills the iam layer.
+    if bucket_on:
+        _layout_global_bucket(d, view, model, global_items, reg, rid)
 
     # 6.2 steps 1-2: the layers exist before the first edge that belongs on one,
     # because an edge takes its layer as ``parent`` at add_edge time. The badges
@@ -2116,6 +2201,10 @@ def main(argv=None) -> int:
                     help=f"keep only edges discovered this way: {','.join(ov.DISCOVERY_KINDS)}")
     ap.add_argument("--annotate-discovery", action="store_true", default=None,
                     help="put each connector's discovery method in its tooltip (never in its style)")
+    ap.add_argument("--global-services", default=None, choices=ov.GLOBAL_SERVICES_MODES,
+                    help="IAM, Policies, Audit and public DNS in the Oracle Services Network "
+                         "(osn, default - Oracle's own samples) or in a tenancy-scoped "
+                         "'Global services' bucket below the region (bucket)")
     args = ap.parse_args(argv)
     model = load_model(args.model)
     subject = model.get("subject") or "Architecture"
@@ -2129,7 +2218,8 @@ def main(argv=None) -> int:
                   label_tag_keys=args.label_tag_keys, layers=args.layers,
                   hidden_layers=args.hidden_layers, detail=args.detail,
                   show_edges=args.show_edges, filter_spec=args.filter, mode=args.mode,
-                  discovery=args.discovery, annotate_discovery=args.annotate_discovery)
+                  discovery=args.discovery, annotate_discovery=args.annotate_discovery,
+                  global_services=args.global_services)
     return 0
 
 
