@@ -245,6 +245,15 @@ team's diagram guidelines ask for. The bucket is page-level, so its icons sit on
 when layers are on; no connector is ever drawn to it, because a global service is not reached
 through the regional network path.
 
+**The `dns` icon means PUBLIC DNS unless the item says otherwise.** Classification reads
+`services[].scope` (`global` | `regional` | `vcn`) first, then the legacy `regional` boolean, then
+the VCN-resident type list (`oci_dns_resolver`), then the icon tables - so a **private** DNS zone
+must carry `"scope": "regional"` (or `"vcn"`), or the bucket view presents a VCN-scoped zone as a
+tenancy-wide service. `parse_terraform.py` and `query_tenancy.py` write that scope themselves: an
+`oci_dns_zone` whose `scope` is `PRIVATE` or which names a `view_id` is `regional`, every other
+zone is `global`. Nothing moves under the default `"osn"`, where a global service is drawn in the
+Oracle Services Network panel like any other regional one.
+
 ## 5. Icon selection
 
 1. Keys are either a short alias (206, `drawio_builder.ICON_ALIASES`) or an SVG file stem (159, e.g. `compute_virtual_machine_vm`); both forms are listed in `references/icon-catalog.md`. Unknown keys raise `Unknown icon_key ... Did you mean ...` - use the suggestion, never invent a key.

@@ -147,6 +147,52 @@ class TagCaptureTests(unittest.TestCase):
                                              {"freeform": {}, "defined": {}}))
 
 
+_DNS_TF = '''
+provider "oci" { region = "us-phoenix-1" }
+resource "oci_core_vcn" "app" {
+  display_name   = "vcn-app"
+  cidr_block     = "10.0.0.0/16"
+  compartment_id = "ocid1.compartment.oc1..aaaaexample"
+}
+resource "oci_dns_zone" "public" {
+  name           = "example.com"
+  zone_type      = "PRIMARY"
+  compartment_id = "ocid1.compartment.oc1..aaaaexample"
+}
+resource "oci_dns_zone" "private" {
+  name           = "app.internal"
+  zone_type      = "PRIMARY"
+  scope          = "PRIVATE"
+  view_id        = "ocid1.dnsview.oc1..aaaaexample"
+  compartment_id = "ocid1.compartment.oc1..aaaaexample"
+}
+'''
+
+
+class DnsZoneScopeTests(unittest.TestCase):
+    """6.7: the dns icon means public DNS; a PRIVATE zone is not tenancy-scoped."""
+
+    def model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "main.tf").write_text(_DNS_TF, encoding="utf-8")
+            return quiet(pt.parse_terraform_dir, Path(tmp))
+
+    def test_a_public_zone_is_global_and_a_private_one_is_not(self):
+        import oci_topology as ot
+        model = self.model()
+        public = item(model, "oci_dns_zone.public")
+        private = item(model, "oci_dns_zone.private")
+        self.assertEqual(public["scope"], "global")
+        self.assertEqual(private["scope"], "regional")
+        self.assertTrue(ot.is_global(public))
+        self.assertFalse(ot.is_global(private))
+        # Neither moves under the default global_services "osn".
+        self.assertTrue(ot.is_regional(public) and ot.is_regional(private))
+
+    def test_the_written_scope_passes_schema_validation(self):
+        self.assertEqual(pt.validate_model(self.model(), None), [])
+
+
 class CaptionMetadataTests(unittest.TestCase):
     def test_the_shape_line_leaves_the_label_and_stays_in_the_metadata(self):
         """D1 / 6.3: the visible default change for a parsed model."""

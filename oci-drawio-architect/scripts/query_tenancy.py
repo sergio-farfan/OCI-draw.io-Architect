@@ -194,6 +194,10 @@ _SCALAR_FIELDS = (
     ("is_private", "is_private"), ("db_workload", "db_workload"), ("lifecycle_state", "lifecycle_state"),
     ("ip_address", "ip_address"), ("mysql_version", "mysql_version"), ("kubernetes_version", "kubernetes_version"),
     ("port", "port"), ("type", "type"),               # virtual circuit PUBLIC / PRIVATE (no DRG when PUBLIC)
+    # 6.7: a DNS zone's GLOBAL / PRIVATE scope and its private view, so
+    # pt._dns_zone_scope can tell a public zone (tenancy-scoped) from a private
+    # one exactly as it does for Terraform.
+    ("scope", "scope"), ("view_id", "view_id"),
     # 6.3 / 9: the fields the label modes render. private_ip and public_ip are
     # VNIC attributes and reach their host through apply_relationships below.
     ("private_ip", "private_ip"), ("public_ip", "public_ip"),
