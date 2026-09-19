@@ -66,6 +66,22 @@ class ServiceScopeTests(unittest.TestCase):
         self.assertEqual(ot.service_scope({"icon": "dns", "type": "oci_dns_resolver"}), "vcn")
         self.assertEqual(ot.service_scope({"icon": "dns"}), "global")
 
+    def test_a_private_dns_zone_is_not_tenancy_scoped(self):
+        """6.7: the dns icon means PUBLIC DNS; a private zone says so with scope."""
+        private = {"icon": "dns", "label": "Private DNS", "type": "oci_dns_zone",
+                   "scope": "regional"}
+        self.assertEqual(ot.service_scope(private), "regional")
+        self.assertFalse(ot.is_global(private))
+        self.assertTrue(ot.is_regional(private))
+
+    def test_the_reference_sample_marks_its_private_zone_regional(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "examples"))
+        from generate_reference_layout import MODEL  # noqa: E402
+        dns = [i for v in MODEL["vcns"] for i in v.get("services", [])
+               if i["address"] == "dns"][0]
+        self.assertEqual(dns.get("scope"), "regional")
+        self.assertFalse(ot.is_global(dns))
+
     def test_a_bad_regional_value_warns_once_and_falls_back_to_the_tables(self):
         ot._WARNED.clear()
         scope, err = stderr_of(ot.service_scope, {"icon": "iam", "regional": "maybe"})

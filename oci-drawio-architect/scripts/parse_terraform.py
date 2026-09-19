@@ -128,7 +128,7 @@ import detect_settings as ds  # noqa: E402
 import oci_view as ov  # noqa: E402
 from oci_topology import (  # noqa: E402
     ATTACHMENT_STYLE_MODES, GATEWAY_EDGES, GATEWAY_SIDES, GROUP_BOX_TYPES, GROUP_SCOPES,
-    HUB_KINDS, HUB_TITLES, LOCATION_MODES, SUBNET_LABEL_MODES,
+    HUB_KINDS, HUB_TITLES, LOCATION_MODES, SERVICE_SCOPES, SUBNET_LABEL_MODES,
 )
 
 SCHEMA_VERSION = 2
@@ -160,6 +160,22 @@ REGIONAL_TYPE_PREFIXES = ("oci_ai_", "oci_generative_ai_")
 
 def is_regional_type(rtype: str) -> bool:
     return rtype in REGIONAL_TYPES or rtype.startswith(REGIONAL_TYPE_PREFIXES)
+
+
+# 6.7: the "dns" icon alone reads as PUBLIC DNS, which is the tenancy-scoped
+# thing the guidelines' section 4 puts in the global bucket. A zone is private
+# when its scope is PRIVATE or it names a private view - the provider documents
+# view_id as "the OCID of the private view containing the zone ... null for
+# zones in the global DNS, which are publicly resolvable"
+# (registry.terraform.io/providers/oracle/oci, oci_dns_zone).
+DNS_ZONE_TYPE = "oci_dns_zone"
+
+
+def _dns_zone_scope(r: "Res") -> str:
+    """``global`` for a public DNS zone, ``regional`` for a private one (6.7)."""
+    if str(r.attrs.get("scope") or "").strip().upper() == "PRIVATE" or "view_id" in r.declared:
+        return "regional"
+    return "global"
 
 
 # ---------------------------------------------------------------------------
@@ -519,6 +535,8 @@ def _validate_item(errors: List[str], item, path: str, with_metadata: bool, icon
         _expect(errors, item.get("metadata"), dict, f"{path}.metadata")
     if "regional" in item:
         _expect(errors, item["regional"], bool, f"{path}.regional")
+    if item.get("scope") is not None and item["scope"] not in SERVICE_SCOPES:
+        errors.append(f"{path}.scope: {item['scope']!r} not in {SERVICE_SCOPES}")
     if icon_keys is not None and isinstance(item.get("icon"), str) and item["icon"] not in icon_keys:
         errors.append(f"{path}.icon: unknown icon key {item['icon']!r}")
     if "nsgs" in item:
@@ -2049,6 +2067,8 @@ class ModelBuilder:
                     self._register(item, r, vcn["address"], None)
                 continue
             item["regional"] = is_regional_type(r.rtype)
+            if r.rtype == DNS_ZONE_TYPE:
+                item["scope"] = _dns_zone_scope(r)
             if vcn is not None:
                 vcn["services"].append(item)
                 self._register(item, r, vcn["address"], None)

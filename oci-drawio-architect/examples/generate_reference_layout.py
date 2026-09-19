@@ -105,7 +105,11 @@ MODEL = {
             {"icon": "logging", "label": "Logging\n7 Logs", "address": "logging"},
             {"icon": "apm", "label": "APM", "address": "apm"},
             {"icon": "alarms", "label": "Alarms (4)\n+ ONS Topic", "address": "alarms"},
-            {"icon": "dns", "label": "Private DNS\n*.internal...", "address": "dns"},
+            # 6.7: a PRIVATE zone is not tenancy-scoped. The dns icon alone reads
+            # as public DNS, so the scope is explicit or --global-services bucket
+            # would move this zone into the tenancy box.
+            {"icon": "dns", "label": "Private DNS\n*.internal...", "address": "dns",
+             "scope": "regional"},
         ],
         "gateways": [
             {"icon": "service_gateway", "type": "sgw", "label": "Service\nGateway", "address": "sgw"},
