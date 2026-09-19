@@ -616,6 +616,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Wrote {args.out}", file=sys.stderr)
     else:
         print(text)
+    for text in model.get("warnings") or []:
+        print(short_ocid(text), file=sys.stderr)
     print(short_ocid(pt.summarise(model)), file=sys.stderr)
     return 0
 

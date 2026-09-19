@@ -429,6 +429,80 @@ resource "oci_core_virtual_circuit" "private" {
                           if not db.is_warning(m)], [])
 
 
+class DrgAttachmentEvidenceTests(unittest.TestCase):
+    """A43: the parser never asserts a DRG attachment the configuration does not declare."""
+
+    BASE = """
+resource "oci_core_drg" "hub" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  display_name   = "drg-hub"
+}
+
+resource "oci_core_vcn" "prod" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  display_name   = "vcn-prod"
+  cidr_block     = "10.0.0.0/16"
+}
+
+resource "oci_core_cpe" "hq" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  display_name   = "cpe-hq"
+  ip_address     = "203.0.113.10"
+}
+"""
+
+    def _model(self, extra):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "main.tf").write_text(self.BASE + extra, encoding="utf-8")
+            return pt.parse_terraform_dir(Path(tmp))
+
+    def test_an_ipsec_with_no_drg_id_is_not_attached(self):
+        model = self._model("""
+resource "oci_core_ipsec" "vpn" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  cpe_id         = oci_core_cpe.hq.id
+  display_name   = "vpn-hq"
+  static_routes  = ["10.0.0.0/16"]
+}
+""")
+        # _build_drgs synthesises a VCN attachment for a DRG that would otherwise have none,
+        # so compare only the non-VCN attachments.
+        self.assertEqual([a for a in model["drgs"][0]["attachments"] if a["type"] != "vcn"], [])
+        self.assertTrue(any("no drg_id" in w for w in model["warnings"]), model.get("warnings"))
+        self.assertEqual([i["label"] for i in model["hub"]["items"]], ["cpe-hq"])
+
+    def test_an_unresolvable_drg_id_still_attaches_to_the_only_drg_with_a_warning(self):
+        model = self._model("""
+resource "oci_core_ipsec" "vpn" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  cpe_id         = oci_core_cpe.hq.id
+  drg_id         = oci_core_drg.remote.id
+  display_name   = "vpn-hq"
+  static_routes  = ["10.0.0.0/16"]
+}
+""")
+        self.assertEqual([a["type"] for a in model["drgs"][0]["attachments"] if a["type"] != "vcn"], ["ipsec"])
+        self.assertTrue(any("does not resolve" in w for w in model["warnings"]), model.get("warnings"))
+
+    def test_an_explicit_reference_attaches_without_a_warning(self):
+        model = self._model("""
+resource "oci_core_ipsec" "vpn" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  cpe_id         = oci_core_cpe.hq.id
+  drg_id         = oci_core_drg.hub.id
+  display_name   = "vpn-hq"
+  static_routes  = ["10.0.0.0/16"]
+}
+""")
+        self.assertEqual([a["type"] for a in model["drgs"][0]["attachments"] if a["type"] != "vcn"], ["ipsec"])
+        self.assertNotIn("warnings", model)
+
+    def test_the_hub_spoke_fixture_is_unchanged(self):
+        model = pt.parse_terraform_dir(FIXTURES / "hub_spoke")
+        self.assertEqual(len(model["drgs"][0]["attachments"]), 4)
+        self.assertNotIn("warnings", model)
+
+
 class LpgPeerMirrorTests(unittest.TestCase):
     """``peer`` is symmetric even though only the requestor declares ``peer_id``."""
 

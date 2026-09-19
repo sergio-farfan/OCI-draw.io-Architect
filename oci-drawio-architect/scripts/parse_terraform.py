@@ -564,6 +564,9 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
     if _expect(errors, model.get("compartments"), list, "compartments"):
         for ci, name in enumerate(model["compartments"]):
             _expect(errors, name, str, f"compartments[{ci}]")
+    if "warnings" in model and _expect(errors, model["warnings"], list, "warnings"):
+        for wi, text in enumerate(model["warnings"]):
+            _expect(errors, text, str, f"warnings[{wi}]")
     if _expect(errors, model.get("edges"), list, "edges"):
         for ei, edge in enumerate(model["edges"]):
             ep = f"edges[{ei}]"
@@ -688,15 +691,21 @@ def index_key(address: str) -> Optional[str]:
 class Res:
     """One Terraform-managed resource with resolved scalar attrs and outgoing references."""
 
-    __slots__ = ("address", "rtype", "name", "attrs", "refs")
+    __slots__ = ("address", "rtype", "name", "attrs", "refs", "declared")
 
     def __init__(self, address: str, rtype: str, name: str,
-                 attrs: Optional[Dict[str, Any]] = None, refs: Optional[Dict[str, List[str]]] = None):
+                 attrs: Optional[Dict[str, Any]] = None, refs: Optional[Dict[str, List[str]]] = None,
+                 declared: Optional[Iterable[str]] = None):
         self.address = address
         self.rtype = rtype
         self.name = name
         self.attrs: Dict[str, Any] = attrs or {}
         self.refs: Dict[str, List[str]] = refs or {}
+        # Every attribute the source names, including one whose value is neither a
+        # literal nor a resource reference (``gateway_id = var.drg_ocid``) and so
+        # reaches neither ``attrs`` nor ``refs``.
+        self.declared: frozenset = (frozenset(declared) if declared is not None
+                                    else frozenset(self.attrs) | frozenset(self.refs))
 
     @property
     def base(self) -> str:
@@ -897,7 +906,7 @@ def collect_hcl_resources(ctx: ds.TerraformContext) -> List[Res]:
                 attrs["cidr"] = cidr
             if "for_each" in raw_attrs:
                 attrs["for_each"] = True
-            out.append(Res(f"{rtype}.{name}", rtype, name, attrs, refs))
+            out.append(Res(f"{rtype}.{name}", rtype, name, attrs, refs, raw_attrs.keys()))
     return out
 
 
@@ -1207,10 +1216,22 @@ class ModelBuilder:
         self.item_index: Dict[str, dict] = {}
         self.hub_items: List[dict] = []
         self.drg_by_addr: Dict[str, dict] = {}
+        self.warnings: List[str] = []
         # (attachment, VCN, label-is-derived) triples: the VCN name is snapshotted only in
         # _finish(), because _merge_loose() can still rename or drop a for_each placeholder VCN.
         self.att_vcns: List[Tuple[dict, dict, bool]] = []
         self.explicit_lb_targets: Dict[str, bool] = {}
+
+    def warn(self, message: str) -> None:
+        """Record a model-level warning (stderr in main(), ``model['warnings']`` in the output)."""
+        text = f"WARNING: {message}"
+        if text not in self.warnings:
+            self.warnings.append(text)
+
+    @staticmethod
+    def _declares(res: "Res", attrs: Iterable[str]) -> bool:
+        """True when the resource names one of ``attrs`` at all, resolvable or not."""
+        return any(a in res.declared for a in attrs)
 
     # -- reference resolution ------------------------------------------------
     def resolve_ref(self, ref: str, from_res: Optional[Res] = None) -> Optional[Res]:
@@ -1430,6 +1451,10 @@ class ModelBuilder:
         public virtual circuits allow customers to advertise specific public IP
         prefixes"), so it never becomes an attachment - it stays an
         on-premises item with no connector to the DRG.
+
+        An IPSec / RPC / private circuit that names no DRG at all is treated the
+        same way (v1.3.1): the fallback to the tenancy's only DRG applies only
+        when the reference exists but does not resolve, and it is warned about.
         """
         hub_addresses = {h["address"] for h in self.hub_items}
         for r in self.resources:
@@ -1448,9 +1473,18 @@ class ModelBuilder:
             drg = self.first_ref(r, attrs, DRG_TYPE)
             if drg is not None:
                 addr = drg.address
+            elif not self._declares(r, attrs):
+                # The configuration names no DRG at all, so there is no attachment to
+                # draw - the rule a PUBLIC virtual circuit already follows.
+                self.warn(f"{r.address}: no {attrs[0]}; not attached to a DRG")
+                continue
             elif len(self.drg_by_addr) == 1:
                 addr = next(iter(self.drg_by_addr))
+                self.warn(f"{r.address}: {attrs[0]} does not resolve; attaching to the only DRG "
+                          f"{self.drg_by_addr[addr]['name']}")
             else:
+                self.warn(f"{r.address}: {attrs[0]} does not resolve and the model has "
+                          f"{len(self.drg_by_addr)} DRGs; no attachment")
                 continue
             self.drg_by_addr[addr]["attachments"].append(new_attachment(
                 atype, f"{r.address}@{addr}", r.label(default), target=target if target in hub_addresses else None))
@@ -1701,6 +1735,8 @@ class ModelBuilder:
             self.model["subject"] = self.model["vcns"][0]["name"]
         if self.model["compartments"] and self.model["compartment"] is None:
             self.model["compartment"] = self.model["compartments"][0]
+        if self.warnings:                      # absent when there is nothing to say
+            self.model["warnings"] = list(self.warnings)
 
     def build(self) -> dict:
         self._build_compartments()
@@ -1767,9 +1803,11 @@ def summarise(model: dict) -> str:
     hub = len((model.get("hub") or {}).get("items") or [])
     drgs = model.get("drgs") or []
     n_att = sum(len(d.get("attachments") or []) for d in drgs)
+    warns = model.get("warnings") or []
     return (f"{model['subject']}: {len(model['vcns'])} VCN(s), {n_sub} subnet(s), {n_items} subnet item(s), "
             f"{n_svc} service(s), {n_gw} gateway(s), {len(drgs)} DRG(s) / {n_att} attachment(s), "
-            f"{hub} hub item(s), {len(model['edges'])} edge(s)")
+            f"{hub} hub item(s), {len(model['edges'])} edge(s)"
+            + (f", {len(warns)} warning(s)" if warns else ""))
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -1834,6 +1872,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"Wrote {args.out}", file=sys.stderr)
     else:
         print(text)
+    for text in model.get("warnings") or []:
+        print(text, file=sys.stderr)
     print(summarise(model), file=sys.stderr)
     return 0
 
