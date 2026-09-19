@@ -6,7 +6,7 @@
 #   1. Run examples/generate_demo_diagram.py into a temp directory
 #   2. Run scripts/check_overlaps.py on the result (mandatory gate)
 #   3. If a draw.io binary is available, export a PNG next to the .drawio
-#      (/Applications/draw.io.app/Contents/MacOS/draw.io, `drawio` on PATH,
+#      (/Applications or ~/Applications draw.io.app, `drawio` on PATH,
 #      or $DRAWIO_BIN). Set SMOKE_SKIP_PNG=1 to skip this step.
 #
 # Usage:
@@ -80,12 +80,14 @@ else
         :   # explicit override via $DRAWIO_BIN
     elif [[ -x /Applications/draw.io.app/Contents/MacOS/draw.io ]]; then
         DRAWIO_BIN=/Applications/draw.io.app/Contents/MacOS/draw.io
+    elif [[ -x "$HOME/Applications/draw.io.app/Contents/MacOS/draw.io" ]]; then
+        DRAWIO_BIN="$HOME/Applications/draw.io.app/Contents/MacOS/draw.io"
     elif command -v drawio >/dev/null 2>&1; then
         DRAWIO_BIN="$(command -v drawio)"
     fi
 
     if [[ -z "$DRAWIO_BIN" ]]; then
-        warn "draw.io not found (looked for /Applications/draw.io.app and 'drawio' on PATH); PNG export skipped"
+        warn "draw.io not found (looked for /Applications and ~/Applications draw.io.app and 'drawio' on PATH); PNG export skipped"
     else
         # Electron apps chatter on stderr; keep it but only show it on failure.
         EXPORT_LOG="$(mktemp)"
