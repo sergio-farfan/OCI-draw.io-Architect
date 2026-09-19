@@ -461,6 +461,23 @@ def _normalise(text: str) -> str:
     return " ".join(str(text or "").lower().split())
 
 
+def _occurs_in(candidate: str, rendered: str) -> bool:
+    """Does the normalised ``candidate`` already occur in the rendered text?
+
+    "Occurs" is whole-token containment, not plain substring containment: the
+    candidate must start and end on a whitespace boundary of ``rendered``. Plain
+    ``in`` would drop the port line of ``ports: "80"`` merely because "80" is a
+    tail of the private IP ``10.0.0.80`` (and ``"22"`` inside ``10.0.0.22``),
+    which is ordinary output of the parser's own producers in the default
+    ``network`` label mode. The V5 case this rule exists for - an authored
+    ``"Load Balancer\\n10.0.0.23"`` absorbing the rendered ``private_ip`` - is
+    whole-token equality and still matches.
+    """
+    if not candidate:
+        return False
+    return re.search(r"(?<!\S)" + re.escape(candidate) + r"(?!\S)", rendered) is not None
+
+
 def humanise_type(rtype: str) -> str:
     """``oci_core_instance`` -> ``Core instance``.
 
@@ -552,9 +569,9 @@ def caption_lines(item: dict, view: dict, kind: str = "icon", type_labels=None) 
     """The caption of one element as a list of lines (6.3).
 
     V5: the authored ``label`` is kept verbatim - it may already be multi-line -
-    and every later field whose text already occurs in what has been rendered so
-    far is skipped, so a hand-written model renders exactly as it does today in
-    every mode.
+    and every later field whose text already occurs as whole tokens in what has
+    been rendered so far is skipped (``_occurs_in``), so a hand-written model
+    renders exactly as it does today in every mode.
     """
     if kind == "gateway":
         # 6.3: gateway captions are width-critical (they straddle a border and
@@ -570,8 +587,10 @@ def caption_lines(item: dict, view: dict, kind: str = "icon", type_labels=None) 
             text = str(text).strip()
             # V5: both sides are whitespace-normalised, so a hand-wrapped
             # authored caption ("Service\nGateway") still absorbs the rendered
-            # form of the same words ("Service gateway").
-            if not text or _normalise(text) in seen:
+            # form of the same words ("Service gateway"); the match is on whole
+            # tokens, so a short value is not swallowed by a longer one that
+            # merely ends with it (ports "80" under private_ip "10.0.0.80").
+            if not text or _occurs_in(_normalise(text), seen):
                 continue
             lines.append(text)
             seen = _normalise(" ".join(lines))
