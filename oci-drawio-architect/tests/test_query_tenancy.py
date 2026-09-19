@@ -47,7 +47,7 @@ class BundleModelTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.bundle = qt.load_bundle(FIXTURE)
-        cls.model = qt.build_model(cls.bundle, COMP, None, None, True, str(FIXTURE))
+        cls.model = qt.build_model(cls.bundle, COMP, None, None, True, str(FIXTURE), mode="all")
         cls.vcn = cls.model["vcns"][0]
 
     def test_validates_and_icons_exist(self):
@@ -136,12 +136,12 @@ class BundleModelTests(unittest.TestCase):
         self.assertEqual(len(edges), 4)
 
     def test_vcn_filter(self):
-        model = qt.build_model(self.bundle, COMP, VCN)
+        model = qt.build_model(self.bundle, COMP, VCN, mode="all")
         self.assertEqual([v["address"] for v in model["vcns"]], [VCN])
-        self.assertIsNone(qt.build_model(self.bundle, COMP, "ocid1.vcn.oc1..nope"))
+        self.assertIsNone(qt.build_model(self.bundle, COMP, "ocid1.vcn.oc1..nope", mode="all"))
 
     def test_no_inferred_edges(self):
-        model = qt.build_model(self.bundle, COMP, None, None, False)
+        model = qt.build_model(self.bundle, COMP, None, None, False, mode="all")
         self.assertTrue(all(not e["inferred"] for e in model["edges"]))
         self.assertEqual(len(model["edges"]), 2)
 
@@ -200,7 +200,7 @@ class HelperTests(unittest.TestCase):
             loaded = qt.load_bundle(single)
             self.assertEqual(len(loaded["vcn_topology"]), 1)
             self.assertEqual(loaded["search"], [])
-            model = qt.build_model(loaded, COMP)
+            model = qt.build_model(loaded, COMP, mode="all")
             self.assertEqual(model["vcns"][0]["name"], "vcn-shop")
             # CPE/IPSec live in networking-topology; the VCN topology alone yields a DRG with its VCN attachment
             self.assertIsNone(model["hub"])
@@ -398,7 +398,7 @@ class LpgPairTests(unittest.TestCase):
     FIXTURE = TESTS_DIR / "fixtures" / "tenancy" / "lpg_pair.json"
 
     def test_both_gateways_of_a_pair_get_a_peer(self):
-        model = qt.build_model(qt.load_bundle(self.FIXTURE), None)
+        model = qt.build_model(qt.load_bundle(self.FIXTURE), None, mode="all")
         gws = {g["label"]: g for v in model["vcns"] for g in v["gateways"]}
         self.assertEqual(sorted(gws), ["lpg-hub", "lpg-spoke"])
         self.assertEqual(gws["lpg-hub"]["peer"], gws["lpg-spoke"]["address"])

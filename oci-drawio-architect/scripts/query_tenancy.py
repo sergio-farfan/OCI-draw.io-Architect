@@ -43,11 +43,29 @@ entity itself carries the field).
 
 Privacy: stderr summaries never print more than the first 12 characters of an OCID.
 
+Filtering and mode (v1.5.0)
+---------------------------
+``--mode`` defaults to ``participating`` here, unlike ``parse_terraform.py``, which defaults to
+``all``: a Terraform configuration is a curated set, a tenancy dump is not.  Every ``--filter`` /
+``--tag`` / ``--resource-type`` / ``--subnet-id`` expression is applied CLIENT-side by
+``oci_view.filter_model`` after the model is built, so correctness never depends on the search
+query.  Server-side narrowing of ``oci search resource structured-search`` by tag was checked
+against the Search service's query-language reference and is deliberately NOT emitted: a tag
+predicate is one namespace / key / value triple per query
+(``where (definedTags.namespace = 'ns' && definedTags.key = 'k' && definedTags.value = 'v')``,
+``where (freeformTags.key = 'k' && freeformTags.value = 'v')``), whose conditions are ANDed
+independently rather than correlated as a pair, so two tag expressions cross-match and a
+multi-expression filter cannot be pushed down without changing its meaning.
+Sources: https://docs.oracle.com/en-us/iaas/Content/Search/Concepts/querysyntax.htm and
+https://docs.oracle.com/en-us/iaas/Content/Search/Tasks/queryingresources_topic-To_run_a_custom_freeform_query_to_find_a_resource.htm
+
 Usage
 -----
     python3 query_tenancy.py --compartment-id OCID [--vcn-id OCID] [--profile P] [--region R]
                              [--from-json FILE] [--save-raw FILE] [--out model.json]
-                             [--no-inferred-edges]
+                             [--no-inferred-edges] [--mode all|participating]
+                             [--filter EXPR ...] [--tag K=V] [--resource-type TYPE]
+                             [--subnet-id OCID] [--discovery K,K] [--relationships FILE]
 
 Exit codes: 0 success, 1 nothing recognisable / CLI unavailable, 2 bad path / unreadable file.
 """
@@ -65,6 +83,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import detect_settings as ds  # noqa: E402
+import oci_view as ov  # noqa: E402
 import parse_terraform as pt  # noqa: E402
 
 CLI_TIMEOUT = 30.0
@@ -167,6 +186,10 @@ _SCALAR_FIELDS = (
     ("is_private", "is_private"), ("db_workload", "db_workload"), ("lifecycle_state", "lifecycle_state"),
     ("ip_address", "ip_address"), ("mysql_version", "mysql_version"), ("kubernetes_version", "kubernetes_version"),
     ("port", "port"), ("type", "type"),               # virtual circuit PUBLIC / PRIVATE (no DRG when PUBLIC)
+    # 6.3 / 9: the fields the label modes render. private_ip and public_ip are
+    # VNIC attributes and reach their host through apply_relationships below.
+    ("private_ip", "private_ip"), ("public_ip", "public_ip"),
+    ("hostname_label", "hostname_label"), ("fqdn", "fqdn"), ("domain_name", "fqdn"),
 )
 _REF_FIELDS = (
     ("subnet_id", "subnet_id"), ("subnet_ids", "subnet_ids"), ("target_subnet_id", "target_subnet_id"),
@@ -320,13 +343,26 @@ def normalise_entity(entity: dict) -> Optional[dict]:
         cidr = blocks[0] if isinstance(blocks, list) and blocks and isinstance(blocks[0], str) else None
     if isinstance(cidr, str):
         attrs["cidr"] = cidr
+    # 6.5 / 9: tags if and only if the response carries them; otherwise the model
+    # simply has none and a tag: filter reports zero matches with a warning.
+    tags = {"freeform": {}, "defined": {}}
+    free = get(entity, "freeform_tags")
+    if isinstance(free, dict):
+        tags["freeform"] = {str(k): str(v) for k, v in free.items() if v is not None}
+    defined = get(entity, "defined_tags")
+    if isinstance(defined, dict):
+        for namespace, values in defined.items():
+            if isinstance(values, dict):
+                for k, v in values.items():
+                    if v is not None:
+                        tags["defined"][f"{namespace}.{k}"] = str(v)
     refs: Dict[str, List[str]] = {}
     for src, dst in _REF_FIELDS:
         val = get(entity, src)
         ids = [v for v in (val if isinstance(val, list) else [val]) if isinstance(v, str) and v.startswith("ocid1.")]
         if ids:
             refs[dst] = ids
-    return {"id": ident, "kind": kind, "attrs": attrs, "refs": refs}
+    return {"id": ident, "kind": kind, "attrs": attrs, "refs": refs, "tags": tags}
 
 
 def _merge(into: dict, other: dict) -> None:
@@ -336,6 +372,10 @@ def _merge(into: dict, other: dict) -> None:
         into["attrs"].setdefault(k, v)
     for k, v in other["refs"].items():
         into["refs"].setdefault(k, list(v))
+    for bucket in ("freeform", "defined"):
+        into.setdefault("tags", {"freeform": {}, "defined": {}})
+        for k, v in (other.get("tags") or {}).get(bucket, {}).items():
+            into["tags"].setdefault(bucket, {}).setdefault(k, v)
 
 
 def _alive(ent: dict) -> bool:
@@ -402,6 +442,10 @@ def apply_relationships(ents: Dict[str, dict], rels: List[dict]) -> List[dict]:
                     for field in ("subnet_id", "nsg_ids"):      # the VNIC places its host and carries its NSGs
                         if field in ents[a]["refs"]:
                             ents[b]["refs"].setdefault(field, list(ents[a]["refs"][field]))
+                    # 9 / 6.3: and it carries the addresses the caption renders.
+                    for field in ("private_ip", "public_ip", "hostname_label", "fqdn"):
+                        if field in ents[a]["attrs"]:
+                            ents[b]["attrs"].setdefault(field, ents[a]["attrs"][field])
                 if ka == "vcn" and kb == "drg" and (b, a) not in attached:
                     attached.add((b, a))
                     synthetic.append({"id": f"{b}@{a}", "kind": "drgattachment", "attrs": {},
@@ -428,7 +472,9 @@ def entities_to_resources(ents: Dict[str, dict]) -> List[pt.Res]:
         if "display_name" not in attrs and isinstance(attrs.get("name"), str):
             attrs["display_name"] = attrs["name"]
         name = attrs.get("display_name") or ent["id"]
-        resources.append(pt.Res(ent["id"], tf_type, str(name), attrs, {k: list(v) for k, v in ent["refs"].items()}))
+        resources.append(pt.Res(ent["id"], tf_type, str(name), attrs,
+                                {k: list(v) for k, v in ent["refs"].items()},
+                                tags=ent.get("tags")))
     return resources
 
 
@@ -462,14 +508,28 @@ def _route_edges(model: dict, ents: Dict[str, dict], rels: List[dict]) -> List[d
         sources = [id1] if kind1 == "subnet" else subnets_by_rt.get(id1, [])
         for src in sources:
             if src in addresses:
-                edges.append(pt.new_edge(src, id2, label, "control", False))
+                # 6.8: derived from routing, not an explicit association - this
+                # is the value the 1.4.0 code mislabelled as inferred=False.
+                edges.append(pt.new_edge(src, id2, label, "control", discovery="reachability"))
     return edges
+
+
+# A1: a tenancy dump is not curated - it is the input the guidelines' "do not
+# show every discovered OCI resource by default" is about. parse_terraform.py
+# defaults to "all" instead.
+DEFAULT_MODE = "participating"
 
 
 def build_model(bundle: Dict[str, list], compartment_id: Optional[str] = None, vcn_id: Optional[str] = None,
                 region: Optional[str] = None, inferred_edges: bool = True,
-                source_path: Optional[str] = None) -> Optional[dict]:
-    """Bundle of CLI responses -> MODEL (None when ``--vcn-id`` matches no VCN)."""
+                source_path: Optional[str] = None, mode: Optional[str] = None,
+                filter_spec=None, discovery=None) -> Optional[dict]:
+    """Bundle of CLI responses -> MODEL (None when ``--vcn-id`` matches no VCN).
+
+    ``mode`` defaults to ``participating`` (A1): a tenancy dump routinely holds
+    dozens of regional services with no edge, and they are the main reason a
+    live-tenancy diagram is unreadable.
+    """
     ents, rels = collect_entities(bundle)
     for syn in apply_relationships(ents, rels):
         ents.setdefault(syn["id"], syn)
@@ -493,6 +553,23 @@ def build_model(bundle: Dict[str, list], compartment_id: Optional[str] = None, v
     model["edges"] = pt.dedupe_edges(model["edges"] + _route_edges(model, ents, rels))
     if vcn_id and not pt.select_vcn(model, vcn_id):
         return None
+    mode = mode or DEFAULT_MODE
+    if not inferred_edges and discovery is None:
+        discovery = ov.NO_INFERRED_DISCOVERY
+    parsed = ov.parse_filter(filter_spec)
+    if any(e["dim"] in ("tag", "ftag", "dtag", "env", "app")
+           for e in parsed["include"] + parsed["exclude"]):
+        has_tags = any((e.get("tags") or {}).get("freeform") or (e.get("tags") or {}).get("defined")
+                       for e in ents.values())
+        if not has_tags:
+            model.setdefault("warnings", []).append(
+                "WARNING: a tag filter was given but the search response carried no tags; "
+                "nothing can match. Re-run with --mode all to see the whole compartment.")
+    model, report = ov.filter_model(model, filter_spec, mode=mode, discovery=discovery)
+    model["mode"] = mode
+    if report["include"] or report["exclude"]:
+        model["filter"] = {"include": list(report["include"]), "exclude": list(report["exclude"])}
+    model["filter_report"] = dict(report)
     return model
 
 
@@ -570,7 +647,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--save-raw", metavar="FILE", help="save the raw CLI responses as a bundle")
     parser.add_argument("--out", metavar="FILE", help="write the model JSON here instead of stdout")
     parser.add_argument("--no-inferred-edges", action="store_true",
-                        help="emit only edges backed by explicit relationships")
+                        help="emit only edges backed by explicit relationships (an alias for "
+                             "--discovery " + ",".join(ov.NO_INFERRED_DISCOVERY) + ")")
+    parser.add_argument("--subnet-id", action="append", default=None, metavar="OCID",
+                        help="sugar for --filter subnet=OCID")
+    parser.add_argument("--filter", action="append", default=None, metavar="EXPR",
+                        help="keep only what matches '[!]<dimension>[:<key>]<op><value>'; "
+                             f"dimensions: {','.join(ov.FILTER_DIMENSIONS)}. Repeatable")
+    parser.add_argument("--tag", action="append", default=None, metavar="K=V",
+                        help="sugar for --filter tag:K=V (client-side; see the note on "
+                             "server-side narrowing in this module's docstring)")
+    parser.add_argument("--resource-type", action="append", default=None, metavar="TYPE",
+                        help="sugar for --filter type=TYPE")
+    parser.add_argument("--mode", default=DEFAULT_MODE, choices=ov.MODES,
+                        help="participating (default for a live tenancy) or all")
+    parser.add_argument("--discovery", default=None, metavar="K,K",
+                        help=f"keep only edges discovered this way: {','.join(ov.DISCOVERY_KINDS)}")
+    parser.add_argument("--relationships", default=None, metavar="FILE",
+                        help="JSON sidecar of extra edges, merged with discovery='user'")
     args = parser.parse_args(argv)
 
     if args.from_json:
@@ -597,12 +691,33 @@ def main(argv: Optional[List[str]] = None) -> int:
             Path(args.save_raw).expanduser().write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
             print(f"Saved raw responses to {args.save_raw}", file=sys.stderr)
 
-    model = build_model(bundle, args.compartment_id, args.vcn_id, args.region,
-                        not args.no_inferred_edges, source_path)
+    include = list(args.filter or [])
+    include += [f"tag:{t}" for t in (args.tag or [])]
+    include += [f"type={t}" for t in (args.resource_type or [])]
+    include += [f"subnet={s}" for s in (args.subnet_id or [])]
+    try:
+        model = build_model(bundle, args.compartment_id, args.vcn_id, args.region,
+                            not args.no_inferred_edges, source_path, mode=args.mode,
+                            filter_spec=include,
+                            discovery=args.discovery.split(",") if args.discovery else None)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    if model is not None and args.relationships:
+        try:
+            model["edges"] = pt.dedupe_edges(list(model["edges"])
+                                             + pt.load_relationships(args.relationships))
+        except pt.InputError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
     if model is None:
         print(f"No VCN matches {short_ocid(args.vcn_id or '')}.", file=sys.stderr)
         return 1
     if pt.model_is_empty(model):
+        # A filter or the participating mode can empty the model itself, and the
+        # warning that says so is the only thing that explains the exit code.
+        for warning in model.get("warnings") or []:
+            print(short_ocid(warning), file=sys.stderr)
         print("No recognisable resources in the topology/search data.", file=sys.stderr)
         return 1
     problems = pt.validate_model(model, pt._builder_icon_keys())
@@ -612,6 +727,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"  - {short_ocid(p)}", file=sys.stderr)
         return 1
 
+    summary = short_ocid(pt.summarise(model))
+    model.pop("filter_report", None)          # a report, not a schema key
     text = json.dumps(model, indent=2, ensure_ascii=False)
     if args.out:
         Path(args.out).expanduser().write_text(text + "\n", encoding="utf-8")
@@ -620,7 +737,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(text)
     for text in model.get("warnings") or []:
         print(short_ocid(text), file=sys.stderr)
-    print(short_ocid(pt.summarise(model)), file=sys.stderr)
+    print(summary, file=sys.stderr)
     return 0
 
 
