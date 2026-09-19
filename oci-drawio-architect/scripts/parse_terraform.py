@@ -125,12 +125,18 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import detect_settings as ds  # noqa: E402
+import oci_view as ov  # noqa: E402
 from oci_topology import (  # noqa: E402
     ATTACHMENT_STYLE_MODES, GATEWAY_EDGES, GATEWAY_SIDES, GROUP_BOX_TYPES, GROUP_SCOPES,
     HUB_KINDS, HUB_TITLES, LOCATION_MODES, SUBNET_LABEL_MODES,
 )
 
 SCHEMA_VERSION = 2
+# A1: a Terraform configuration is already a curated set - everything in it was
+# written on purpose - so pruning it by default would silently drop items from
+# small, deliberately written stacks. query_tenancy.py defaults to
+# "participating" instead.
+DEFAULT_MODE = "all"
 TIERS = ("lb", "app", "compute", "mgmt", "data", "other")
 EDGE_KINDS = ("data", "control", "association", "attachment")
 ATTACHMENT_TYPES = ("vcn", "ipsec", "virtual_circuit", "rpc", "loopback")
@@ -287,13 +293,16 @@ DB_PORTS: Dict[str, str] = {
     "oci_database_db_system": "1521",
     "oci_mysql_mysql_db_system": "3306",
 }
-SHAPE_LABEL_TYPES = COMPUTE_TYPES | frozenset({"oci_database_db_system", "oci_mysql_mysql_db_system"})
 SUBNET_ATTRS = ("subnet_id", "subnet_ids", "target_subnet_id")
 METADATA_KEYS = ("shape", "shape_name", "availability_domain", "fault_domain", "count", "for_each",
                  "ocpus", "memory_in_gbs", "cpu_core_count", "compute_count", "data_storage_size_in_gb",
                  "db_workload", "db_name", "is_free_tier", "is_private", "node_count",
                  "kubernetes_version", "mysql_version", "size_in_gbs", "ip_address",
-                 "minimum_bandwidth_in_mbps", "maximum_bandwidth_in_mbps")
+                 "minimum_bandwidth_in_mbps", "maximum_bandwidth_in_mbps",
+                 # 6.3: the fields the label modes render. Computed values are
+                 # absent from bare HCL, and the field is then simply omitted -
+                 # no placeholder is ever invented.
+                 "private_ip", "public_ip", "fqdn", "hostname_label", "lifecycle_state")
 
 # ---------------------------------------------------------------------------
 # Model factories, tier inference and validation (shared with query_tenancy.py)
@@ -346,8 +355,27 @@ def new_subnet(name: str, address: str, cidr: Optional[str] = None, public: Opti
             "tier": tier or infer_tier(name), "items": [], "route_table": None, "security_lists": []}
 
 
-def new_item(icon: str, label: str, rtype: str, address: Optional[str], metadata: Optional[dict] = None) -> dict:
-    return {"icon": icon, "label": label, "type": rtype, "address": address, "metadata": dict(metadata or {})}
+def tag_sibling(tags: Optional[dict]) -> Optional[dict]:
+    """The normalised ``tags`` sibling key, or ``None`` when there is nothing to write.
+
+    5: ``item.tags`` / ``subnet.tags`` / ``vcn.tags`` are siblings of
+    ``metadata``, which keeps its scalar-only contract, and the key is written
+    only when the resource actually carries a tag.
+    """
+    if tags and (tags.get("freeform") or tags.get("defined")):
+        return {"freeform": dict(tags.get("freeform") or {}),
+                "defined": dict(tags.get("defined") or {})}
+    return None
+
+
+def new_item(icon: str, label: str, rtype: str, address: Optional[str],
+             metadata: Optional[dict] = None, tags: Optional[dict] = None) -> dict:
+    item = {"icon": icon, "label": label, "type": rtype, "address": address,
+            "metadata": dict(metadata or {})}
+    sibling = tag_sibling(tags)
+    if sibling is not None:
+        item["tags"] = sibling
+    return item
 
 
 def new_gateway(gtype: str, label: str, address: Optional[str]) -> dict:
@@ -381,8 +409,28 @@ def new_attachment(atype: str, address: str, label: str, vcn: Optional[str] = No
     return {"type": atype, "address": address, "label": label, "vcn": vcn, "target": target}
 
 
-def new_edge(source: str, target: str, label: str = "", kind: str = "data", inferred: bool = False) -> dict:
-    return {"source": source, "target": target, "label": label, "kind": kind, "inferred": inferred}
+def new_edge(source: str, target: str, label: str = "", kind: str = "data",
+             inferred: Optional[bool] = None, *, discovery: str = "association") -> dict:
+    """6.8: ``discovery`` supersedes the ``inferred`` boolean and derives it.
+
+    ``inferred`` keeps being written - an existing consumer that reads it is
+    unaffected (spec 5) - and an explicit value still wins. It also keeps the
+    FIFTH POSITIONAL SLOT, and ``discovery`` is keyword-only: several 1.4.0
+    call sites (``query_tenancy._route_edges``, and the comparison in
+    ``tests/test_parse_terraform.py``) pass ``inferred`` positionally, and
+    making the fifth argument mean something else - or a TypeError - would red
+    the suite in the middle of this task.
+
+    ``INFERRED_DISCOVERY`` is ``("heuristic",)``: ``inferred`` stays True for
+    exactly the plausibility guesses it meant in 1.4.0, so every one of those
+    existing assertions keeps its answer.
+    """
+    if discovery not in ov.DISCOVERY_KINDS:
+        raise ValueError(f"new_edge: discovery {discovery!r} not in {ov.DISCOVERY_KINDS}")
+    derived = discovery in ov.INFERRED_DISCOVERY
+    return {"source": source, "target": target, "label": label, "kind": kind,
+            "discovery": discovery,
+            "inferred": derived if inferred is None else bool(inferred)}
 
 
 _TIER_TOKENS: Tuple[Tuple[str, frozenset], ...] = (
@@ -475,6 +523,14 @@ def _validate_item(errors: List[str], item, path: str, with_metadata: bool, icon
         errors.append(f"{path}.icon: unknown icon key {item['icon']!r}")
     if "nsgs" in item:
         _validate_badge_refs(errors, item["nsgs"], f"{path}.nsgs")
+    if "tags" in item:
+        tags = item["tags"]
+        if _expect(errors, tags, dict, f"{path}.tags"):
+            for bucket in ("freeform", "defined"):
+                if bucket in tags and _expect(errors, tags[bucket], dict, f"{path}.tags.{bucket}"):
+                    for k, v in tags[bucket].items():
+                        _expect(errors, k, str, f"{path}.tags.{bucket} key")
+                        _expect(errors, v, str, f"{path}.tags.{bucket}[{k}]")
 
 
 def _validate_location(errors: List[str], box, path: str, icon_keys) -> None:
@@ -543,11 +599,48 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
     if model.get("drg_style") not in DRG_STYLES:
         errors.append(f"drg_style: {model.get('drg_style')!r} not in {DRG_STYLES}")
     for key, allowed in (("locations", LOCATION_MODES), ("gateway_edge", GATEWAY_EDGES),
-                         ("subnet_label", SUBNET_LABEL_MODES), ("attachment_style", ATTACHMENT_STYLE_MODES)):
+                         ("subnet_label", SUBNET_LABEL_MODES), ("attachment_style", ATTACHMENT_STYLE_MODES),
+                         ("purpose", ov.PURPOSES_ORDER), ("detail", ov.DETAIL_ORDER),
+                         ("label_mode", ov.LABEL_MODE_ORDER), ("mode", ov.MODES),
+                         ("global_services", ov.GLOBAL_SERVICES_MODES)):
         if key in model and model[key] is not None and model[key] not in allowed:
             errors.append(f"{key}: {model[key]!r} not in {allowed}")
-    if "show_compartments" in model and model["show_compartments"] is not None:
-        _expect(errors, model["show_compartments"], bool, "show_compartments")
+    for key in ("show_compartments", "show_edges"):
+        if key in model and model[key] is not None:
+            _expect(errors, model[key], bool, key)
+    # 5 / 6.3: the caption field list, the layer selection and the filter spec.
+    for key in ("label_fields", "label_tag_keys"):
+        if key in model and model[key] is not None and _expect(errors, model[key], list, key):
+            for i, field in enumerate(model[key]):
+                if not _expect(errors, field, str, f"{key}[{i}]"):
+                    continue
+                if key == "label_fields" and field not in ov.LABEL_FIELDS:
+                    errors.append(f"{key}[{i}]: {field!r} not in {ov.LABEL_FIELDS}"
+                                  + (" (an OCID is never rendered in a caption)"
+                                     if field in ov.NEVER_RENDERED else ""))
+    if model.get("layers") is not None:
+        value = model["layers"]
+        names = [value] if isinstance(value, str) else value
+        if not isinstance(names, list):
+            errors.append("layers: expected 'off', 'auto' or a list of layer names")
+        else:
+            for i, name in enumerate(names):
+                if (isinstance(name, str) and name.lower() in ("off", "auto")
+                        and len(names) == 1):
+                    continue
+                if not isinstance(name, str) or (name.lower() not in ov.VIEW_LAYERS
+                                                 and name.lower() not in ov.LAYER_FIELD_ALIASES):
+                    errors.append(f"layers[{i}]: {name!r} not in {ov.VIEW_LAYERS}")
+    if model.get("hidden_layers") is not None and _expect(errors, model["hidden_layers"], list,
+                                                          "hidden_layers"):
+        for i, name in enumerate(model["hidden_layers"]):
+            if not isinstance(name, str) or name.lower() not in ov.VIEW_LAYERS:
+                errors.append(f"hidden_layers[{i}]: {name!r} not in {ov.VIEW_LAYERS}")
+    if model.get("filter") is not None:
+        try:
+            ov.parse_filter(model["filter"])
+        except ValueError as exc:
+            errors.append(f"filter: {exc}")
     # A41: check the container types before collecting addresses, which walks them.
     drgs_ok = _expect(errors, model.get("drgs"), list, "drgs")
     vcns_ok = _expect(errors, model.get("vcns"), list, "vcns")
@@ -690,6 +783,8 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
             if edge.get("kind") not in EDGE_KINDS:
                 errors.append(f"{ep}.kind: {edge.get('kind')!r} not in {EDGE_KINDS}")
             _expect(errors, edge.get("inferred"), bool, f"{ep}.inferred")
+            if "discovery" in edge and edge["discovery"] not in ov.DISCOVERY_KINDS:
+                errors.append(f"{ep}.discovery: {edge.get('discovery')!r} not in {ov.DISCOVERY_KINDS}")
 
     seen: Dict[str, int] = {}
     for addr in model_addresses(model):
@@ -806,7 +901,12 @@ def dedupe_edges(edges: List[dict]) -> List[dict]:
 
 
 def select_vcn(model: dict, name: str) -> bool:
-    """Keep only the VCN whose name/address matches ``name``; return False when nothing matched."""
+    """Keep only the VCN whose name/address matches ``name``; return False when nothing matched.
+
+    The single-VCN shortcut, unchanged in behaviour. Since 1.5.0 the pruning it
+    used to do inline is ``oci_view.prune_dangling``, shared with the general
+    filter (6.5), so the two can never drift.
+    """
     want = (name or "").strip().lower()
     vcns = model.get("vcns") or []
     hits = [v for v in vcns if want in (v["name"].lower(), v["address"].lower())]
@@ -816,17 +916,28 @@ def select_vcn(model: dict, name: str) -> bool:
         return False
     model["vcns"] = hits[:1]
     model["subject"] = hits[0]["name"]
-    keep_vcn = {hits[0]["name"], hits[0]["address"]}
-    for drg in model.get("drgs") or []:
-        drg["attachments"] = [a for a in drg.get("attachments") or []
-                              if a.get("type") != "vcn" or a.get("vcn") in keep_vcn]
-    keep = set(model_addresses(model))
-    for vcn in model["vcns"]:                     # a peer LPG in a dropped VCN no longer exists
-        for g in vcn.get("gateways") or []:
-            if g.get("peer") and g["peer"] not in keep and g["peer"] not in keep_vcn:
-                g["peer"] = None
-    model["edges"] = [e for e in model["edges"] if e["source"] in keep and e["target"] in keep]
+    ov.prune_dangling(model)
     return True
+
+
+def load_relationships(path) -> List[dict]:
+    """6.8: a JSON sidecar ``[{"source", "target", "label"?, "kind"?}]`` as ``user`` edges."""
+    try:
+        data = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise InputError(f"could not read the relationships file {path}: {exc}") from None
+    if not isinstance(data, list):
+        raise InputError(f"{path}: expected a JSON list of relationship objects")
+    out = []
+    for i, entry in enumerate(data):
+        if not isinstance(entry, dict) or not entry.get("source") or not entry.get("target"):
+            raise InputError(f"{path}: entry {i} needs a 'source' and a 'target'")
+        kind = str(entry.get("kind") or "association")
+        if kind not in EDGE_KINDS:
+            raise InputError(f"{path}: entry {i} kind {kind!r} not in {EDGE_KINDS}")
+        out.append(new_edge(str(entry["source"]), str(entry["target"]),
+                            str(entry.get("label") or ""), kind, discovery="user"))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -849,16 +960,19 @@ def index_key(address: str) -> Optional[str]:
 class Res:
     """One Terraform-managed resource with resolved scalar attrs and outgoing references."""
 
-    __slots__ = ("address", "rtype", "name", "attrs", "refs", "declared")
+    __slots__ = ("address", "rtype", "name", "attrs", "refs", "declared", "tags")
 
     def __init__(self, address: str, rtype: str, name: str,
                  attrs: Optional[Dict[str, Any]] = None, refs: Optional[Dict[str, List[str]]] = None,
-                 declared: Optional[Iterable[str]] = None):
+                 declared: Optional[Iterable[str]] = None, tags: Optional[dict] = None):
         self.address = address
         self.rtype = rtype
         self.name = name
         self.attrs: Dict[str, Any] = attrs or {}
         self.refs: Dict[str, List[str]] = refs or {}
+        # 6.5: {"freeform": {k: v}, "defined": {"<ns>.<k>": v}} - never in attrs,
+        # which keeps its scalar-only contract.
+        self.tags: Dict[str, Dict[str, str]] = tags or {"freeform": {}, "defined": {}}
         # Every attribute the source names, including one whose value is neither a
         # literal nor a resource reference (``gateway_id = var.drg_ocid``) and so
         # reaches neither ``attrs`` nor ``refs``.
@@ -916,9 +1030,13 @@ _PATH_REF_RE = re.compile(r"^(var|local)\.([\w-]+)((?:\.[\w-]+|\[[^\]]+\])+)$")
 _CIDRSUBNET_RE = re.compile(r"cidrsubnet\(\s*([^,()]+?)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)")
 _INNER_REF_RE = re.compile(r"(?<![\w.])((?:var|local)\.[\w-]+(?:\.[\w-]+|\[[^\]]+\])*)")
 _MAP_ENTRY_RE = re.compile(r'^"?([\w.:/-]+)"?\s*[=:]\s*(.*)$', re.DOTALL)
-_SKIP_ATTR_KEYS = frozenset({"freeform_tags", "defined_tags", "metadata", "extended_metadata", "system_tags",
-                             "user_data", "ssh_authorized_keys", "depends_on", "lifecycle", "provider",
-                             "ignore_changes"})
+# 6.5: freeform_tags and defined_tags LEAVE this set - they are the filter's
+# primary dimension. They are still not scalar attributes, so they are read
+# separately into Res.tags rather than into Res.attrs.
+_SKIP_ATTR_KEYS = frozenset({"freeform_tags", "defined_tags", "metadata", "extended_metadata",
+                             "system_tags", "user_data", "ssh_authorized_keys", "depends_on",
+                             "lifecycle", "provider", "ignore_changes"})
+TAG_ATTR_KEYS = ("freeform_tags", "defined_tags")
 
 
 def _literal(raw: Optional[str]) -> Optional[str]:
@@ -1038,9 +1156,33 @@ def _collect_attrs(body: str) -> Dict[str, str]:
     return attrs
 
 
-def collect_hcl_resources(ctx: ds.TerraformContext) -> List[Res]:
+def _hcl_tags(ctx: ds.TerraformContext, raw_attrs: Dict[str, str]):
+    """(tags, unresolved paths) from ``freeform_tags`` / ``defined_tags`` HCL maps (6.5).
+
+    A tag whose value is a ``var.`` / ``local.`` reference the parser cannot
+    evaluate is skipped and reported: a filter that silently matches nothing is
+    worse than one that says why.
+    """
+    tags = {"freeform": {}, "defined": {}}
+    unresolved: List[str] = []
+    for key in TAG_ATTR_KEYS:
+        raw = raw_attrs.get(key)
+        if not raw or raw.lstrip()[:1] != "{":
+            continue
+        bucket = "freeform" if key == "freeform_tags" else "defined"
+        for tag_key, tag_raw in _map_entries(raw):
+            value = _literal(_follow(ctx, tag_raw))
+            if value is None:
+                unresolved.append(f"{key}[{tag_key}]")
+            else:
+                tags[bucket][tag_key] = value
+    return tags, unresolved
+
+
+def collect_hcl_resources(ctx: ds.TerraformContext, warnings: Optional[List[str]] = None) -> List[Res]:
     """Every ``resource "oci_*" "name" {}`` block of the directory as a ``Res``."""
     out: List[Res] = []
+    warnings = warnings if warnings is not None else []
     for _fname in sorted(ctx.tf_texts):
         for kind, labels, body in ds.iter_top_level_blocks(ctx.tf_texts[_fname]):
             if kind != "resource" or len(labels) < 2 or not labels[0].startswith("oci_"):
@@ -1064,7 +1206,11 @@ def collect_hcl_resources(ctx: ds.TerraformContext) -> List[Res]:
                 attrs["cidr"] = cidr
             if "for_each" in raw_attrs:
                 attrs["for_each"] = True
-            out.append(Res(f"{rtype}.{name}", rtype, name, attrs, refs, raw_attrs.keys()))
+            tags, unresolved = _hcl_tags(ctx, raw_attrs)
+            for path in unresolved:
+                warnings.append(f"WARNING: {rtype}.{name}: {path} is an unresolved expression; "
+                                f"the tag is not in the model")
+            out.append(Res(f"{rtype}.{name}", rtype, name, attrs, refs, raw_attrs.keys(), tags))
     return out
 
 
@@ -1159,7 +1305,7 @@ def load_show_json(path) -> dict:
 def _flatten_values(values: dict, out: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     out = {} if out is None else out
     for key, val in (values or {}).items():
-        if key in _SKIP_ATTR_KEYS:
+        if key in _SKIP_ATTR_KEYS or key in TAG_ATTR_KEYS:
             continue
         if isinstance(val, dict):
             _flatten_values(val, out)
@@ -1273,6 +1419,30 @@ def _configuration_refs(config: dict) -> Dict[str, Dict[str, List[str]]]:
     return result
 
 
+def _json_tags(values: dict) -> dict:
+    """6.5: plan / state tags.
+
+    In a Terraform plan or state JSON the provider flattens ``defined_tags`` to
+    ``{"<namespace>.<key>": value}``, which is the first branch. The nested
+    ``{"<namespace>": {"<key>": value}}`` shape is the OCI API's, and is kept
+    here only because ``query_tenancy`` feeds the same reader.
+    """
+    tags = {"freeform": {}, "defined": {}}
+    free = values.get("freeform_tags")
+    if isinstance(free, dict):
+        tags["freeform"] = {str(k): str(v) for k, v in free.items() if v is not None}
+    defined = values.get("defined_tags")
+    if isinstance(defined, dict):
+        for namespace, entries in defined.items():
+            if isinstance(entries, dict):
+                for k, v in entries.items():
+                    if v is not None:
+                        tags["defined"][f"{namespace}.{k}"] = str(v)
+            elif entries is not None:
+                tags["defined"][str(namespace)] = str(entries)
+    return tags
+
+
 def collect_json_resources(doc: dict) -> List[Res]:
     """Resources from ``planned_values`` (plan) or ``values`` (state), with OCID and configuration refs."""
     values = doc.get("planned_values") or doc.get("values") or {}
@@ -1292,7 +1462,8 @@ def collect_json_resources(doc: dict) -> List[Res]:
                 first = attrs["cidr_blocks"][0]
                 if isinstance(first, str):
                     attrs["cidr"] = first
-            resources.append(Res(r["address"], rtype, r.get("name") or "", attrs, {}))
+            resources.append(Res(r["address"], rtype, r.get("name") or "", attrs, {},
+                                 tags=_json_tags(r.get("values") or {})))
         for child in mod.get("child_modules") or []:
             if isinstance(child, dict):
                 walk(child)
@@ -1519,6 +1690,9 @@ class ModelBuilder:
             resolved = isinstance(r.attrs.get("display_name"), str)
             vcn = new_vcn(r.label(), r.address, r.attrs.get("cidr") if isinstance(r.attrs.get("cidr"), str) else None,
                           self._compartment_name(r))
+            tags = tag_sibling(r.tags)
+            if tags is not None:
+                vcn["tags"] = tags
             if not resolved:
                 vcn["_unresolved"] = True
                 if r.attrs.get("for_each") or isinstance(r.attrs.get("count"), int) or index_key(r.address):
@@ -1541,6 +1715,9 @@ class ModelBuilder:
             subnet = new_subnet(name, r.address,
                                 r.attrs.get("cidr") if isinstance(r.attrs.get("cidr"), str) else None,
                                 public=infer_public(name, prohibit), tier=infer_tier(name))
+            tags = tag_sibling(r.tags)
+            if tags is not None:
+                subnet["tags"] = tags
             if not isinstance(r.attrs.get("display_name"), str):
                 subnet["_unresolved"] = True
             rt = self.first_ref(r, ("route_table_id",), rtypes=ROUTE_TABLE_TYPES)
@@ -1766,12 +1943,34 @@ class ModelBuilder:
         if r.rtype == "oci_containerengine_node_pool" and not isinstance(r.attrs.get("display_name"), str) \
                 and not isinstance(r.attrs.get("name"), str):
             label = "Node pool"
-        shape = r.attrs.get("shape") or r.attrs.get("shape_name")
-        if r.rtype in SHAPE_LABEL_TYPES and isinstance(shape, str) and shape.strip():
-            label = f"{label}\n{shape.strip()}"
         metadata = {k: r.attrs[k] for k in METADATA_KEYS
                     if k in r.attrs and isinstance(r.attrs[k], (str, int, float, bool))}
-        return new_item(icon, label, r.rtype, r.address, metadata)
+        # 6.3: the OCI Terraform provider exports the lifecycle attribute as
+        # "state" (oci_core_instance, oci_core_vcn, oci_core_subnet,
+        # oci_database_autonomous_database all do); "lifecycle_state" is the
+        # API / query_tenancy spelling. Read either, normalise to one key.
+        state = r.attrs.get("lifecycle_state") or r.attrs.get("state")
+        if isinstance(state, str) and state.strip():
+            metadata["lifecycle_state"] = state.strip()
+        compartment = self._compartment_name(r)
+        if compartment:
+            metadata["compartment"] = compartment
+        ports = self._ports_for(r)
+        if ports:
+            metadata["ports"] = ports
+        return new_item(icon, label, r.rtype, r.address, metadata, r.tags)
+
+    def _ports_for(self, r: Res) -> Optional[str]:
+        """6.3: the ``port_protocol`` caption field.
+
+        Load balancers get their listeners' ``PROTOCOL/port`` pairs; databases
+        get their well-known port from ``DB_PORTS``. Security-list and NSG rule
+        bodies stay unread (spec 13).
+        """
+        if r.rtype in LB_TYPES:
+            pairs = self._listener_pairs(r.address)
+            return ", ".join(pairs) if pairs else None
+        return DB_PORTS.get(r.rtype)
 
     def _badge_ref(self, res: Res, default: str) -> dict:
         return badge_ref(res.label(default), res.address)
@@ -1856,6 +2055,21 @@ class ModelBuilder:
                     ports.append(port)
         return ports
 
+    def _listener_pairs(self, lb_address: str) -> List[str]:
+        """``PROTOCOL/port`` per listener, for the ``port_protocol`` caption field (6.3)."""
+        pairs: List[str] = []
+        for r in self.resources:
+            if r.rtype not in LB_LISTENER_TYPES:
+                continue
+            lb = self.first_ref(r, ("load_balancer_id", "network_load_balancer_id"), rtypes=LB_TYPES)
+            if lb is None or lb.address != lb_address or r.attrs.get("port") is None:
+                continue
+            protocol = str(r.attrs.get("protocol") or "").strip().upper()
+            text = f"{protocol}/{r.attrs['port']}" if protocol else str(r.attrs["port"])
+            if text not in pairs:
+                pairs.append(text)
+        return pairs
+
     def _build_edges(self) -> None:
         edges: List[dict] = []
         # explicit LB backends -> compute
@@ -1869,7 +2083,9 @@ class ModelBuilder:
             for t in targets:
                 if t.address in self.item_index:
                     port = r.attrs.get("port")
-                    edges.append(new_edge(lb.address, t.address, str(port) if port is not None else "", "data", False))
+                    edges.append(new_edge(lb.address, t.address,
+                                          str(port) if port is not None else "", "data",
+                                          discovery="association"))
                     self.explicit_lb_targets[lb.address] = True
         # Local Peering: one structural edge per LPG pair (declared from whichever side has peer_id)
         gateway_addresses = {g["address"] for v in self.model["vcns"] for g in v["gateways"] if g.get("address")}
@@ -1884,7 +2100,9 @@ class ModelBuilder:
             if pair in seen_pairs:
                 continue
             seen_pairs.add(pair)
-            edges.append(new_edge(pair[0], pair[1], "Local Peering", "attachment", False))
+            edges.append(new_edge(pair[0], pair[1], "Local Peering", "attachment",
+                                  discovery="association"))
+        edges.extend(self._config_edges({(e["source"], e["target"]) for e in edges}))
         if self.inferred_edges:
             edges.extend(self._heuristic_edges())
         self.model["edges"] = dedupe_edges(edges)
@@ -1915,7 +2133,7 @@ class ModelBuilder:
                 ports = self._listener_ports(addr)
                 label = "/".join(ports) if ports else "HTTP(S)"
                 for target in self._items_in_vcn(vcn_addr, COMPUTE_TYPES, ("app",), exclude_subnet=subnet_addr):
-                    edges.append(new_edge(addr, target, label, "data", True))
+                    edges.append(new_edge(addr, target, label, "data", discovery="heuristic"))
             elif rtype in COMPUTE_TYPES and vcn_addr and subnet_addr:
                 subnet = self.subnet_by_addr.get(subnet_addr)
                 if subnet is None or subnet["tier"] not in ("app", "compute"):
@@ -1924,8 +2142,52 @@ class ModelBuilder:
                     t_subnet = self.item_place[target][1]
                     if t_subnet is not None and self.subnet_by_addr[t_subnet]["tier"] not in ("data", "other"):
                         continue
-                    edges.append(new_edge(addr, target, DB_PORTS[self.item_type[target]], "data", True))
+                    edges.append(new_edge(addr, target, DB_PORTS[self.item_type[target]], "data",
+                                          discovery="heuristic"))
         return edges
+
+    def _config_edges(self, seen) -> List[dict]:
+        """6.8: a resolved ``*_id`` reference between two drawn items, as a dotted association.
+
+        This is the ``config`` provenance - one resource's configuration names
+        another. It is emitted as ``kind="association"`` (dotted, no arrowhead),
+        which is exactly what the guidelines' section 2 prescribes for a
+        non-traffic relationship.
+        """
+        out: List[dict] = []
+        pairs = set(seen)
+        # Two members of the same groups[] box are already drawn inside one
+        # rectangle that says they belong together; a connector between them
+        # adds nothing and would be drawn across the box.
+        boxed: List[set] = []
+        for vcn in self.model.get("vcns") or []:
+            for container in [vcn] + list(vcn.get("subnets") or []):
+                for grp in container.get("groups") or []:
+                    members = {str(x) for x in (grp.get("items") or [])}
+                    if len(members) > 1:
+                        boxed.append(members)
+
+        def same_box(a: str, b: str) -> bool:
+            return any(a in members and b in members for members in boxed)
+
+        for r in self.resources:
+            if r.address not in self.item_index:
+                continue
+            for attr, targets in sorted(r.refs.items()):
+                if not attr.endswith(("_id", "_ids")) or attr in SUBNET_ATTRS or attr in NSG_ATTRS:
+                    continue
+                if attr in ("vcn_id", "compartment_id", "drg_id", "route_table_id",
+                            "load_balancer_id", "network_load_balancer_id"):
+                    continue
+                for target in targets:
+                    if target not in self.item_index or target == r.address:
+                        continue
+                    pair = (r.address, target)
+                    if pair in pairs or pair[::-1] in pairs or same_box(*pair):
+                        continue
+                    pairs.add(pair)
+                    out.append(new_edge(r.address, target, "", "association", discovery="config"))
+        return out
 
     # -- loose tfvars VCNs -----------------------------------------------------------
     def _merge_loose(self) -> None:
@@ -2051,11 +2313,17 @@ def parse_terraform_dir(tf_dir, inferred_edges: bool = True) -> dict:
     """Build the MODEL from the ``*.tf`` / tfvars files directly inside ``tf_dir``."""
     tf_dir = Path(tf_dir)
     ctx = ds.TerraformContext(tf_dir)
-    resources = collect_hcl_resources(ctx)
+    # 6.5: ingestion happens before the builder exists, so its warnings are
+    # collected here and prepended to the model's own.
+    tag_warnings: List[str] = []
+    resources = collect_hcl_resources(ctx, tag_warnings)
     loose = loose_vcn_models(ctx)
     builder = ModelBuilder(resources, tf_dir.resolve().name or "OCI Architecture", _hcl_region(ctx),
                            "hcl", str(tf_dir), inferred_edges, loose)
-    return builder.build()
+    model = builder.build()
+    if tag_warnings:
+        model["warnings"] = tag_warnings + list(model.get("warnings") or [])
+    return model
 
 
 def parse_show_json(path, mode: Optional[str] = None, tf_dir=None, inferred_edges: bool = True) -> dict:
@@ -2096,10 +2364,19 @@ def summarise(model: dict) -> str:
     n_comp = len(model.get("compartments") or [])
     n_grp = (sum(len(v.get("groups") or []) for v in model["vcns"])
              + sum(len(s.get("groups") or []) for v in model["vcns"] for s in v["subnets"]))
+    report = model.get("filter_report") or {}
+    extra = ""
+    if report.get("include") or report.get("exclude"):
+        extra += (f", filtered {report.get('items_kept', 0)} kept / "
+                  f"{report.get('items_dropped', 0)} dropped / "
+                  f"{report.get('edges_dropped', 0)} edge(s) dropped")
+    pruned = int(report.get("pruned_items") or 0) + int(report.get("pruned_services") or 0)
+    if pruned:
+        extra += f", {pruned} pruned by mode={report.get('mode')}"
     return (f"{model['subject']}: {len(model['vcns'])} VCN(s), {n_sub} subnet(s), {n_items} subnet item(s), "
             f"{n_svc} service(s), {n_gw} gateway(s), {len(drgs)} DRG(s) / {n_att} attachment(s), "
             f"{hub} hub item(s), {n_comp} compartment(s), {n_grp} group box(es), "
-            f"{len(model['edges'])} edge(s)"
+            f"{len(model['edges'])} edge(s)" + extra
             + (f", {len(warns)} warning(s)" if warns else ""))
 
 
@@ -2116,7 +2393,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--vcn", metavar="NAME", help="keep only this VCN (name or address)")
     parser.add_argument("--out", metavar="FILE", help="write the model JSON here instead of stdout")
     parser.add_argument("--no-inferred-edges", action="store_true",
-                        help="emit only edges backed by explicit references")
+                        help="emit only edges backed by explicit references (an alias for "
+                             "--discovery " + ",".join(ov.NO_INFERRED_DISCOVERY) + ")")
+    parser.add_argument("--filter", action="append", default=None, metavar="EXPR",
+                        help="keep only what matches '[!]<dimension>[:<key>]<op><value>'; "
+                             f"dimensions: {','.join(ov.FILTER_DIMENSIONS)}. Repeatable")
+    parser.add_argument("--tag", action="append", default=None, metavar="K=V",
+                        help="sugar for --filter tag:K=V")
+    parser.add_argument("--compartment", action="append", default=None, metavar="NAME",
+                        help="sugar for --filter compartment=NAME")
+    parser.add_argument("--subnet", action="append", default=None, metavar="NAME",
+                        help="sugar for --filter subnet=NAME")
+    parser.add_argument("--resource-type", action="append", default=None, metavar="TYPE",
+                        help="sugar for --filter type=TYPE")
+    parser.add_argument("--mode", default=DEFAULT_MODE, choices=ov.MODES,
+                        help="all (default for Terraform: a configuration is already a curated "
+                             "set) or participating")
+    parser.add_argument("--discovery", default=None, metavar="K,K",
+                        help=f"keep only edges discovered this way: {','.join(ov.DISCOVERY_KINDS)}")
+    parser.add_argument("--relationships", default=None, metavar="FILE",
+                        help="JSON sidecar of extra edges, merged with discovery='user'")
     args = parser.parse_args(argv)
 
     tf_dir: Optional[Path] = None
@@ -2152,6 +2448,32 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"No VCN matches {args.vcn!r}. Available: {names}", file=sys.stderr)
         return 1
 
+    if args.relationships:
+        try:
+            model["edges"] = dedupe_edges(list(model["edges"]) + load_relationships(args.relationships))
+        except InputError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+    include = list(args.filter or [])
+    include += [f"tag:{t}" for t in (args.tag or [])]
+    include += [f"compartment={c}" for c in (args.compartment or [])]
+    include += [f"subnet={s}" for s in (args.subnet or [])]
+    include += [f"type={t}" for t in (args.resource_type or [])]
+    discovery = args.discovery
+    if args.no_inferred_edges and discovery is None:
+        discovery = ",".join(ov.NO_INFERRED_DISCOVERY)
+    try:
+        model, report = ov.filter_model(model, include, mode=args.mode,
+                                        discovery=discovery.split(",") if discovery else None)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    # 5: the model records what was done, which is what layout_info then reports.
+    model["mode"] = args.mode
+    if report["include"] or report["exclude"]:
+        model["filter"] = {"include": list(report["include"]), "exclude": list(report["exclude"])}
+    model["filter_report"] = dict(report)
+
     problems = validate_model(model, _builder_icon_keys())
     if problems:
         print("Model failed schema validation:", file=sys.stderr)
@@ -2159,6 +2481,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"  - {p}", file=sys.stderr)
         return 1
 
+    summary = summarise(model)
+    model.pop("filter_report", None)          # a report, not a schema key
     text = json.dumps(model, indent=2, ensure_ascii=False)
     if args.out:
         Path(args.out).expanduser().write_text(text + "\n", encoding="utf-8")
@@ -2167,7 +2491,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(text)
     for text in model.get("warnings") or []:
         print(text, file=sys.stderr)
-    print(summarise(model), file=sys.stderr)
+    print(summary, file=sys.stderr)
     return 0
 
 

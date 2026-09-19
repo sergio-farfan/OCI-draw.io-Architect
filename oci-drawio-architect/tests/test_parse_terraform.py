@@ -117,7 +117,8 @@ class HclThreeTierTests(unittest.TestCase):
         self.assertEqual(len(app), 1)
         inst = app[0]
         self.assertEqual(inst["icon"], "vm")
-        self.assertEqual(inst["label"], "app-server\nVM.Standard.E4.Flex")   # display_name + shape (var.app_shape)
+        self.assertEqual(inst["label"], "app-server")                        # D1: the shape moved to metadata
+        self.assertEqual(inst["metadata"]["shape"], "VM.Standard.E4.Flex")   # (var.app_shape)
         self.assertEqual(inst["address"], "oci_core_instance.app")           # base address, count kept as metadata
         self.assertEqual(inst["metadata"]["count"], 2)
         self.assertEqual(inst["metadata"]["ocpus"], 2)                       # nested shape_config block
@@ -1351,13 +1352,15 @@ class PlanJsonTests(unittest.TestCase):
     def test_items_with_indexed_addresses(self):
         app = find_subnet(self.vcn, "sn-app")["items"]
         self.assertEqual([i["address"] for i in app], ["oci_core_instance.app[0]", "oci_core_instance.app[1]"])
-        self.assertEqual(app[0]["label"], "app-0\nVM.Standard.E4.Flex")
+        self.assertEqual(app[0]["label"], "app-0")
+        self.assertEqual(app[0]["metadata"]["shape"], "VM.Standard.E4.Flex")
         self.assertEqual(app[0]["metadata"]["availability_domain"], "AD-1")
         web = find_subnet(self.vcn, "sn-web")["items"]
         self.assertEqual([(i["icon"], i["address"]) for i in web],
                          [("load_balancer", "oci_load_balancer_load_balancer.web")])   # subnet_ids via configuration
         data = find_subnet(self.vcn, "sn-data")["items"]
-        self.assertEqual([(i["icon"], i["label"]) for i in data], [("mysql", "mysql-app\nMySQL.VM.Standard.E4.1.8GB")])
+        self.assertEqual([(i["icon"], i["label"]) for i in data], [("mysql", "mysql-app")])
+        self.assertEqual(data[0]["metadata"]["shape_name"], "MySQL.VM.Standard.E4.1.8GB")
 
     def test_module_resources_and_gateway(self):
         svc = {i["address"]: i for i in self.vcn["services"]}
@@ -1377,7 +1380,9 @@ class PlanJsonTests(unittest.TestCase):
 
     def test_tags_and_data_sources_do_not_leak(self):
         dump = json.dumps(self.model)
-        self.assertNotIn("tag-must-not-leak", dump)
+        # 6.5: tags are kept in item["tags"] now; what must never happen is a
+        # tag value turning into a caption.
+        self.assertNotIn('"label": "tag-must-not-leak"', dump)
         self.assertNotIn("oci_identity_availability_domains", dump)
 
     def test_plan_json_indexed_instances_get_their_vnic_attachment_nsg(self):
