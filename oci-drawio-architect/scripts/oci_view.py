@@ -605,3 +605,477 @@ def render_caption(item: dict, view: dict, kind: str = "icon", type_labels=None)
     LINE, which is the same information in the geometry the recipe already has.
     """
     return "\n".join(caption_lines(item, view, kind=kind, type_labels=type_labels))
+
+
+# ---------------------------------------------------------------------------
+# Filtering (6.5), participating mode (6.6) and dangling pruning
+# ---------------------------------------------------------------------------
+import copy  # noqa: E402  (kept beside the section that needs it)
+
+FILTER_OPS = ("=", "~")
+# 6.5: the dimensions of the guidelines' section 1 filter list, plus the two
+# conveniences (env / app) and the 6.8 provenance axis.
+FILTER_DIMENSIONS = ("tag", "ftag", "dtag", "compartment", "region", "vcn", "subnet",
+                     "type", "icon", "name", "address", "env", "app", "discovery")
+# 6.5: "Structure is not predicated ... unless an expression names it directly."
+STRUCTURAL_DIMENSIONS = ("vcn", "subnet", "type", "name")
+# Conventions, not OCI concepts: documented sugar over tag:, listed here so a
+# project can see exactly which keys are tried and in which order.
+ENV_TAG_KEYS = ("Environment", "environment", "env")
+APP_TAG_KEYS = ("Application", "application", "app", "Team", "team")
+_EXPR_RE = re.compile(r"^(?P<neg>!?)(?P<dim>[A-Za-z_]+)(?::(?P<key>[^=~]+))?"
+                      r"(?P<op>[=~])(?P<val>.*)$")
+
+
+def _parse_expr(text: str) -> dict:
+    m = _EXPR_RE.match(str(text).strip())
+    if not m:
+        raise ValueError(f"filter: {text!r} is not '[!]<dimension>[:<key>]<op><value>[,<value>]' "
+                         f"with <op> one of {FILTER_OPS}")
+    dim = m.group("dim").strip().lower()
+    if dim not in FILTER_DIMENSIONS:
+        raise ValueError(f"filter: {dim!r} is not one of {FILTER_DIMENSIONS}")
+    key = (m.group("key") or "").strip()
+    if dim in ("tag", "ftag", "dtag") and not key:
+        raise ValueError(f"filter: {text!r} needs a tag key, e.g. 'tag:Application=payments'")
+    values = tuple(v.strip() for v in m.group("val").split(",") if v.strip())
+    if not values:
+        raise ValueError(f"filter: {text!r} has no value")
+    return {"negate": bool(m.group("neg")), "dim": dim, "key": key,
+            "op": m.group("op"), "values": values, "raw": str(text).strip()}
+
+
+def parse_filter(spec) -> dict:
+    """Normalise a filter spec into ``{"include": [expr], "exclude": [expr], "keep_empty": bool}``.
+
+    Accepts the model form ``{"include": [...], "exclude": [...]}`` and the flat
+    CLI form ``["vcn=vcn-app", "!type=..."]``; a leading ``!`` always means
+    exclude, in either form.
+    """
+    norm = _filter_spec(spec)
+    include, exclude = [], []
+    for raw in norm["include"]:
+        expr = _parse_expr(raw)
+        (exclude if expr["negate"] else include).append(expr)
+    for raw in norm["exclude"]:
+        expr = _parse_expr(raw)
+        expr["negate"] = True
+        exclude.append(expr)
+    return {"include": include, "exclude": exclude, "keep_empty": norm["keep_empty"]}
+
+
+def _list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
+def model_addresses(model: dict) -> List[str]:
+    """Every address in the model, in the order ``parse_terraform.model_addresses`` yields them.
+
+    Deliberately duplicated here rather than imported: this module must stay
+    plugin-free (V9) so the parser can import it, not the other way round. The
+    two walks are pinned together by
+    ``tests/test_parse_terraform_views.py::AddressWalkTests``.
+    """
+    out: List[str] = []
+
+    def take(entry):
+        if isinstance(entry, dict) and isinstance(entry.get("address"), str):
+            out.append(entry["address"])
+
+    for box in [model.get("hub"), model.get("internet")] + _list(model.get("third_party")):
+        for item in _list(box.get("items") if isinstance(box, dict) else None):
+            take(item)
+    for drg in _list(model.get("drgs")):
+        take(drg)
+        for att in (_list(drg.get("attachments")) if isinstance(drg, dict) else []):
+            take(att)
+    for vcn in _list(model.get("vcns")):
+        if not isinstance(vcn, dict):
+            continue
+        take(vcn)
+        for sn in _list(vcn.get("subnets")):
+            if not isinstance(sn, dict):
+                continue
+            take(sn)
+            for item in _list(sn.get("items")):
+                take(item)
+        for coll in ("services", "controls", "gateways"):
+            for item in _list(vcn.get(coll)):
+                take(item)
+    for item in _list(model.get("services")):
+        take(item)
+    return out
+
+
+def _tags_of(entry) -> Tuple[dict, dict]:
+    tags = (entry or {}).get("tags") or {}
+    free = tags.get("freeform") if isinstance(tags.get("freeform"), dict) else {}
+    defined = tags.get("defined") if isinstance(tags.get("defined"), dict) else {}
+    return free, defined
+
+
+def _lookup(expr: dict, item: dict, vcn: Optional[dict], subnet: Optional[dict],
+            model: dict) -> List[str]:
+    """Every value of the expression's dimension for this item, as strings.
+
+    Tags are inherited item -> subnet -> VCN, NEAREST WINS: a VCN tagged
+    ``Application=payments`` scopes everything drawn inside it, which is what a
+    reader asking for "the payments application" means, but an item that sets
+    the same key itself overrides it. Collecting every level into one list
+    instead would make an override impossible - the VCN's value would keep
+    matching - so the walk returns at the first level that has the key.
+    """
+    dim, key = expr["dim"], expr["key"]
+    if dim in ("tag", "ftag", "dtag"):
+        for level in (item, subnet, vcn):
+            if level is None:
+                continue
+            free, defined = _tags_of(level)
+            out = []
+            if dim in ("tag", "ftag") and key in free:
+                out.append(str(free[key]))
+            if dim in ("tag", "dtag") and key in defined:
+                out.append(str(defined[key]))
+            if out:
+                return out
+        return []
+    if dim in ("env", "app"):
+        # Sugar over tag:, in this exact key order (6.5) - the first key present wins.
+        for candidate in (ENV_TAG_KEYS if dim == "env" else APP_TAG_KEYS):
+            hit = _lookup({"dim": "tag", "key": candidate}, item, vcn, subnet, model)
+            if hit:
+                return hit
+        return []
+    if dim == "compartment":
+        meta = item.get("metadata") or {}
+        value = meta.get("compartment") or (vcn or {}).get("compartment") or model.get("compartment")
+        return [str(value)] if value else []
+    if dim == "region":
+        return [str(model.get("region") or "")]
+    if dim == "vcn":
+        return [str(v) for v in ((vcn or {}).get("name"), (vcn or {}).get("address")) if v]
+    if dim == "subnet":
+        return [str(v) for v in ((subnet or {}).get("name"), (subnet or {}).get("address")) if v]
+    if dim == "type":
+        return [str(item.get("type") or "")]
+    if dim == "icon":
+        return [str(item.get("icon") or "")]
+    if dim == "name":
+        return [str(item.get("label") or "").split("\n")[0].strip()]
+    if dim == "address":
+        return [str(item.get("address") or "")]
+    if dim == "discovery":
+        return [str(item.get("discovery") or "association")]
+    raise ValueError(f"filter: unhandled dimension {dim!r}")
+
+
+def _expr_matches(expr: dict, values: List[str]) -> bool:
+    for value in values:
+        low = value.lower()
+        for want in expr["values"]:
+            if expr["op"] == "=" and low == want.lower():
+                return True
+            if expr["op"] == "~" and want.lower() in low:
+                return True
+    return False
+
+
+def _matches(parsed: dict, item: dict, vcn=None, subnet=None, model=None,
+             dims=None) -> bool:
+    """AND across dimensions, OR within one; exclude always wins (6.5)."""
+    model = model or {}
+    for expr in parsed["exclude"]:
+        if dims is not None and expr["dim"] not in dims:
+            continue
+        if _expr_matches(expr, _lookup(expr, item, vcn, subnet, model)):
+            return False
+    groups: Dict[Tuple[str, str], List[dict]] = {}
+    for expr in parsed["include"]:
+        if dims is not None and expr["dim"] not in dims:
+            continue
+        groups.setdefault((expr["dim"], expr["key"]), []).append(expr)
+    for exprs in groups.values():
+        if not any(_expr_matches(e, _lookup(e, item, vcn, subnet, model)) for e in exprs):
+            return False
+    return True
+
+
+def prune_dangling(model: dict, known=None) -> dict:
+    """Drop DRG attachments whose other end is gone, null dangling LPG peers, drop dead edges.
+
+    Extracted from ``parse_terraform.select_vcn``, which now calls it, so the
+    single-VCN shortcut and the general filter behave identically (6.5).
+    Mutates ``model``; returns ``{"attachments": n, "peers": n, "edges": n}``.
+
+    ``known`` is the set of endpoint names this pruner is allowed to judge -
+    normally the model's addresses BEFORE the filter ran. An edge endpoint the
+    walk has never heard of is not a dangling reference: the recipe's registry
+    also resolves ``groups[]`` box keys, NSG badge addresses, ``services:<vcn>``
+    and plain container names. Without ``known`` those endpoints would be
+    deleted from every diagram, filtered or not, so an unrecognised form is
+    left alone and only a name that *was* in the model and is not any more is
+    pruned. ``known=None`` keeps the strict behaviour ``select_vcn`` wants.
+    """
+    vcn_keys = {str(v[k]) for v in _list(model.get("vcns")) if isinstance(v, dict)
+                for k in ("name", "address") if isinstance(v.get(k), str)}
+    dropped = {"attachments": 0, "peers": 0, "edges": 0}
+    reachable = set(model_addresses(model)) | vcn_keys
+
+    def _dangling(att) -> bool:
+        if not isinstance(att, dict):
+            return False
+        if att.get("type") == "vcn":
+            return str(att.get("vcn")) not in vcn_keys
+        # An ipsec / virtual-circuit / rpc attachment points at a CPE, a DRG or
+        # a peer that the filter may have removed; leaving it in makes
+        # build_diagram raise "edge endpoint 'cpe' not found".
+        return bool(att.get("target")) and str(att.get("target")) not in reachable
+
+    for drg in _list(model.get("drgs")):
+        if not isinstance(drg, dict):
+            continue
+        atts = _list(drg.get("attachments"))
+        kept = [a for a in atts if not _dangling(a)]
+        dropped["attachments"] += len(atts) - len(kept)
+        drg["attachments"] = kept
+    alive = set(model_addresses(model)) | vcn_keys
+    for vcn in _list(model.get("vcns")):
+        for gw in _list(vcn.get("gateways") if isinstance(vcn, dict) else None):
+            if isinstance(gw, dict) and gw.get("peer") and str(gw["peer"]) not in alive:
+                gw["peer"] = None
+                dropped["peers"] += 1
+
+    def _dead(ref) -> bool:
+        ref = str(ref)
+        if ref in alive:
+            return False
+        return known is None or ref in known
+
+    edges = _list(model.get("edges"))
+    kept_edges = [e for e in edges if isinstance(e, dict)
+                  and not _dead(e.get("source")) and not _dead(e.get("target"))]
+    dropped["edges"] += len(edges) - len(kept_edges)
+    model["edges"] = kept_edges
+    return dropped
+
+
+def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> Tuple[dict, dict]:
+    """Apply the shared predicate and the participating mode; return (new model, report).
+
+    Never mutates its input. Items in subnets, VCN services and controls,
+    top-level services and location-box items are predicated; structure is not,
+    unless a ``vcn=`` / ``subnet=`` expression names the container directly
+    (6.5). A subnet the filter empties is dropped, and so is a VCN with no
+    subnets and no services, unless ``keep_empty`` is set - its gateways do not
+    keep it alive, because they were never predicated in the first place.
+    """
+    mode = choice(mode, MODES, DEFAULTS["mode"], "mode")
+    parsed = parse_filter(spec)
+    # The endpoint names this model knew before anything was removed; see
+    # prune_dangling's docstring for why an unknown endpoint form is kept.
+    known_before = set(model_addresses(model))
+    m = copy.deepcopy(model)
+    report = {"include": tuple(e["raw"] for e in parsed["include"]),
+              "exclude": tuple(e["raw"] for e in parsed["exclude"]),
+              "items_kept": 0, "items_dropped": 0, "edges_dropped": 0,
+              "containers_dropped": 0, "pruned_items": 0, "pruned_services": 0,
+              "mode": mode, "warnings": []}
+    has_filter = bool(parsed["include"] or parsed["exclude"])
+
+    # A region expression is a whole-model predicate: it either keeps or empties.
+    region_exprs = [e for e in parsed["include"] + parsed["exclude"] if e["dim"] == "region"]
+    if region_exprs and not _matches(parsed, {}, None, None, m, dims=("region",)):
+        # Count the DRAWN items that disappear, not every address: an address
+        # walk also yields VCNs, subnets, DRGs and attachments, which are
+        # containers and structure, not items.
+        report["items_dropped"] = (
+            sum(len(_list(sn.get("items"))) for v in _list(m.get("vcns"))
+                if isinstance(v, dict) for sn in _list(v.get("subnets")) if isinstance(sn, dict))
+            + sum(len(_list(v.get(coll))) for v in _list(m.get("vcns")) if isinstance(v, dict)
+                  for coll in ("services", "controls"))
+            + len(_list(m.get("services")))
+            + sum(len(_list(box.get("items"))) for box in
+                  [m.get("hub"), m.get("internet")] + _list(m.get("third_party"))
+                  if isinstance(box, dict)))
+        m.update({"vcns": [], "services": [], "hub": None, "drgs": [], "edges": []})
+        report["containers_dropped"] = len(_list(model.get("vcns")))
+        return m, report
+
+    def keep_items(items, vcn=None, subnet=None):
+        kept = []
+        for item in _list(items):
+            if not has_filter or _matches(parsed, item, vcn, subnet, m):
+                kept.append(item)
+                report["items_kept"] += 1
+            else:
+                report["items_dropped"] += 1
+        return kept
+
+    def keep_container(entry, vcn=None, subnet=None, dims=()) -> bool:
+        """6.5: a container is predicated only by the dimensions that name IT.
+
+        ``dims`` is ``("vcn",)`` for a VCN and ``("subnet",)`` for a subnet.
+        Evaluating every STRUCTURAL_DIMENSION at every level instead would make
+        ``subnet=sn-app`` or ``type=oci_core_instance`` drop every VCN, because
+        a VCN probe matches neither.
+        """
+        if not has_filter or not dims:
+            return True
+        named = [e for e in parsed["include"] + parsed["exclude"] if e["dim"] in dims]
+        if not named:
+            return True
+        return _matches(parsed, entry, vcn, subnet, m, dims=dims)
+
+    vcns = []
+    for vcn in _list(m.get("vcns")):
+        probe = {"label": vcn.get("name"), "address": vcn.get("address"), "type": "oci_core_vcn"}
+        if not keep_container(probe, vcn=vcn, dims=("vcn",)):
+            report["containers_dropped"] += 1 + len(_list(vcn.get("subnets")))
+            report["items_dropped"] += sum(len(_list(s.get("items")))
+                                           for s in _list(vcn.get("subnets")))
+            report["items_dropped"] += len(_list(vcn.get("services")))
+            continue
+        subnets = []
+        for sn in _list(vcn.get("subnets")):
+            sprobe = {"label": sn.get("name"), "address": sn.get("address"),
+                      "type": "oci_core_subnet"}
+            if not keep_container(sprobe, vcn=vcn, subnet=sn, dims=("subnet",)):
+                report["containers_dropped"] += 1
+                report["items_dropped"] += len(_list(sn.get("items")))
+                continue
+            sn["items"] = keep_items(sn.get("items"), vcn=vcn, subnet=sn)
+            if sn["items"] or parsed["keep_empty"] or not has_filter:
+                subnets.append(sn)
+            else:
+                report["containers_dropped"] += 1
+        vcn["subnets"] = subnets
+        for coll in ("services", "controls"):
+            vcn[coll] = keep_items(vcn.get(coll), vcn=vcn)
+        # Gateways alone do NOT keep a VCN: they survive every predicate by
+        # construction (structure is not predicated), so counting them would
+        # make every VCN unemptiable and test_keep_empty_keeps_an_emptied_
+        # container could never observe a difference.
+        if vcn["subnets"] or vcn["services"] or parsed["keep_empty"] or not has_filter:
+            vcns.append(vcn)
+        else:
+            report["containers_dropped"] += 1
+    m["vcns"] = vcns
+    m["services"] = keep_items(m.get("services"))
+    for box_key in ("hub", "internet"):
+        box = m.get(box_key)
+        if isinstance(box, dict):
+            box["items"] = keep_items(box.get("items"))
+    for box in _list(m.get("third_party")):
+        if isinstance(box, dict):
+            box["items"] = keep_items(box.get("items"))
+
+    # 6.8: the discovery selector and the discovery= expressions prune edges only.
+    # Read through _as_tuple, not tuple(): a front end may hand this the raw
+    # flag value "association,user", and tuple() on a string yields its
+    # CHARACTERS, which matches no discovery kind and would silently drop every
+    # edge in the diagram.
+    wanted = _as_tuple(discovery, "discovery") or None
+    if wanted or any(e["dim"] == "discovery" for e in parsed["include"] + parsed["exclude"]):
+        kept_edges = []
+        for edge in _list(m.get("edges")):
+            kind = str(edge.get("discovery") or "association")
+            if wanted and kind not in wanted:
+                report["edges_dropped"] += 1
+                continue
+            if not _matches(parsed, edge, None, None, m, dims=("discovery",)):
+                report["edges_dropped"] += 1
+                continue
+            kept_edges.append(edge)
+        m["edges"] = kept_edges
+
+    if mode == "participating":
+        keep = participating(m, include=parsed["include"])
+        for vcn in _list(m.get("vcns")):
+            for sn in _list(vcn.get("subnets")):
+                before = len(_list(sn.get("items")))
+                sn["items"] = [i for i in _list(sn.get("items"))
+                               if str(i.get("address") or "") in keep]
+                report["pruned_items"] += before - len(sn["items"])
+            for coll in ("services", "controls"):
+                before = len(_list(vcn.get(coll)))
+                vcn[coll] = [i for i in _list(vcn.get(coll))
+                             if str(i.get("address") or "") in keep]
+                report["pruned_services"] += before - len(vcn[coll])
+        before = len(_list(m.get("services")))
+        m["services"] = [i for i in _list(m.get("services"))
+                         if str(i.get("address") or "") in keep]
+        report["pruned_services"] += before - len(m["services"])
+
+    report["edges_dropped"] += prune_dangling(m, known=known_before)["edges"]
+    return m, report
+
+
+def participating(model: dict, include=()) -> set:
+    """Addresses of the items that take part in the architecture (6.6).
+
+    An item participates when any of the six clauses holds: it is an endpoint of
+    a surviving edge; it is structure (a gateway, a DRG, an attachment, a hub /
+    internet / third-party item); it carries a badge or is a badge host; a
+    ``groups[]`` box names it; an ``include`` expression names it directly; or it
+    is the only item of a subnet that survived for structural reasons.
+    """
+    keep: set = set()
+    for edge in _list(model.get("edges")):
+        if isinstance(edge, dict):
+            keep.update(str(edge.get(end) or "") for end in ("source", "target"))
+    for box in [model.get("hub"), model.get("internet")] + _list(model.get("third_party")):
+        for item in _list(box.get("items") if isinstance(box, dict) else None):
+            if isinstance(item, dict) and item.get("address"):
+                keep.add(str(item["address"]))
+    for drg in _list(model.get("drgs")):
+        if not isinstance(drg, dict):
+            continue
+        if drg.get("address"):
+            keep.add(str(drg["address"]))
+        for att in _list(drg.get("attachments")):
+            if isinstance(att, dict) and att.get("address"):
+                keep.add(str(att["address"]))
+    parsed_include = list(include or ())
+    for vcn in _list(model.get("vcns")):
+        if not isinstance(vcn, dict):
+            continue
+        for gw in _list(vcn.get("gateways")):
+            if isinstance(gw, dict) and gw.get("address"):
+                keep.add(str(gw["address"]))
+        grouped = {str(name) for container in [vcn] + _list(vcn.get("subnets"))
+                   if isinstance(container, dict)
+                   for grp in _list(container.get("groups")) if isinstance(grp, dict)
+                   for name in (_list(grp.get("items")) + _list(grp.get("subnets")))}
+        keep.update(grouped)
+        for sn in _list(vcn.get("subnets")):
+            if not isinstance(sn, dict):
+                continue
+            items = [i for i in _list(sn.get("items")) if isinstance(i, dict)]
+            for item in items:
+                addr = str(item.get("address") or "")
+                if not addr:
+                    continue
+                if item.get("nsgs"):
+                    keep.add(addr)
+                if parsed_include and _matches({"include": parsed_include, "exclude": []},
+                                               item, vcn, sn, model):
+                    keep.add(addr)
+            if len(items) == 1 and items[0].get("address"):
+                keep.add(str(items[0]["address"]))       # clause 6
+        for coll in ("services", "controls"):
+            for item in _list(vcn.get(coll)):
+                if not isinstance(item, dict):
+                    continue
+                addr = str(item.get("address") or "")
+                if addr and parsed_include and _matches({"include": parsed_include, "exclude": []},
+                                                        item, vcn, None, model):
+                    keep.add(addr)
+    for item in _list(model.get("services")):
+        if not isinstance(item, dict):
+            continue
+        addr = str(item.get("address") or "")
+        if addr and parsed_include and _matches({"include": parsed_include, "exclude": []},
+                                                item, None, None, model):
+            keep.add(addr)
+    keep.discard("")
+    return keep
