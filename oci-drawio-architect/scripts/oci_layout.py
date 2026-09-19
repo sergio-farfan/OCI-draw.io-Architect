@@ -84,7 +84,7 @@ Usage (CLI):
                           [--subnet-label twoline|inline|name] [--attachment-style solid|dotted]
                           [--show-compartments]
                           [--label-mode minimal|network|detailed] [--label-fields F,F]
-                          [--label-tag-keys K,K]
+                          [--label-tag-keys K,K] [--layers off|auto|L,L] [--hidden-layers L,L]
 
 Usage (Python):
     from oci_layout import build_diagram, write_diagram
@@ -212,6 +212,29 @@ CMP_GAP = 40                     # between sibling compartment containers
 TEN_PAD = 25                     # tenancy container padding around the compartment row
 TEN_TITLE_H = 40                 # tenancy title band
 
+# 6.2: which view layer a cell belongs to. A layer is a child of the root and a
+# cell belongs to the layer of its TOP-LEVEL ancestor (V2), so only page-level
+# annotation can be layered: the badges (which are reparented after the whole
+# recipe has run, keeping their absolute position) and the model's own edges.
+# Containers, icons, gateways, the DRG cluster, the attachment boxes, the
+# attachment connectors, the title, the notes and the legend stay on the base
+# "Network" layer.
+LAYER_BADGE_KINDS = {"routes": ("route_table", "drg_route_table"),
+                     "security": ("security_list", "nsg")}
+EDGE_LAYERS = {"data": "dataflow", "control": "management", "management": "management",
+               "association": "associations", "attachment": None,
+               "analytics": "dataflow", "datalake": "dataflow"}
+
+
+def _edge_layer(kind) -> "str | None":
+    """View layer of one MODEL edge kind (not the builder kind): 6.2's table.
+
+    ``attachment`` is structure, so it stays on the base layer. An unknown kind
+    follows ``EDGE_KINDS``, which reads it as ``data``.
+    """
+    return EDGE_LAYERS.get(str(kind or "data").lower(), "dataflow")
+
+
 # model edge kind -> builder kind (+ colour). analytics / datalake are project
 # extensions kept for compatibility; management is an alias of control.
 EDGE_KINDS = {
@@ -317,7 +340,8 @@ def _edge_label(text, view: dict) -> str:
 
 def _view_ctx(model: dict, locations=None, gateway_edge=None, subnet_label=None,
               attachment_style=None, show_compartments=None,
-              label_mode=None, label_fields=None, label_tag_keys=None) -> dict:
+              label_mode=None, label_fields=None, label_tag_keys=None,
+              layers=None, hidden_layers=None) -> dict:
     """The view choices of one diagram: model keys, with the build_diagram kwargs winning.
 
     ``internet`` is synthesised with no items when the canvas is the Location
@@ -343,7 +367,8 @@ def _view_ctx(model: dict, locations=None, gateway_edge=None, subnet_label=None,
     # oci_view.resolve_view, whose answers for subnet_label reproduce
     # oci_topology.subnet_label_mode exactly for every 1.4.0 value.
     view = ov.resolve_view(m, label_mode=label_mode, label_fields=label_fields,
-                           label_tag_keys=label_tag_keys)
+                           label_tag_keys=label_tag_keys, layers=layers,
+                           hidden_layers=hidden_layers)
     for note in view["notes"]:
         print(note, file=sys.stderr)
     return {"locations": mode,
@@ -628,6 +653,8 @@ class _Registry:
         self.by_caption = {}
         self.containers = {}
         self.badge_kinds = set()      # B07: legend rows only for the badges actually drawn
+        # 6.2: layer name -> the cell ids the post-pass reparents onto it.
+        self.layer_cells = {}
 
     def add_item(self, item: dict, cid: str):
         addr = item.get("address")
@@ -691,6 +718,7 @@ def _add_subnet_badges(d: DrawioBuilder, sid: str, subnet: dict, width, reg, vie
                           metadata={"route_table": ", ".join(r["name"] for r in rt)})
         _register_badge(reg, rt, bid)
         reg.badge_kinds.add("route_table")
+        reg.layer_cells.setdefault("routes", []).append(bid)
         ids.append(bid)
         cx -= BADGE_SIZE + BADGE_GAP
     sls = _badge_refs(subnet.get("security_lists"))
@@ -700,6 +728,7 @@ def _add_subnet_badges(d: DrawioBuilder, sid: str, subnet: dict, width, reg, vie
                           metadata={"security_lists": ", ".join(r["name"] for r in sls)})
         _register_badge(reg, sls, bid)
         reg.badge_kinds.add("security_list")
+        reg.layer_cells.setdefault("security", []).append(bid)
         ids.append(bid)
     return ids
 
@@ -718,6 +747,7 @@ def _add_nsg_badge(d: DrawioBuilder, parent, cid: str, item: dict, reg=None, vie
     _register_badge(reg, nsgs, bid)
     if reg is not None:
         reg.badge_kinds.add("nsg")
+        reg.layer_cells.setdefault("security", []).append(bid)
     return bid
 
 
@@ -1428,6 +1458,7 @@ def _drg_route_table_badges(d: DrawioBuilder, parent, did, name: str, refs: list
                           metadata=meta)
         _register_badge(reg, [ref], bid)
         reg.badge_kinds.add("drg_route_table")
+        reg.layer_cells.setdefault("routes", []).append(bid)
         ids.append(bid)
     return ids
 
@@ -1549,6 +1580,72 @@ def _layout_compartments(d: DrawioBuilder, rid, model: dict, member_cells: dict,
     return ids
 
 
+def _planned_layers(view: dict, reg: _Registry, model: dict) -> list:
+    """The enabled layers that will actually hold a cell, in VIEW_LAYERS order (6.2 step 4)."""
+    enabled = list(view.get("layers") or ())
+    if not enabled:
+        return []
+    have_edges = set()
+    if view.get("show_edges", True):
+        for e in model.get("edges") or []:
+            layer = _edge_layer(e.get("kind"))
+            if layer:
+                have_edges.add(layer)
+    planned = []
+    for name in ov.VIEW_LAYERS:
+        if name not in enabled:
+            continue
+        if name in LAYER_BADGE_KINDS:
+            if any(k in reg.badge_kinds for k in LAYER_BADGE_KINDS[name]):
+                planned.append(name)
+        elif name == "iam":
+            if reg.layer_cells.get("iam"):
+                planned.append(name)
+        elif name in have_edges:
+            planned.append(name)
+    return planned
+
+
+def _create_layers(d: DrawioBuilder, view: dict, planned: list) -> dict:
+    """Name the base layer and add one layer per planned name; returns {name: cell id}.
+
+    The order is the z-order: every view layer renders above the base layer,
+    which is what the badges and the connectors need (6.2 step 2).
+    """
+    if not planned:
+        return {}
+    d.set_base_layer_name(view.get("base_layer_name") or ov.BASE_LAYER_NAME)
+    hidden = set(view.get("hidden_layers") or ())
+    return {name: d.add_layer(ov.LAYER_TITLES[name], visible=name not in hidden,
+                              key=f"layer-{name}")
+            for name in planned}
+
+
+def _apply_layers(d: DrawioBuilder, layers: dict, view: dict, reg: _Registry) -> dict:
+    """V1: move the layer-eligible cells onto their layer. Not one pixel moves.
+
+    ``reparent()`` keeps a cell's absolute position, and the edges were given
+    their layer as ``parent`` when they were added (an edge's route is computed
+    from absolute boxes, so the parent only selects the frame its waypoints are
+    stored in). Runs after ``fit_page()``.
+    """
+    counts = {}
+    for name, lid in layers.items():
+        moved = 0
+        for cid in reg.layer_cells.get(name, []):
+            if cid in d._cells:
+                d.reparent(cid, lid)
+                moved += 1
+        counts[name] = moved
+    for cid, e in d._cells.items():
+        if e["kind"] == "edge" and e["parent"] in layers.values():
+            for name, lid in layers.items():
+                if e["parent"] == lid:
+                    counts[name] = counts.get(name, 0) + 1
+    hidden = [n for n in layers if n in set(view.get("hidden_layers") or ())]
+    return {"enabled": list(layers), "hidden": hidden, "cells": counts}
+
+
 def _resolve_attachment_target(reg: _Registry, pe: dict):
     """Cell the attachment box connects to: its VCN's border, a hub item, or nothing."""
     if pe.get("vcn") is not None:
@@ -1593,7 +1690,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                   page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None,
                   locations=None, gateway_edge=None, subnet_label=None, attachment_style=None,
                   show_compartments=None, label_mode=None, label_fields=None,
-                  label_tag_keys=None) -> DrawioBuilder:
+                  label_tag_keys=None, layers=None, hidden_layers=None) -> DrawioBuilder:
     """Lay out a normalized model and return the (unwritten) DrawioBuilder.
 
     Schema-1 models are migrated first (DRG hub items / drg gateways -> drgs[]);
@@ -1611,13 +1708,15 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     subject = model.get("subject") or (model["vcns"][0].get("name") if model.get("vcns") else "Architecture")
     ctx = _view_ctx(model, locations=locations, gateway_edge=gateway_edge, subnet_label=subnet_label,
                     attachment_style=attachment_style, show_compartments=show_compartments,
-                    label_mode=label_mode, label_fields=label_fields, label_tag_keys=label_tag_keys)
+                    label_mode=label_mode, label_fields=label_fields, label_tag_keys=label_tag_keys,
+                    layers=layers, hidden_layers=hidden_layers)
     view = ctx["view"]
     d = DrawioBuilder(page_name=page_name or f"{subject} Architecture", style_profile=style_profile,
                       attachment_style=ctx["attachment_style"],
                       max_label_lines=view["line_budget"])
     d.layout_info = {"topology": topo, "warnings": list(warnings), "drg_style": {},
-                     "locations": ctx["locations"], "view": view}
+                     "locations": ctx["locations"], "view": view,
+                     "layers": {"enabled": [], "hidden": [], "cells": {}}}
     reg = _Registry()
 
     if title:
@@ -1799,6 +1898,11 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                                reg, explicit_pairs=pairs, view=view)
     d.layout_info["canvas"] = canvas
 
+    # 6.2 steps 1-2: the layers exist before the first edge that belongs on one,
+    # because an edge takes its layer as ``parent`` at add_edge time. The badges
+    # are moved in the post-pass after fit_page().
+    layer_ids = _create_layers(d, view, _planned_layers(view, reg, model))
+
     if osn_id is not None:
         for _i, side, g, gid in edge_gateways:
             if _is_sgw(g):     # G5: the SGW faces the OSN on whichever border it took
@@ -1831,6 +1935,9 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     for e in model.get("edges") or []:
         spec = EDGE_KINDS.get(str(e.get("kind") or "data").lower(), EDGE_KINDS["data"])
         kwargs = dict(color=e.get("color", spec["color"]), key=e.get("address"))
+        layer_name = _edge_layer(e.get("kind"))
+        if layer_name in layer_ids:
+            kwargs["parent"] = layer_ids[layer_name]
         if "dashed" in e:
             kwargs["dashed"] = e["dashed"]            # explicit override keeps the profile look
         else:
@@ -1843,6 +1950,8 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         d.add_legend(REGION_XY[0], bottom + GAP, entries=_legend_entries(d, reg))
 
     d.fit_page(margin=PAD)
+    # 6.2 steps 3-4 (V1): the layer pass runs last and only changes parents.
+    d.layout_info["layers"] = _apply_layers(d, layer_ids, view, reg)
     return d
 
 
@@ -1903,6 +2012,12 @@ def main(argv=None) -> int:
                          f"choose from {','.join(ov.LABEL_FIELDS)} (an OCID is never rendered)")
     ap.add_argument("--label-tag-keys", default=None, metavar="K,K",
                     help="which tag keys the 'tags' caption field renders, in this order")
+    ap.add_argument("--layers", default=None, metavar="off|auto|L,L",
+                    help=f"emit the diagram onto draw.io layers: off (default), auto (every layer "
+                         f"with content) or a list from {','.join(ov.VIEW_LAYERS)}; "
+                         f"'ips' and 'ports' are rewritten to caption fields")
+    ap.add_argument("--hidden-layers", default=None, metavar="L,L",
+                    help="layers created with visible=0 (toggle them in draw.io with Cmd/Ctrl+Shift+L)")
     args = ap.parse_args(argv)
     model = load_model(args.model)
     subject = model.get("subject") or "Architecture"
@@ -1913,7 +2028,8 @@ def main(argv=None) -> int:
                   gateway_edge=args.gateway_edge, subnet_label=args.subnet_label,
                   attachment_style=args.attachment_style, show_compartments=args.show_compartments,
                   label_mode=args.label_mode, label_fields=args.label_fields,
-                  label_tag_keys=args.label_tag_keys)
+                  label_tag_keys=args.label_tag_keys, layers=args.layers,
+                  hidden_layers=args.hidden_layers)
     return 0
 
 
