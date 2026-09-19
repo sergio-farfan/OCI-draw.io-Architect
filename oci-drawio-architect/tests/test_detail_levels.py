@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
 import sys
 import tempfile
@@ -61,6 +62,30 @@ class DetailLevelTests(unittest.TestCase):
         self.assertLess(ol._drg_column_width(MODEL["drgs"], "auto",
                                              ov.resolve_view({"detail": "executive"})),
                         ol._drg_column_width(MODEL["drgs"], "auto"))
+
+    def test_an_attachment_named_by_caption_resolves_at_every_level(self):
+        """The boxes-off branch registers the attachment by caption as well as by address.
+
+        ``_Registry.resolve`` documents the caption as a supported endpoint
+        form, so a 1.4.0 model that names an attachment by its caption has to
+        degrade to the DRG glyph at ``executive``, not raise.
+        """
+        model = copy.deepcopy(MODEL)
+        model["edges"] = list(model.get("edges") or []) + [
+            {"source": "VCN attachment", "target": "app", "kind": "data", "address": "cap-edge"},
+            {"source": "IPSec attachment", "target": "app", "kind": "data", "address": "cap2-edge"},
+            {"source": "att-app", "target": "app", "kind": "data", "address": "addr-edge"},
+        ]
+        for level in ov.DETAIL_ORDER:
+            d = quiet(ol.build_diagram, model, detail=level)
+            for eid in ("cap-edge", "cap2-edge", "addr-edge"):
+                self.assertIn(eid, d._cells, (level, eid))
+        boxes = quiet(ol.build_diagram, model, detail="network")
+        self.assertEqual(boxes._cells["cap-edge"]["source"], "att-app")
+        self.assertEqual(boxes._cells["cap2-edge"]["source"], "att-vpn")
+        no_boxes = quiet(ol.build_diagram, model, detail="executive")
+        for eid in ("cap-edge", "cap2-edge", "addr-edge"):
+            self.assertEqual(no_boxes._cells[eid]["source"], "drg", eid)
 
     def test_the_application_level_keeps_the_attachment_boxes_and_the_edge_labels(self):
         d = quiet(ol.build_diagram, MODEL, detail="application")

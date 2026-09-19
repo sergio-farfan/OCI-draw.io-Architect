@@ -1529,13 +1529,14 @@ def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_
         if not boxes_on:
             # 6.4: the executive level draws no attachment box; the DRG glyph
             # itself connects straight to the VCN border (the vcn_with_drg
-            # presentation the classifier already knows). The attachment's own
-            # address still resolves, to the DRG glyph, so a model edge that
-            # names it keeps working.
+            # presentation the classifier already knows). The attachment is
+            # registered exactly as the box branch registers it - by address
+            # AND by caption, both onto the DRG glyph - so a model edge that
+            # names it either way keeps working at every level.
             for att in _drg_attachments(drg):
                 akey = str(att["address"]) if att.get("address") else None
-                if akey:
-                    reg.by_address.setdefault(akey, did)
+                reg.add_item({"address": att.get("address"),
+                              "label": attachment_label(att)}, did)
                 is_vcn = attachment_type(att) == "vcn"
                 pending.append({"source": did,
                                 "vcn": att.get("vcn") if is_vcn else None,
