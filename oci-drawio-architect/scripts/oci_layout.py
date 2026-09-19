@@ -447,6 +447,26 @@ def _layout_osn(d: DrawioBuilder, region_id, items, x, y, min_h, reg, min_w=None
     return pid, w, h
 
 
+def _children_bottom(d: DrawioBuilder, cid) -> float:
+    """Bottom edge, in ``cid``'s own coordinates, of everything already inside it.
+
+    Mirrors ``DrawioBuilder.fit_to_children``: an icon counts with its caption,
+    and a badge straddles its host's border on purpose so it never counts.
+    Used to floor the Oracle Services Network band under every region child
+    placed above it, not merely under the tallest VCN.
+    """
+    bottom = 0.0
+    for kid, ke in d._cells.items():
+        if ke["parent"] != cid or ke["kind"] in ("edge", "layer") or ke.get("badge"):
+            continue
+        if ke["kind"] == "icon":
+            _x, y, _w, h = d.footprint(kid)
+        else:
+            y, h = ke["y"], ke["h"]
+        bottom = max(bottom, y + h)
+    return bottom
+
+
 class _Registry:
     """address / reference -> cell id resolution for edges."""
 
@@ -1159,6 +1179,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         if nested_hub:
             drg_col_x = max(drg_col_x, HUB_X + HUB_W + _hub_gutter(drgs, d.profile["edge_font"]))
         x = drg_col_x + _drg_column_width(drgs, requested) + DRG_GAP
+    stack_left = x              # first VCN column; the OSN band never runs left of it
 
     order = _vcn_order(vcns)
     all_sides = [_gateway_sides(v, i, order, ctx) for i, v in enumerate(vcns)]
@@ -1213,21 +1234,32 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         pw, _ = d.fit_to_children(pid, pad=PAD, min_h=max(prov_h, ref_h))
         x += pw + VCN_COLUMN_GAP
 
+    pairs = {(str(e.get("source")), str(e.get("target"))) for e in (model.get("edges") or [])}
+    if nested_hub:
+        _layout_hub(d, rid, nested_hub, vcn_y, ref_h, reg, explicit_pairs=pairs)
+
+    pending = []
+    if drgs:
+        pending = _layout_drg_column(d, rid, drgs, drg_col_x, vcn_y, ref_h, requested, reg,
+                                     d.layout_info["drg_style"])
+
+    # The Oracle Services Network panel is emitted after every other region child:
+    # under the Location Canvas it is a band that has to clear all of them.
     osn_id = None
     if osn_items:
         if ctx["locations"] == "outside":
-            # G5: a full-width band below the VCN stack, so the IGW / NAT connectors
-            # to the Internet box never have to cross it. The Service Gateway is on
-            # the bottom border facing it (_gateway_side).
-            stack_right = (x - VCN_COLUMN_GAP) if (vcn_boxes or top_services) else (PAD + VCN_MIN_W)
-            band_w = max(VCN_MIN_W, stack_right - PAD)
+            # G5: a band below the VCN stack, so the IGW / NAT connectors to the
+            # Internet box never have to cross it. The Service Gateway is on the
+            # bottom border facing it (_gateway_side). The band spans the stack and
+            # nothing else: it starts at the first VCN column, so it never runs under
+            # the DRG column, and its top clears the deepest region child already
+            # placed above it - a VCN with its bottom-border gateway captions, a DRG
+            # cluster taller than the stack, or a region-level "OCI Services" panel.
+            stack_right = (x - VCN_COLUMN_GAP) if (vcn_boxes or top_services) else (stack_left + VCN_MIN_W)
+            band_w = max(VCN_MIN_W, stack_right - stack_left)
             band_cols = max(1, min(len(osn_items), int((band_w - 2 * PAD) // COL_W) or 1))
-            # A bottom-border gateway's slot starts GW_STRADDLE above the VCN's
-            # bottom edge and its caption runs a full ICON_FOOTPRINT_H below
-            # that, so the band has to clear the deepest one.
-            overhang = (ICON_FOOTPRINT_H - GW_STRADDLE + PAD) if any(s["bottom"] for s in all_sides) else 0
-            band_y = vcn_y + ref_h + max(OSN_BAND_GAP, overhang)
-            osn_id, _, _ = _layout_osn(d, rid, osn_items, PAD, band_y, 0, reg,
+            band_y = int(max(vcn_y + ref_h, _children_bottom(d, rid)) + OSN_BAND_GAP)
+            osn_id, _, _ = _layout_osn(d, rid, osn_items, stack_left, band_y, 0, reg,
                                        min_w=band_w, cols=band_cols)
         else:
             # the VCN loop already added the trailing column gap: subtracting VCN_COLUMN_GAP
@@ -1241,15 +1273,6 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
             _name = str(_vcn.get("name") or "")
             if _name and not (_vcn.get("services") or []):
                 reg.containers.setdefault("services:%s" % _name, osn_id)
-
-    pairs = {(str(e.get("source")), str(e.get("target"))) for e in (model.get("edges") or [])}
-    if nested_hub:
-        _layout_hub(d, rid, nested_hub, vcn_y, ref_h, reg, explicit_pairs=pairs)
-
-    pending = []
-    if drgs:
-        pending = _layout_drg_column(d, rid, drgs, drg_col_x, vcn_y, ref_h, requested, reg,
-                                     d.layout_info["drg_style"])
 
     d.fit_to_children(rid, pad=PAD)
     canvas = _layout_locations(d, rid, ctx, hub if not nested_hub else None, drgs, vcn_y, ref_h,

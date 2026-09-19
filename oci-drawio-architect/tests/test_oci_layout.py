@@ -1444,5 +1444,51 @@ class GatewayEdgeTests(unittest.TestCase):
         self.assertEqual(errors_of(d), [])
 
 
+class OsnBandClearanceTests(unittest.TestCase):
+    """G5: the band clears every region child above it and never runs under the DRG column."""
+
+    def _hub_model(self, attachments):
+        return {"subject": "hub", "region": "us-ashburn-1",
+                "drgs": [{"name": "hub-drg", "address": "drg", "attachments": [
+                    {"type": "vcn", "vcn": "hub", "address": "att-%d" % i,
+                     "label": "VCN attachment\nspoke%d" % i} for i in range(attachments)]}],
+                "vcns": [{"name": "hub", "cidr": "10.0.0.0/16", "subnets": [
+                    {"name": "sn-lb", "cidr": "10.0.1.0/24", "tier": "lb", "public": True,
+                     "items": [{"icon": "load_balancer", "label": "LB", "address": "lb"}]}],
+                    "gateways": [gw("igw", "internet_gateway", "Internet\nGateway", "igw"),
+                                 gw("sgw", "service_gateway", "Service\nGateway", "sgw")]}],
+                "services": [svc("object_storage", "os")]}
+
+    def test_the_band_starts_at_the_vcn_stack_not_at_the_region_padding(self):
+        d = quiet(ol.build_diagram, self._hub_model(8))
+        vx, _vy, _vw, _vh = d.abs_bbox("vcn-hub")
+        ox, _oy, _ow, _oh = d.abs_bbox("osn")
+        self.assertEqual(ox, vx)                       # never under the DRG column on its left
+        self.assertEqual(errors_of(d), [])
+
+    def test_a_drg_column_taller_than_the_stack_pushes_the_band_down(self):
+        """A DRG cluster deeper than the tallest VCN used to be overlapped by the band."""
+        d = quiet(ol.build_diagram, self._hub_model(8))
+        _dx, dy, _dw, dh = d.abs_bbox("drgbox-drg")    # 8 attachments -> the box DRG style
+        _vx, vy, _vw, vh = d.abs_bbox("vcn-hub")
+        _ox, oy, _ow, _oh = d.abs_bbox("osn")
+        self.assertGreater(dy + dh, vy + vh)           # the DRG really is the deepest child
+        self.assertGreaterEqual(oy, dy + dh + ol.OSN_BAND_GAP)
+        self.assertEqual(errors_of(d), [])
+
+    def test_a_tall_region_services_panel_pushes_the_band_down(self):
+        model = {"subject": "two", "region": "us-ashburn-1",
+                 "vcns": [simple_vcn("a"), simple_vcn("b")],
+                 "services": [svc("buckets", "s%d" % i, regional=False) for i in range(8)]
+                             + [svc("object_storage", "reg")]}
+        d = quiet(ol.build_diagram, model)
+        _sx, sy, _sw, sh = d.abs_bbox("services")
+        _vx, vy, _vw, vh = d.abs_bbox("vcn-a")
+        _ox, oy, _ow, _oh = d.abs_bbox("osn")
+        self.assertGreater(sy + sh, vy + vh)           # the panel is deeper than the VCN stack
+        self.assertGreaterEqual(oy, sy + sh + ol.OSN_BAND_GAP)
+        self.assertEqual(errors_of(d), [])
+
+
 if __name__ == "__main__":
     unittest.main()
