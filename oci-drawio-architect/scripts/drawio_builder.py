@@ -678,6 +678,9 @@ GROUP_TYPES = (
     "region", "tenancy", "availability_domain", "fault_domain", "compartment",
     "vcn", "subnet", "services", "oracle_services_network", "onprem", "hub",
     "other", "metro_or_realm", "third_party_cloud", "internet", "drg",
+    # v1.4.0 grouping boxes: deck slide 18 "Other Grouping" (User Group, Tier)
+    # and slide 32 (the OKE cluster box drawn inside a subnet).
+    "user_group", "tier", "oke_cluster",
 )
 DRG_ICON_STEM = "networking_dynamic_routing_gateway_drg"
 
@@ -719,7 +722,7 @@ def _build_group_styles(profile: dict, font: str) -> dict:
         "compartment": (
             f"{common}rounded=0;strokeWidth=1;dashed=1;dashPattern=1 1;fillColor=none;"
             f"strokeColor={c['vcn_stroke']};fontSize={p['container_font']};fontStyle=1;"
-            f"fontColor={c['text_primary']};{left}{_CONTAINER_TAIL}"
+            f"fontColor={c['vcn_label']};{left}{_CONTAINER_TAIL}"
         ),
         "vcn": (
             f"{common}rounded=0;strokeWidth=2;dashed=1;fillColor=none;"
@@ -756,6 +759,29 @@ def _build_group_styles(profile: dict, font: str) -> dict:
             f"{common}rounded=1;arcSize=10;strokeWidth=1;dashed=1;fillColor=none;"
             f"strokeColor={c['text_primary']};fontSize=11;fontStyle=1;"
             f"fontColor={c['text_primary']};{left}{_CONTAINER_TAIL}"
+        ),
+        # Slide 18 "Other Grouping": User Group is rounded, 1pt solid Neutral 3 on
+        # Neutral 1 with a 9pt Bark top-centre label; Tier is square, 1pt dashed
+        # Neutral 3 on Air with a light label (the drawn PPTX shape is dotted with
+        # no fill - the plugin follows the printed spec, oracle-styles.md records
+        # the drift).
+        "user_group": (
+            f"{common}rounded=1;arcSize={p['arc_region']};strokeWidth=1;"
+            f"fillColor={c['region_fill']};strokeColor={c['region_stroke']};"
+            f"fontSize=11;fontStyle=0;fontColor={c['text_primary']};align=center;{_CONTAINER_TAIL}"
+        ),
+        "tier": (
+            f"{common}rounded=0;strokeWidth=1;dashed=1;fillColor={c['air']};"
+            f"strokeColor={c['region_stroke']};fontSize=11;fontStyle=0;"
+            f"fontColor={c['text_primary']};align=center;{_CONTAINER_TAIL}"
+        ),
+        # Slide 32: the Container Engine for Kubernetes box inside a subnet - dashed
+        # Sienna with the title top-CENTRE, which is what distinguishes it from the
+        # subnet's own top-left title.
+        "oke_cluster": (
+            f"{common}rounded=0;strokeWidth=1;dashed=1;fillColor=none;"
+            f"strokeColor={c['vcn_stroke']};fontSize=11;fontStyle=1;"
+            f"fontColor={c['vcn_label']};align=center;{_CONTAINER_TAIL}"
         ),
     }
     styles["hub"] = styles["onprem"]  # deprecated alias

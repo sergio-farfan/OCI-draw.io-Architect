@@ -586,6 +586,63 @@ class TestStyles(TempDirMixin, unittest.TestCase):
             self.assertEqual(tok["fontColor"], db.COLORS["vcn_label"])
         self.assertEqual(tokens(cell(d.root, v).get("style"))["strokeWidth"], "2")
 
+    def test_user_group_style_is_the_rounded_solid_other_grouping(self):
+        """Slide 18 Other Grouping: rounded, 1pt solid Neutral 3, Neutral 1 fill, Bark top-centre."""
+        d = DrawioBuilder()
+        gid = d.add_group("Administrators", 0, 0, 300, 200, group_type="user_group")
+        tok = tokens(cell(d.root, gid).get("style"))
+        self.assertEqual(tok["rounded"], "1")
+        self.assertEqual(tok["arcSize"], str(db.STYLE_PROFILES["default"]["arc_region"]))
+        self.assertEqual(tok["strokeWidth"], "1")
+        self.assertNotIn("dashed", tok)
+        self.assertEqual(tok["fillColor"], db.COLORS["region_fill"])
+        self.assertEqual(tok["strokeColor"], db.COLORS["region_stroke"])
+        self.assertEqual((tok["fontSize"], tok["fontStyle"], tok["align"]), ("11", "0", "center"))
+        self.assertEqual(tok["fontColor"], db.COLORS["text_primary"])
+        self.assertEqual(tok["ociGroup"], "user_group")
+
+    def test_tier_style_is_the_square_dashed_other_grouping(self):
+        """Slide 18 Other Grouping: square, 1pt dashed Neutral 3, Air fill, light Bark top-centre."""
+        d = DrawioBuilder()
+        gid = d.add_group("Application Tier", 0, 0, 300, 200, group_type="tier")
+        tok = tokens(cell(d.root, gid).get("style"))
+        self.assertEqual((tok["rounded"], tok["dashed"], tok["strokeWidth"]), ("0", "1", "1"))
+        self.assertEqual(tok["fillColor"], db.COLORS["air"])
+        self.assertEqual(tok["strokeColor"], db.COLORS["region_stroke"])
+        self.assertEqual((tok["fontSize"], tok["fontStyle"], tok["align"]), ("11", "0", "center"))
+        self.assertEqual(tok["ociGroup"], "tier")
+
+    def test_oke_cluster_style_is_dashed_sienna_with_a_centred_title(self):
+        """Slide 32: a dashed Sienna box inside the subnet, title top-centre (the subnet's is top-left)."""
+        d = DrawioBuilder()
+        sn = d.add_group("sn-app", 0, 0, 600, 400, group_type="subnet")
+        gid = d.add_group("Container Engine for Kubernetes Cluster", 20, 50, 400, 250,
+                          parent=sn, group_type="oke_cluster")
+        tok = tokens(cell(d.root, gid).get("style"))
+        self.assertEqual((tok["rounded"], tok["dashed"], tok["strokeWidth"]), ("0", "1", "1"))
+        self.assertEqual(tok["fillColor"], "none")
+        self.assertEqual(tok["strokeColor"], db.COLORS["vcn_stroke"])
+        self.assertEqual((tok["fontStyle"], tok["align"]), ("1", "center"))
+        self.assertEqual(tok["fontColor"], db.COLORS["vcn_label"])
+        self.assertNotIn("spacingLeft", tok)
+        self.assertEqual(tok["ociGroup"], "oke_cluster")
+        self.assertEqual(tokens(cell(d.root, sn).get("style"))["align"], "left")
+
+    def test_the_three_new_types_are_in_group_types(self):
+        for gt in ("user_group", "tier", "oke_cluster"):
+            self.assertIn(gt, db.GROUP_TYPES)
+        self.assertEqual(len(db.GROUP_TYPES), 19)
+
+    def test_compartment_label_is_sienna(self):
+        """G7 / slide 18: 'Top/Left, 9pt Bold, Sienna'. The dotted border is unchanged."""
+        d = DrawioBuilder()
+        gid = d.add_group("Network", 0, 0, 400, 300, group_type="compartment")
+        tok = tokens(cell(d.root, gid).get("style"))
+        self.assertEqual(tok["fontColor"], db.COLORS["vcn_label"])
+        self.assertEqual(tok["strokeColor"], db.COLORS["vcn_stroke"])
+        self.assertEqual((tok["dashed"], tok["dashPattern"], tok["fontStyle"]), ("1", "1 1", "1"))
+        self.assertEqual((tok["align"], tok["spacingLeft"]), ("left", "5"))
+
     def test_default_dashed_edge(self):
         style = self._edge_style("default", dashed=True)
         self.assertIn("dashPattern=6 3", style)
