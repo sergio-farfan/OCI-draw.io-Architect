@@ -186,6 +186,19 @@ class FilterModelTests(unittest.TestCase):
         self.assertGreater(report2["items_dropped"], 0)
         self.assertTrue(report)
 
+    def test_a_filtered_out_region_empties_the_location_boxes_too(self):
+        """6.5: it "either keeps or empties the model" - internet included."""
+        m = model()
+        m["internet"] = {"name": "Internet", "items": [
+            {"icon": "user", "label": "Users", "address": "usr"}]}
+        m["third_party"] = [{"name": "Other Cloud", "items": [
+            {"icon": "vm", "label": "Peer VM", "address": "x3p"}]}]
+        out, report = ov.filter_model(m, ["region=eu-frankfurt-1"])
+        self.assertEqual(addresses(out), set())
+        self.assertIsNone(out["internet"])
+        self.assertEqual(out["third_party"], [])
+        self.assertEqual(report["items_dropped"], 10)
+
     def test_structure_survives_a_predicate_that_does_not_name_it(self):
         """6.5: gateways, DRGs, attachments, subnets and VCNs are not predicated."""
         out, _ = ov.filter_model(model(), ["tag:Application=payments"])
@@ -233,6 +246,30 @@ class FilterModelTests(unittest.TestCase):
     def test_a_discovery_filter_expression_works_through_the_same_predicate(self):
         out, _ = ov.filter_model(model(), ["!discovery=heuristic"])
         self.assertEqual([e["label"] for e in out["edges"]], ["8088"])
+
+    def test_an_include_discovery_expression_prunes_edges_and_no_items(self):
+        """6.8: provenance is a property of a relationship; an item has none.
+
+        The exclude form passes whichever way the axis is wired, because an
+        item's default "association" never equals the negated value. The
+        include form is the one that used to empty the diagram.
+        """
+        for expr in ("discovery=heuristic", "discovery=config", "discovery=user"):
+            with self.subTest(expr=expr):
+                out, report = ov.filter_model(model(), [expr])
+                self.assertEqual(addresses(out), addresses(model()))
+                self.assertEqual(report["items_dropped"], 0)
+                self.assertEqual(report["items_kept"], 8)
+        kept, _ = ov.filter_model(model(), ["discovery=heuristic"])
+        self.assertEqual([e["label"] for e in kept["edges"]], ["22"])
+
+    def test_an_unknown_or_miscased_discovery_selector_is_rejected_not_silent(self):
+        """resolve_view validates each kind; the two entry points must agree."""
+        with self.assertRaises(ValueError):
+            ov.filter_model(model(), discovery="assocation")
+        out, report = ov.filter_model(model(), discovery="Association")
+        self.assertEqual([e["source"] for e in out["edges"]], ["lb"])
+        self.assertEqual(report["edges_dropped"], 1)
 
     def test_the_report_names_the_expressions_it_applied(self):
         _out, report = ov.filter_model(model(), {"include": ["vcn=vcn-app"],
@@ -282,6 +319,23 @@ class ParticipatingTests(unittest.TestCase):
         self.assertIn("broker", addresses(out))
         self.assertEqual(report["mode"], "participating")
         self.assertEqual(report["pruned_services"], 3)
+
+    def test_a_container_level_include_expression_still_prunes(self):
+        """6.6 clause 5 keeps what an expression names DIRECTLY.
+
+        Every survivor of filter_model already satisfies the include list, so
+        honouring region= / vcn= / compartment= here would keep everything and
+        turn participating mode back into "all" - the live-tenancy case, where
+        --compartment and --tag build exactly these expressions.
+        """
+        for spec in (["region=us-ashburn-1"], ["vcn=vcn-app"], ["compartment=app-prod"]):
+            with self.subTest(spec=spec):
+                out, report = ov.filter_model(model(), spec, mode="participating")
+                self.assertNotIn("logs", addresses(out))
+                self.assertNotIn("vault", addresses(out))
+                self.assertGreater(report["pruned_services"], 0)
+        out, _ = ov.filter_model(model(), ["name=Batch VM"], mode="participating")
+        self.assertIn("batch", addresses(out))          # clause 5 still wins
 
 
 class PruneDanglingTests(unittest.TestCase):
