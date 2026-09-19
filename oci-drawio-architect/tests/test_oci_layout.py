@@ -725,6 +725,18 @@ class CliTests(unittest.TestCase):
             self.assertIn('id="drgbox-drg"', text)
             self.assertIn("Attachment (structural)", text)
 
+    def test_the_five_view_flags_reach_the_recipe(self):
+        model = {"subject": "flags", "region": "us-ashburn-1", "vcns": [simple_vcn("a")]}
+        with tempfile.TemporaryDirectory() as tmp:
+            mp = Path(tmp) / "model.json"
+            mp.write_text(json.dumps(model), encoding="utf-8")
+            out = Path(tmp) / "flags.drawio"
+            rc = quiet(ol.main, [str(mp), "-o", str(out), "--locations", "nested",
+                                 "--gateway-edge", "bottom", "--subnet-label", "inline",
+                                 "--attachment-style", "dotted", "--show-compartments"])
+            self.assertEqual(rc, 0)
+            self.assertIn("sn-a (10.0.1.0/24)", out.read_text(encoding="utf-8"))
+
 
 class ExamplesTests(unittest.TestCase):
     @classmethod
@@ -993,7 +1005,8 @@ class DemoBadgeTests(unittest.TestCase):
             out = Path(tmp) / "demo.drawio"
             quiet(demo.build, out)
             text = out.read_text(encoding="utf-8")
-            self.assertEqual(text.count("ociRole=badge"), 14)          # 7 badges on each of the two layout pages
+            self.assertEqual(text.count("ociRole=badge"), 20)          # 7 badges on each of the two
+                                                                       # layout pages + 3 legend rows each
             self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
 
 
@@ -1046,9 +1059,115 @@ class NsgBadgeTests(unittest.TestCase):
                  "items": [{"icon": "vm", "label": "Ops", "address": "ops"}]}]}]}
         d = quiet(ol.build_diagram, model)
         _, _, sw, _ = d.bbox(f"subnet-{long_name}")            # _slug() turns ':' into '-'
-        title_w, _ = db.edge_label_extent(f"{long_name} (10.0.240.0/24)", d.profile["subnet_font"])
+        title_w = ol._title_width(ol._subnet_title_lines(model["vcns"][0]["subnets"][0]), d.profile["subnet_font"])
         self.assertGreaterEqual(sw - db.BADGE_RESERVE, title_w)
         self.assertEqual([m for m in d.validate() if "its badges leave" in m], [])
+
+class LabelModeTests(unittest.TestCase):
+    PUB = {"name": "sn-web", "cidr": "10.0.1.0/24", "tier": "lb", "public": True, "items": []}
+    PRIV = {"name": "sn-app", "cidr": "10.0.2.0/24", "tier": "app", "public": False, "items": []}
+    BARE = {"name": "sn-mgmt", "cidr": "10.0.3.0/24", "tier": "mgmt", "items": []}
+
+    def test_two_line_label_marks_public_and_private(self):
+        self.assertEqual(ol._subnet_label(self.PUB),
+                         'sn-web (Public)<br><font style="font-size: 10px" color="#312D2A">10.0.1.0/24</font>')
+        self.assertIn("sn-app (Private)<br>", ol._subnet_label(self.PRIV))
+
+    def test_a_subnet_without_a_public_key_carries_no_token(self):
+        label = ol._subnet_label(self.BARE)
+        self.assertTrue(label.startswith("sn-mgmt<br>"), label)
+        self.assertNotIn("Public", label)
+        self.assertNotIn("Private", label)
+
+    def test_inline_mode_reproduces_the_130_string(self):
+        self.assertEqual(ol._subnet_label(self.PUB, "inline"), "sn-web (10.0.1.0/24) - public")
+        self.assertEqual(ol._subnet_label(self.PRIV, "inline"), "sn-app (10.0.2.0/24)")
+        self.assertEqual(ol._vcn_label({"name": "hub", "cidr": "10.0.0.0/16"}, "inline"),
+                         "VCN: hub (10.0.0.0/16)")
+
+    def test_the_vcn_cidr_moves_to_line_2(self):
+        self.assertEqual(ol._vcn_label({"name": "hub", "cidr": "10.0.0.0/16"}),
+                         'VCN: hub<br><font style="font-size: 10px" color="#312D2A">10.0.0.0/16</font>')
+        self.assertEqual(ol._vcn_label({"name": "hub"}), "VCN: hub")
+
+    def test_a_badged_subnets_title_width_is_measured_per_line(self):
+        """The two-line form is narrower than the inline one, so the subnet may be narrower."""
+        d = db.DrawioBuilder()
+        badged = dict(self.PUB, route_table="rt-web", security_lists=["sl-web"])
+        self.assertLess(ol._subnet_min_w(badged, d), ol._subnet_min_w(badged, d, "inline"))
+        self.assertEqual(ol._subnet_title_lines(badged), ["sn-web (Public)", "10.0.1.0/24"])
+        self.assertEqual(ol._subnet_title_lines(badged, "inline"), ["sn-web (10.0.1.0/24) - public"])
+
+    def test_the_two_line_title_is_emitted_as_html_and_validates(self):
+        model = {"subject": "labels", "region": "us-ashburn-1", "locations": "nested",
+                 "vcns": [{"name": "hub", "cidr": "10.0.0.0/16",
+                           "subnets": [dict(self.PUB, route_table="rt-web", security_lists=["sl-web"],
+                                            items=[{"icon": "load_balancer", "label": "LB", "address": "lb"}]),
+                                       dict(self.PRIV, items=[{"icon": "vm", "label": "App", "address": "app"}])]}]}
+        d = quiet(ol.build_diagram, model)
+        self.assertIn("(Public)", d._cells["subnet-sn-web"]["label"])
+        self.assertIn("<br>", d._cells["subnet-sn-web"]["label"])
+        self.assertEqual(errors_of(d), [])
+        self.assertEqual(quiet(d.check_overlaps, True), [])
+
+    def test_the_inline_mode_flag_reaches_the_cells(self):
+        model = {"subject": "labels", "region": "us-ashburn-1", "locations": "nested",
+                 "subnet_label": "inline",
+                 "vcns": [{"name": "hub", "cidr": "10.0.0.0/16", "subnets": [
+                     dict(self.PRIV, items=[{"icon": "vm", "label": "App", "address": "app"}])]}]}
+        d = quiet(ol.build_diagram, model)
+        self.assertEqual(d._cells["subnet-sn-app"]["label"], "sn-app (10.0.2.0/24)")
+        self.assertEqual(d._cells["vcn-hub"]["label"], "VCN: hub (10.0.0.0/16)")
+
+
+class LegendRowTests(unittest.TestCase):
+    MODEL = {"subject": "legend", "region": "us-ashburn-1", "locations": "nested",
+             "vcns": [{"name": "a", "cidr": "10.0.0.0/16", "subnets": [
+                 {"name": "sn-app", "cidr": "10.0.1.0/24", "tier": "app", "public": False,
+                  "route_table": "rt-app", "security_lists": ["sl-app"],
+                  "items": [{"icon": "vm", "label": "App", "address": "app", "nsgs": ["nsg-app"]}]}]}]}
+
+    def _legend_texts(self, d):
+        gid = next(cid for cid, e in d._cells.items()
+                   if e["kind"] == "group" and e.get("label") == "Legend")
+        return [e["label"] for cid, e in d._cells.items()
+                if e["parent"] == gid and e["kind"] == "text"]
+
+    def test_badge_rows_appear_only_for_the_badges_that_exist(self):
+        d = quiet(ol.build_diagram, self.MODEL, legend=True)
+        texts = self._legend_texts(d)
+        self.assertEqual(texts[-3:], ["Route table", "Security list", "Network security group"])
+        self.assertEqual(errors_of(d), [])
+
+    def test_a_model_without_badges_keeps_the_eight_default_rows(self):
+        model = copy.deepcopy(self.MODEL)
+        sn = model["vcns"][0]["subnets"][0]
+        sn.pop("route_table"), sn.pop("security_lists"), sn["items"][0].pop("nsgs")
+        texts = self._legend_texts(quiet(ol.build_diagram, model, legend=True))
+        self.assertEqual(len(texts), 8)
+        self.assertEqual(texts[3], "Attachment (structural)")
+
+    def test_the_attachment_row_names_the_active_form(self):
+        d = quiet(ol.build_diagram, dict(self.MODEL, attachment_style="dotted"), legend=True)
+        self.assertEqual(self._legend_texts(d)[3], "Attachment / association (structural)")
+        self.assertEqual(d.attachment_style, "dotted")
+
+    def test_attachment_edges_follow_the_models_attachment_style(self):
+        model = dict(self.MODEL, attachment_style="dotted",
+                     drgs=[{"name": "drg", "address": "drg", "label": "DRG\ndrg", "attachments": [
+                         {"type": "vcn", "vcn": "a", "address": "att-a", "label": "VCN attachment\na"}]}])
+        d = quiet(ol.build_diagram, model)
+        edge = next(e for cid, e in d._cells.items() if e["kind"] == "edge" and e.get("source") == "att-a")
+        style = next(el.get("style") for el in d.root.iter("mxCell")
+                     if el.get("id") == next(cid for cid, e in d._cells.items() if e is edge))
+        self.assertIn("dashPattern=1 3", style)
+        self.assertIn("endArrow=none", style)
+
+    def test_the_build_diagram_keyword_overrides_the_model(self):
+        d = quiet(ol.build_diagram, self.MODEL, attachment_style="dotted")
+        self.assertEqual(d.attachment_style, "dotted")
+        self.assertEqual(quiet(ol.build_diagram, self.MODEL).attachment_style, "solid")
+
 
 if __name__ == "__main__":
     unittest.main()
