@@ -811,6 +811,44 @@ def _compartment_gap(chain_a: list, chain_b: list) -> int:
     return (closing + opening) * CMP_PAD + CMP_GAP
 
 
+def _compartment_column_order(tree, vcns) -> list:
+    """Spec 6.3: the VCN columns grouped by compartment, each compartment taking the
+    column order of its first member, with the compartment-less VCNs in a trailing group.
+
+    A compartment container is fitted around the columns its own VCNs occupy, so
+    members that are not contiguous would make its box swallow the columns in
+    between - an unrelated compartment, or a VCN that is in none - and every such
+    diagram would fail ``check_overlaps``. Terraform lists VCNs in an order that has
+    nothing to do with compartment membership, so the columns are regrouped here,
+    before anything is placed. The relative order of the VCNs inside one compartment,
+    and of the compartment-less ones, is preserved.
+    """
+    first = {}
+    for i, v in enumerate(vcns):
+        name = str(v.get("name") or "")
+        if name:
+            first.setdefault(name, i)
+
+    def subtree(node) -> list:
+        """The column indices of one compartment and its children, in first-member order."""
+        blocks = [(first[n], [first[n]]) for n in node["vcns"] if n in first]
+        for child in node["children"]:
+            kids = subtree(child)
+            if kids:
+                blocks.append((min(kids), kids))
+        blocks.sort(key=lambda b: b[0])
+        return [i for _key, block in blocks for i in block]
+
+    ordered, seen = [], set()
+    for node in tree:
+        for i in subtree(node):
+            if i not in seen:
+                seen.add(i)
+                ordered.append(i)
+    ordered.extend(i for i in range(len(vcns)) if i not in seen)
+    return [vcns[i] for i in ordered]
+
+
 def _layout_hub(d: DrawioBuilder, region_id, hub: dict, vcn_y, vcn_h, reg, explicit_pairs=frozenset()):
     """The v1.3.0 nested on-premises panel: a child of the region, left of the DRG column."""
     items = list(hub.get("items") or [])
@@ -1278,6 +1316,14 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         x = drg_col_x + _drg_column_width(drgs, requested) + DRG_GAP
     stack_left = x              # first VCN column; the OSN band never runs left of it
 
+    # B04 / spec 6.3: regroup the columns by compartment before anything is placed,
+    # so each compartment's members are contiguous and the compartment-less VCNs
+    # trail the boxed ones. Column indices (LPG peer sides, the rightmost-column
+    # rule of G4) are derived from the regrouped list.
+    cmp_tree = compartment_tree(model) if ctx["show_compartments"] else []
+    if cmp_tree:
+        vcns = _compartment_column_order(cmp_tree, vcns)
+
     order = _vcn_order(vcns)
     all_sides = [_gateway_sides(v, i, order, ctx) for i, v in enumerate(vcns)]
     # A top-border gateway hangs its caption above the VCN: the stack starts
@@ -1286,7 +1332,6 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     # B04: every compartment level adds a title band above and a padding left of
     # the stack; the containers are drawn after the columns, so the room has to
     # be reserved now.
-    cmp_tree = compartment_tree(model) if ctx["show_compartments"] else []
     cmp_depth = _compartment_depth(cmp_tree)
     cmp_chains = [_compartment_chain(cmp_tree, v.get("name") or "") for v in vcns]
     tenancy_wrap = bool(cmp_tree) and bool(model.get("tenancy_name"))
@@ -1335,6 +1380,10 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         x += w + (VCN_COLUMN_GAP_GW if (sides["right"] or next_left) else VCN_COLUMN_GAP)
         if cmp_depth and i + 1 < len(vcns):
             x += _compartment_gap(cmp_chains[i], cmp_chains[i + 1])
+            # leaving the boxed group for the trailing unboxed one also closes
+            # the tenancy wrapper, which pads the compartment row by TEN_PAD
+            if tenancy_wrap and bool(cmp_chains[i]) != bool(cmp_chains[i + 1]):
+                x += TEN_PAD
 
     ref_h = max((b[4] for b in vcn_boxes), default=400)
     # B04: the compartment / tenancy borders close to the right of the last VCN

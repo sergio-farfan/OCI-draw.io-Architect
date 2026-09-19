@@ -1572,6 +1572,68 @@ class CompartmentTests(unittest.TestCase):
         self.assertNotIn("tenancy", d._cells)
         self.assertNotIn("compartment-Network", d._cells)
 
+    @staticmethod
+    def _interleaved(compartments, members):
+        """Three VCN columns whose model order interleaves two compartments (a1, b1, a2)."""
+        vcns = []
+        for name in ("a1", "b1", "a2"):
+            vcn = {"name": name, "cidr": "10.0.0.0/16",
+                   "subnets": [{"name": "sn-%s" % name, "cidr": "10.0.1.0/24", "tier": "app",
+                                "items": [{"icon": "vm", "label": "VM %s" % name,
+                                           "address": "vm-%s" % name}]}]}
+            if members.get(name):
+                vcn["compartment"] = members[name]
+            vcns.append(vcn)
+        return {"subject": "landing-zone", "region": "eu-frankfurt-1",
+                "tenancy_name": "example-tenancy", "show_compartments": True,
+                "compartments": compartments, "vcns": vcns}
+
+    def test_interleaved_compartment_members_become_contiguous_columns(self):
+        """Spec 6.3: compartments take the column order of their first member.
+
+        Terraform's VCN order is orthogonal to compartment membership, so a
+        compartment whose members are not contiguous would be fitted around -
+        and would swallow - the columns in between.
+        """
+        model = self._interleaved([{"name": "CA"}, {"name": "CB"}],
+                                  {"a1": "CA", "b1": "CB", "a2": "CA"})
+        d = quiet(ol.build_diagram, model)
+        self.assertEqual(d._cells["vcn-a1"]["parent"], "compartment-CA")
+        self.assertEqual(d._cells["vcn-a2"]["parent"], "compartment-CA")
+        self.assertEqual(d._cells["vcn-b1"]["parent"], "compartment-CB")
+        xs = [d.abs_bbox("vcn-%s" % n)[0] for n in ("a1", "a2", "b1")]
+        self.assertEqual(xs, sorted(xs))
+        self.assertEqual(errors_of(d), [])
+        self.assertEqual(quiet(d.check_overlaps, True), [])
+
+    def test_a_nested_compartment_row_keeps_its_children_contiguous(self):
+        """The enclosing compartment's two children must not be split by a sibling."""
+        model = self._interleaved([{"name": "Enclosing"},
+                                   {"name": "Network", "parent": "Enclosing"},
+                                   {"name": "Other"},
+                                   {"name": "App", "parent": "Enclosing"}],
+                                  {"a1": "Network", "b1": "Other", "a2": "App"})
+        d = quiet(ol.build_diagram, model)
+        self.assertEqual(d._cells["compartment-Network"]["parent"], "compartment-Enclosing")
+        self.assertEqual(d._cells["compartment-App"]["parent"], "compartment-Enclosing")
+        self.assertEqual(d._cells["compartment-Other"]["parent"], "tenancy")
+        xs = [d.abs_bbox("vcn-%s" % n)[0] for n in ("a1", "a2", "b1")]
+        self.assertEqual(xs, sorted(xs))
+        self.assertEqual(errors_of(d), [])
+        self.assertEqual(quiet(d.check_overlaps, True), [])
+
+    def test_a_compartment_less_vcn_trails_the_boxed_columns(self):
+        """Spec 6.3: 'VCNs with no compartment go in a trailing unboxed group'."""
+        model = self._interleaved([{"name": "CA"}], {"a1": "CA", "a2": "CA"})
+        d = quiet(ol.build_diagram, model)
+        self.assertEqual(d._cells["vcn-b1"]["parent"], "region")
+        tx, _ty, tw, _th = d.abs_bbox("tenancy")
+        self.assertGreaterEqual(d.abs_bbox("vcn-b1")[0], tx + tw)
+        xs = [d.abs_bbox("vcn-%s" % n)[0] for n in ("a1", "a2", "b1")]
+        self.assertEqual(xs, sorted(xs))
+        self.assertEqual(errors_of(d), [])
+        self.assertEqual(quiet(d.check_overlaps, True), [])
+
     def test_a_cycle_in_the_compartment_list_raises(self):
         model = copy.deepcopy(LANDING_ZONE)
         model["compartments"] = [{"name": "A", "parent": "B", "vcns": ["hub"]},
