@@ -31,6 +31,18 @@ Model schema v2 (JSON-serialisable dict; every key optional except vcns/subject)
       "gateway_edge": "auto",             # auto | internet | top | bottom
       "subnet_label": "twoline",          # twoline (default; name + (Public)/(Private), CIDR
                                           # on line 2) | inline (the v1.3.0 single line)
+                                          # | name (no CIDR - the executive / application levels)
+      "purpose": null,                    # network|dataflow|security|inventory|dependency|ha
+      "detail": "network",                # executive | application | network | engineering
+      "label_mode": "network",            # minimal | network (default) | detailed
+      "label_fields": null,               # explicit caption field list; wins over label_mode
+      "label_tag_keys": [],               # which tag keys the "tags" caption field renders
+      "layers": "off",                    # off (default) | auto | [layer name]
+      "hidden_layers": [],                # layers created with visible="0"
+      "filter": {},                       # {"include": [expr], "exclude": [expr], "keep_empty": bool}
+      "mode": "all",                      # all | participating
+      "global_services": "osn",           # osn (default) | bucket (a tenancy box below the region)
+      "show_edges": true,                 # false draws no model connectors (the inventory view)
       "attachment_style": "solid",        # solid (default) | dotted
       "show_compartments": false,         # draw each compartment as a container
       "hub": {"kind": "onprem",           # onprem (default) | remote_region - selects the default title
@@ -78,6 +90,7 @@ item's icon slot. Badges have no caption; names go to the tooltip and metadata. 
 
 Usage (CLI):
     python3 oci_layout.py model.json -o out.drawio [--profile default|official|v1.0]
+                          [--purpose network|dataflow|security|inventory|dependency|ha]
                           [--legend] [--logo file] [--strict] [--render png|svg|pdf]
                           [--drg-style auto|icon|box] [--locations outside|nested]
                           [--gateway-edge auto|internet|top|bottom]
@@ -1788,9 +1801,11 @@ LEGEND_BADGE_ROWS = (("route_table", "route_table", "Route table"),
                      ("drg_route_table", "route_table", "DRG route table"))
 
 
-def _legend_entries(d: DrawioBuilder, reg: _Registry) -> list:
+def _legend_entries(d: DrawioBuilder, reg: _Registry, view=None, layers=(), hidden=(),
+                    filter_report=None) -> list:
     """The eight default rows, with the attachment row named after the active form (L3),
-    plus one badge row per badge kind the diagram actually drew."""
+    one badge row per badge kind the diagram actually drew, one row per enabled view
+    layer (6.2) and a note row for what the filter and the mode elided (6.5)."""
     attachment = ("Attachment / association (structural)" if d.attachment_style == "dotted"
                   else "Attachment (structural)")
     rows = [("edge", "data", "Data flow (protocol / port)"),
@@ -1803,6 +1818,19 @@ def _legend_entries(d: DrawioBuilder, reg: _Registry) -> list:
             ("group", "oracle_services_network", "Oracle Services Network")]
     rows.extend(("badge", icon, text) for kind, icon, text in LEGEND_BADGE_ROWS
                 if kind in reg.badge_kinds)
+    for name in layers:
+        suffix = " (hidden)" if name in set(hidden) else ""
+        rows.append(("layer", name, f"Layer: {ov.LAYER_TITLES[name]}{suffix}"))
+    report = filter_report or {}
+    expressions = list(report.get("include") or ()) + [f"!{e}" for e in report.get("exclude") or ()]
+    if expressions:
+        kept = int(report.get("items_kept") or 0)
+        total = kept + int(report.get("items_dropped") or 0)
+        rows.append(("note", "", f"Filtered: {', '.join(expressions)} "
+                                 f"({kept} of {total} resources)"))
+    pruned = int(report.get("pruned_items") or 0) + int(report.get("pruned_services") or 0)
+    if pruned:
+        rows.append(("note", "", f"Participating mode: {pruned} resource(s) not shown"))
     return rows
 
 
@@ -1813,7 +1841,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                   label_tag_keys=None, layers=None, hidden_layers=None,
                   detail=None, show_edges=None, filter_spec=None, mode=None,
                   discovery=None, annotate_discovery=None,
-                  global_services=None) -> DrawioBuilder:
+                  global_services=None, purpose=None) -> DrawioBuilder:
     """Lay out a normalized model and return the (unwritten) DrawioBuilder.
 
     Schema-1 models are migrated first (DRG hub items / drg gateways -> drgs[]);
@@ -1827,7 +1855,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     # The view is resolved from the pre-filter model (a filter is part of the
     # view, not of the infrastructure) and then reused, so the Internet box and
     # the topology are both derived from what actually survived.
-    view = ov.resolve_view(model, label_mode=label_mode, label_fields=label_fields,
+    view = ov.resolve_view(model, purpose=purpose, label_mode=label_mode, label_fields=label_fields,
                            label_tag_keys=label_tag_keys, layers=layers,
                            hidden_layers=hidden_layers, detail=detail, show_edges=show_edges,
                            subnet_label=subnet_label, show_compartments=show_compartments,
@@ -2113,7 +2141,9 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
 
     if legend:
         _, _, _, bottom = d.content_bbox()
-        d.add_legend(REGION_XY[0], bottom + GAP, entries=_legend_entries(d, reg))
+        d.add_legend(REGION_XY[0], bottom + GAP,
+                     entries=_legend_entries(d, reg, view, list(layer_ids),
+                                             view["hidden_layers"], filter_report))
 
     d.fit_page(margin=PAD)
     # 6.2 steps 3-4 (V1): the layer pass runs last and only changes parents.
@@ -2122,7 +2152,13 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
 
 
 def write_diagram(model: dict, out_path, strict=False, render_fmt=None, **opts) -> Path:
-    """Build, validate (raising on errors) and write the diagram."""
+    """Build, validate (raising on errors) and write the diagram.
+
+    ``**opts`` are ``build_diagram``'s keywords, which since 1.5.0 include the
+    view: ``purpose``, ``detail``, ``label_mode``, ``label_fields``,
+    ``label_tag_keys``, ``layers``, ``hidden_layers``, ``filter_spec``, ``mode``,
+    ``discovery``, ``annotate_discovery``, ``global_services`` and ``show_edges``.
+    """
     d = build_diagram(model, **opts)
     problems = d.validate(strict=strict)
     errors = [p for p in problems if not is_warning(p)]
@@ -2143,6 +2179,12 @@ def write_diagram(model: dict, out_path, strict=False, render_fmt=None, **opts) 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Lay out a normalized OCI model as a .drawio diagram")
     ap.add_argument("model", help="model JSON file")
+    ap.add_argument("--purpose", default=None, choices=ov.PURPOSES_ORDER,
+                    help="diagram purpose, a named composition of detail, label mode, layers, "
+                         "mode and the global bucket: network (Network topology), dataflow "
+                         "(Application / data flow), security (Security architecture), inventory "
+                         "(Resource / inventory view), dependency (Dependency / relationship "
+                         "view), ha (Deployment / high-availability architecture)")
     ap.add_argument("-o", "--out", default=None, help="output .drawio (default: <subject>_Architecture.drawio)")
     ap.add_argument("--profile", default="default", choices=("default", "official", "v1.0"))
     ap.add_argument("--legend", action="store_true")
@@ -2219,7 +2261,7 @@ def main(argv=None) -> int:
                   hidden_layers=args.hidden_layers, detail=args.detail,
                   show_edges=args.show_edges, filter_spec=args.filter, mode=args.mode,
                   discovery=args.discovery, annotate_discovery=args.annotate_discovery,
-                  global_services=args.global_services)
+                  global_services=args.global_services, purpose=args.purpose)
     return 0
 
 
