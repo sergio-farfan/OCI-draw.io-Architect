@@ -176,3 +176,25 @@ class LegendTests(unittest.TestCase):
         self.assertIsNone(ov.DETAIL_LEVELS["network"]["legend"])
         labels = [e["label"] for e in quiet(ol.build_diagram, MODEL)._cells.values()]
         self.assertNotIn("Legend", labels)
+
+    def labels(self, **kwargs):
+        return [e["label"] for e in quiet(ol.build_diagram, MODEL, **kwargs)._cells.values()]
+
+    def test_an_explicit_legend_false_beats_the_level_that_asks_for_one(self):
+        """6.1: CLI flag / kwarg -> model key -> detail -> purpose -> default."""
+        self.assertNotIn("Legend", self.labels(detail="engineering", legend=False))
+        self.assertIn("Legend", self.labels(detail="engineering", legend=True))
+
+    def test_the_kwarg_beats_a_model_key_in_both_directions(self):
+        model = dict(MODEL, legend=False)
+        self.assertNotIn("Legend", [e["label"] for e in
+                                    quiet(ol.build_diagram, model)._cells.values()])
+        self.assertIn("Legend", [e["label"] for e in
+                                 quiet(ol.build_diagram, model, legend=True)._cells.values()])
+        model_on = dict(MODEL, legend=True)
+        self.assertNotIn("Legend", [e["label"] for e in
+                                    quiet(ol.build_diagram, model_on, legend=False)._cells.values()])
+
+    def test_the_default_is_still_no_legend(self):
+        self.assertNotIn("Legend", self.labels())
+        self.assertIn("Legend", self.labels(legend=True))
