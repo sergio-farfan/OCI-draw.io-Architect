@@ -96,8 +96,11 @@ from drawio_builder import (  # noqa: E402
     escape_label, is_warning, label_lines, render, wrap_hints,
 )
 from oci_topology import (  # noqa: E402
-    HUB_TITLES, attachment_label, attachment_link_label, attachment_type, choose_drg_style,
-    classify_topology, hub_kind, is_regional, migrate_legacy_model,
+    GROUP_BOX_TYPES, HUB_TITLES, attachment_label, attachment_link_label, attachment_style_of,
+    attachment_type, badge_refs, choose_drg_style, classify_topology, compartment_tree,
+    drg_route_tables, gateway_edge_mode, hub_kind, is_onprem_item, is_regional, label_parts,
+    locations_mode, migrate_legacy_model, normalise_groups, subnet_label_mode,
+    show_compartments as show_compartments_of,
 )
 
 # ---------------------------------------------------------------------------
@@ -320,21 +323,9 @@ class _Registry:
                          f"{', '.join(sorted(self.by_address)[:12])}...)")
 
 
-def _badge_refs(value) -> list:
-    """Normalise ``str | dict | list[str | dict]`` into ``[{"name", "address"}]`` (empty for None)."""
-    if value is None or value == "" or value == []:
-        return []
-    items = value if isinstance(value, (list, tuple)) else [value]
-    out = []
-    for it in items:
-        if isinstance(it, dict):
-            name = str(it.get("name") or it.get("label") or it.get("address") or "").strip()
-            addr = it.get("address")
-        else:
-            name, addr = str(it).strip(), None
-        if name:
-            out.append({"name": name, "address": str(addr) if addr else None})
-    return out
+# The implementation lives in oci_topology so parse_terraform can validate the
+# same shapes without importing the builder; the module-local name stays.
+_badge_refs = badge_refs
 
 
 def _badge_tooltip(kind: str, refs: list) -> str:
