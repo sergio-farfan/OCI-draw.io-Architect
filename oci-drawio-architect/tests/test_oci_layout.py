@@ -1755,6 +1755,16 @@ class DrgRouteTableTests(unittest.TestCase):
         model.update(kw)
         return model
 
+    def _multi_drg_model(self, count, route_table):
+        """``count`` DRGs, each with one attachment and the same route tables."""
+        return {"subject": "drg-rt", "region": "eu-frankfurt-1", "locations": "nested",
+                "drgs": [{"name": f"drg{i}", "address": f"drg{i}", "label": f"DRG\ndrg{i}",
+                          "route_table": route_table,
+                          "attachments": [{"type": "vcn", "vcn": "hub", "address": f"att{i}",
+                                           "label": "VCN attachment\nhub"}]}
+                         for i in range(count)],
+                "vcns": [simple_vcn("hub")]}
+
     def test_one_route_table_is_one_badge_under_the_drg_caption(self):
         d = quiet(ol.build_diagram, self._model({"name": "drg-rt-vcn", "address": "drg-rt-vcn"}))
         bx, by, bw, bh = d.bbox("drg-rt")
@@ -1783,6 +1793,41 @@ class DrgRouteTableTests(unittest.TestCase):
         self.assertNotIn("drg-rt3", d._cells)
         self.assertIn("WARNING: DRG 'drg' has 3 route tables; only the first 2 are drawn",
                       d.layout_info["warnings"])
+
+    def test_a_dropped_route_table_is_named_in_the_first_badges_metadata(self):
+        """Spec 6.6: the stderr warning is gone by the time anyone reads the .drawio."""
+        d = quiet(ol.build_diagram, self._model(["a", "b", "c", "d"]))
+        meta = {el.get("id"): el.attrib for el in d.root if el.tag == "object"}
+        self.assertEqual(meta["drg-rt"].get("dropped_route_tables"), "c, d")
+        self.assertEqual(meta["drg-rt"].get("drg_route_table"), "a")
+        self.assertNotIn("dropped_route_tables", meta["drg-rt2"])
+
+    def test_no_dropped_metadata_when_every_route_table_is_drawn(self):
+        d = quiet(ol.build_diagram, self._model(["a", "b"]))
+        meta = {el.get("id"): el.attrib for el in d.root if el.tag == "object"}
+        self.assertNotIn("dropped_route_tables", meta["drg-rt"])
+        self.assertNotIn("dropped_route_tables", meta["drg-rt2"])
+
+    def test_the_region_is_floored_under_the_strip_of_the_lowest_drg(self):
+        """With 2+ DRGs the DRG column is the region's tallest child; fit_to_children
+        ignores badges, so the region has to reserve the strip's height itself."""
+        for count in (2, 3):
+            for style in ("icon", "box"):
+                with self.subTest(drgs=count, drg_style=style):
+                    d = quiet(ol.build_diagram,
+                              self._multi_drg_model(count, [{"name": "rt-vcn", "address": "rtv"},
+                                                            {"name": "rt-other", "address": "rto"}]),
+                              drg_style=style)
+                    rx, ry, rw, rh = d.abs_bbox("region")
+                    for i in range(count):
+                        for suffix in ("-rt", "-rt2"):
+                            bx, by, bw, bh = d.abs_bbox(f"drg{i}{suffix}")
+                            self.assertGreaterEqual(by, ry)
+                            self.assertLessEqual(by + bh, ry + rh)
+                            self.assertGreaterEqual(bx, rx)
+                            self.assertLessEqual(bx + bw, rx + rw)
+                    self.assertEqual(errors_of(d), [])
+                    self.assertEqual(quiet(d.check_overlaps, True), [])
 
     def test_the_badge_is_hosted_by_the_drg_and_carries_the_names_in_its_tooltip(self):
         d = quiet(ol.build_diagram, self._model({"name": "drg-rt-vcn", "address": "drg-rt-vcn"}))

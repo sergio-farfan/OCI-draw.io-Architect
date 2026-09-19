@@ -1217,12 +1217,15 @@ def _drg_route_table_badges(d: DrawioBuilder, parent, did, name: str, refs: list
 
     Oracle creates two default DRG route tables - one for VCN attachments and
     one for every other attachment (managingDRGs.htm) - and a hub-and-spoke
-    diagram routinely shows both. A third is dropped with a warning.
+    diagram routinely shows both. A third is dropped with a warning and named
+    in the first badge's ``dropped_route_tables`` metadata (spec 6.6), so the
+    loss is still visible in the .drawio long after the stderr line is gone.
     """
     if not refs:
         return []
     drawn = refs[:DRG_RT_MAX]
-    if len(refs) > DRG_RT_MAX:
+    dropped = [r["name"] for r in refs[DRG_RT_MAX:]]
+    if dropped:
         message = (f"WARNING: DRG {name!r} has {len(refs)} route tables; "
                    f"only the first {DRG_RT_MAX} are drawn")
         if message not in warnings:
@@ -1233,10 +1236,13 @@ def _drg_route_table_badges(d: DrawioBuilder, parent, did, name: str, refs: list
     cy = slot_y + ICON_FOOTPRINT_H + DRG_RT_GAP + BADGE_SIZE / 2
     ids = []
     for i, ref in enumerate(drawn):
+        meta = {"drg_route_table": ref["name"]}
+        if i == 0 and dropped:
+            meta["dropped_route_tables"] = ", ".join(dropped)
         bid = d.add_badge("route_table", cx0 + i * (BADGE_SIZE + BADGE_GAP), cy, parent=parent,
                           host=did, key=f"{key}-rt" if i == 0 else f"{key}-rt{i + 1}",
                           tooltip=_badge_tooltip("DRG route table", [ref]),
-                          metadata={"drg_route_table": ref["name"]})
+                          metadata=meta)
         _register_badge(reg, [ref], bid)
         reg.badge_kinds.add("drg_route_table")
         ids.append(bid)
@@ -1247,13 +1253,18 @@ def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_
                        style_out, warnings=None) -> list:
     """DRG icon(s) with their attachment boxes at region level, centred on the VCN stack.
 
-    Returns the pending attachment connectors: {"source", "vcn", "target", "label", "key"}.
+    Returns ``(pending, rt_bottom)``: the pending attachment connectors
+    ({"source", "vcn", "target", "label", "key"}) and the bottom edge, in the
+    region's own coordinates, of the lowest route-table badge strip (0.0 when
+    no DRG declares one). ``fit_to_children`` ignores badges on purpose, so the
+    caller has to floor the region under the strip itself.
     """
     clusters = [(drg, _drg_style_for(drg, requested)) for drg in drgs]
     geoms = [_drg_cluster_geometry(drg, style) for drg, style in clusters]
     total_h = sum(g["cluster_h"] for g in geoms) + DRG_CLUSTER_GAP * (len(geoms) - 1)
     y = max(stack_y, int(round((stack_y + (stack_h - total_h) / 2) / 10.0) * 10))
     pending = []
+    rt_bottom = 0.0
     for idx, ((drg, style), g) in enumerate(zip(clusters, geoms)):
         name = _drg_display_name(drg, idx)
         addr = str(drg.get("address") or f"drg:{name}")
@@ -1276,6 +1287,10 @@ def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_
         reg.containers[f"drg:{name}"] = did
         _drg_route_table_badges(d, parent, did, name, g["rt"], slot_x, slot_y, addr, reg,
                                 warnings if warnings is not None else [])
+        if g["rt"]:
+            # slot_y is relative to the box group in box style, to the region otherwise
+            rt_bottom = max(rt_bottom, (y if style == "box" else 0) + slot_y
+                            + ICON_FOOTPRINT_H + DRG_RT_GAP + BADGE_SIZE)
         for side, atts in (("right", g["right"]), ("left", g["left"])):
             if not atts:
                 continue
@@ -1304,7 +1319,7 @@ def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_
             g["cluster_h"] = max(g["cluster_h"], box_h)   # keep the stack pitch honest
         style_out[addr] = style
         y += g["cluster_h"] + DRG_CLUSTER_GAP
-    return pending
+    return pending, rt_bottom
 
 
 def _layout_compartments(d: DrawioBuilder, rid, model: dict, member_cells: dict, reg) -> dict:
@@ -1546,9 +1561,11 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
         _layout_hub(d, rid, nested_hub, vcn_y, ref_h, reg, explicit_pairs=pairs)
 
     pending = []
+    drg_rt_bottom = 0.0
     if drgs:
-        pending = _layout_drg_column(d, rid, drgs, drg_col_x, vcn_y, ref_h, requested, reg,
-                                     d.layout_info["drg_style"], d.layout_info["warnings"])
+        pending, drg_rt_bottom = _layout_drg_column(
+            d, rid, drgs, drg_col_x, vcn_y, ref_h, requested, reg,
+            d.layout_info["drg_style"], d.layout_info["warnings"])
 
     # The Oracle Services Network panel is emitted after every other region child:
     # under the Location Canvas it is a band that has to clear all of them.
@@ -1585,7 +1602,11 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     if cmp_depth:
         d.layout_info["compartments"] = _layout_compartments(d, rid, model, member_cells, reg)
 
-    d.fit_to_children(rid, pad=PAD)
+    # B09: the DRG route-table strip is a badge, and fit_to_children ignores
+    # badges, so a DRG column that is the region's tallest child would leave the
+    # strip hanging across the region border. Floor the region under it.
+    d.fit_to_children(rid, pad=PAD,
+                      min_h=(drg_rt_bottom + PAD) if drg_rt_bottom else None)
     canvas = _layout_locations(d, rid, ctx, hub if not nested_hub else None, drgs, vcn_y, ref_h,
                                reg, explicit_pairs=pairs)
     d.layout_info["canvas"] = canvas
