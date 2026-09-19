@@ -275,6 +275,12 @@ LB_CHILD_TYPES = LB_BACKEND_TYPES | LB_LISTENER_TYPES | frozenset({
 })
 OKE_CLUSTER_TYPE = "oci_containerengine_cluster"
 OKE_NODE_POOL_TYPE = "oci_containerengine_node_pool"
+# Icon columns oci_layout gives a subnet grid (two per row, a data-tier subnet
+# stretched to at most five). A groups[] box spans whole rows of that grid, so
+# the parser needs the number to order the members it encloses - see
+# _group_grid_cols / _row_block_order.
+GROUP_GRID_COLS = 2
+GROUP_GRID_DATA_COLS = 5
 COMPUTE_TYPES = frozenset({"oci_core_instance", "oci_containerengine_node_pool", "oci_core_instance_pool"})
 DB_PORTS: Dict[str, str] = {
     "oci_database_autonomous_database": "1522",
@@ -709,11 +715,17 @@ def _entries(value) -> list:
 
 
 def model_addresses(model: dict) -> Iterator[str]:
-    """Yield every address in the model (containers, items, gateways, hub items, DRGs)."""
-    hub = model.get("hub") if isinstance(model.get("hub"), dict) else {}
-    for item in _entries(hub.get("items")):
-        if _addr(item):
-            yield item["address"]
+    """Yield every address in the model (containers, items, gateways, location items, DRGs).
+
+    ``internet.items`` and ``third_party[].items`` use the same item shape as
+    ``hub.items`` (spec section 5), so they are addresses like any other: an
+    edge may terminate on one, and the duplicate-address rule - the safety net
+    against two cells claiming one draw.io id - has to see them.
+    """
+    for box in [model.get("hub"), model.get("internet")] + _entries(model.get("third_party")):
+        for item in _entries(box.get("items") if isinstance(box, dict) else None):
+            if _addr(item):
+                yield item["address"]
     for drg in _entries(model.get("drgs")):
         if _addr(drg):
             yield drg["address"]
@@ -1313,6 +1325,43 @@ def _with_regional(item: dict) -> dict:
     return item
 
 
+def _group_grid_cols(subnet: dict, n_items: int) -> int:
+    """How many icon columns ``oci_layout`` will give this subnet's grid.
+
+    A tier subnet is laid out two icons per row; a data-tier subnet is stretched
+    to the width of the rows above it, up to five. Kept here rather than
+    imported: the parser must not depend on the layout module.
+    """
+    widest = GROUP_GRID_DATA_COLS if subnet.get("tier") == "data" else GROUP_GRID_COLS
+    return max(1, min(widest, n_items))
+
+
+def _row_block_order(items: List[dict], members: List[str], cols: int) -> Optional[List[dict]]:
+    """``items`` reordered so ``members`` lead the grid and fill whole rows, else None.
+
+    A ``groups[]`` box is fitted to the bounding box of its members and then
+    inflated by its title band, so it can only be drawn over the TOP rows of
+    the grid - the subnet reserves the band there - and only over rows it fills
+    completely: a free slot in one of those rows is a sibling icon the box
+    would swallow, which ``build_diagram`` refuses (spec section 6.5). The
+    members therefore go first, and either they are the subnet's only items or
+    their count is a multiple of ``cols``; anything else has no legal order.
+    """
+    by_address = {}
+    for item in items:
+        addr = item.get("address")
+        if isinstance(addr, str):
+            by_address.setdefault(addr, item)
+    wanted = [a for a in dict.fromkeys(members) if isinstance(a, str)]
+    inside = [by_address[a] for a in wanted if a in by_address]
+    outside = [i for i in items if i.get("address") not in set(wanted)]
+    if len(inside) != len(wanted) or len(inside) + len(outside) != len(items):
+        return None                       # a member that is not an item of this subnet
+    if outside and len(inside) % cols:
+        return None
+    return inside + outside
+
+
 class ModelBuilder:
     """Turn a list of ``Res`` into the MODEL dict."""
 
@@ -1562,7 +1611,17 @@ class ModelBuilder:
             entry.setdefault("route_table", []).append(badge_ref(r.label("DRG route table"), r.address))
 
     def _build_oke_groups(self) -> None:
-        """A cluster and the node pools sharing its subnet become one ``oke_cluster`` group box."""
+        """A cluster and the node pools sharing its subnet become one ``oke_cluster`` group box.
+
+        The subnet's items are reordered so every box fills whole rows of the
+        icon grid: a box drawn around members scattered through the grid would
+        enclose a sibling icon, which ``build_diagram`` refuses (spec section
+        6.5). When no such order exists - members that fill no whole row beside
+        other icons - the subnet keeps its box-free 1.3.0 shape and says so.
+        One box per subnet: two boxes stacked in one icon grid always collide
+        (the lower one's title band reaches into the upper one).
+        """
+        pending: Dict[str, List[tuple]] = {}
         for r in self.resources:
             if r.rtype != OKE_CLUSTER_TYPE or r.address not in self.item_place:
                 continue
@@ -1581,7 +1640,20 @@ class ModelBuilder:
             if len(members) < 2:
                 continue
             label = self.item_index[r.address]["label"].split("\n")[0]
+            pending.setdefault(subnet_addr, []).append((r.address, label, members))
+        for subnet_addr, entries in pending.items():
             subnet = self.subnet_by_addr[subnet_addr]
+            items = subnet.get("items") or []
+            addr, label, members = entries[0]
+            for other, _label, _members in entries[1:]:
+                self.warn(f"{other}: {subnet['name']} already holds the OKE box of {label}; "
+                          f"a subnet carries one grouping box, so this cluster stays a plain icon")
+            order = _row_block_order(items, members, _group_grid_cols(subnet, len(items)))
+            if order is None:
+                self.warn(f"{addr}: the cluster and its node pools fill no whole row of "
+                          f"{subnet['name']}'s icon grid beside its other items; no OKE box")
+                continue
+            subnet["items"] = order
             subnet.setdefault("groups", []).append(
                 new_group("oke_cluster", label, members, key=f"oke:{label}"))
 
