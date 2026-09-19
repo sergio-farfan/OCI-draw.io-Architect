@@ -118,6 +118,7 @@ ENTITY_TF_TYPES: Dict[str, str] = {
     "servicegateway": "oci_core_service_gateway",
     "drg": "oci_core_drg",
     "drgattachment": "oci_core_drg_attachment",
+    "drgroutetable": pt.DRG_ROUTE_TABLE_TYPE,
     "localpeeringgateway": "oci_core_local_peering_gateway",
     "remotepeeringconnection": "oci_core_remote_peering_connection",
     "cpe": "oci_core_cpe",
@@ -170,6 +171,7 @@ _SCALAR_FIELDS = (
 _REF_FIELDS = (
     ("subnet_id", "subnet_id"), ("subnet_ids", "subnet_ids"), ("target_subnet_id", "target_subnet_id"),
     ("vcn_id", "vcn_id"), ("compartment_id", "compartment_id"), ("drg_id", "drg_id"), ("cpe_id", "cpe_id"),
+    ("drg_route_table_id", "drg_route_table_id"), ("cluster_id", "cluster_id"),
     ("gateway_id", "gateway_id"), ("route_table_id", "route_table_id"), ("network_entity_id", "network_entity_id"),
     ("peer_id", "peer_id"),
     ("security_list_ids", "security_list_ids"), ("nsg_ids", "nsg_ids"),

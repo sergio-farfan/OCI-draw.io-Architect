@@ -241,6 +241,54 @@ class HclThreeTierTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# HCL mode: landing-zone fixture (compartments, OKE, DRG route tables)
+# ---------------------------------------------------------------------------
+
+class HclLandingZoneTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.model = pt.parse_terraform_dir(FIXTURES / "landing_zone")
+        cls.vcns = {v["name"]: v for v in cls.model["vcns"]}
+
+    def test_valid_and_two_compartments(self):
+        self.assertEqual(pt.validate_model(self.model, BUILDER_ICONS), [])
+        self.assertEqual(self.model["compartments"], ["enclosing", "network"])
+        self.assertEqual({v["name"]: v["compartment"] for v in self.model["vcns"]},
+                         {"vcn-hub": "network", "vcn-spoke": "network"})
+
+    def test_public_and_private_subnets(self):
+        web = find_subnet(self.vcns["vcn-hub"], "sn-web")
+        app = find_subnet(self.vcns["vcn-spoke"], "sn-app")
+        self.assertEqual((web["public"], web["tier"], web["cidr"]), (True, "lb", "10.0.0.0/24"))
+        self.assertEqual((app["public"], app["tier"], app["cidr"]), (False, "app", "10.1.1.0/24"))
+
+    def test_oke_cluster_and_its_node_pools_become_one_group_box(self):
+        app = find_subnet(self.vcns["vcn-spoke"], "sn-app")
+        self.assertEqual(app["groups"], [{
+            "type": "oke_cluster", "label": "oke-main", "key": "oke:oke-main",
+            "items": ["oci_containerengine_cluster.main",
+                      "oci_containerengine_node_pool.system",
+                      "oci_containerengine_node_pool.apps"]}])
+        self.assertNotIn("groups", find_subnet(self.vcns["vcn-hub"], "sn-web"))
+        self.assertEqual({i["address"] for i in app["items"]}, set(app["groups"][0]["items"]))
+
+    def test_both_drg_route_tables_land_on_the_drg_in_address_order(self):
+        self.assertEqual(self.model["drgs"][0]["route_table"], [
+            {"name": "drg-rt-other", "address": "oci_core_drg_route_table.other"},
+            {"name": "drg-rt-vcn", "address": "oci_core_drg_route_table.vcn"}])
+        self.assertEqual(len(self.model["drgs"][0]["route_table"]), 2)   # both fit DRG_RT_MAX
+
+    def test_the_internet_box_is_synthesised_from_the_igw(self):
+        self.assertEqual(self.model["internet"], {"name": "Internet", "items": []})
+        self.assertEqual(self.model["third_party"], [])
+
+    def test_summarise_counts_compartments_and_group_boxes(self):
+        line = pt.summarise(self.model)
+        self.assertIn("2 compartment(s)", line)
+        self.assertIn("1 group box(es)", line)
+
+
+# ---------------------------------------------------------------------------
 # HCL mode: tfvars-driven VCN map
 # ---------------------------------------------------------------------------
 
@@ -897,6 +945,100 @@ class HelperTests(unittest.TestCase):
         self.assertIn("is not a VCN name", joined)
         self.assertIn("drg_style", joined)
         self.assertEqual(pt.validate_model([]), ["model: expected dict, got list"])
+
+    def test_validate_model_checks_the_view_keys(self):
+        model = pt.parse_terraform_dir(FIXTURES / "three_tier")
+        for key, good, bad in (("locations", "nested", "sideways"),
+                               ("gateway_edge", "top", "diagonal"),
+                               ("subnet_label", "inline", "threeline"),
+                               ("attachment_style", "dotted", "wavy")):
+            with self.subTest(key=key):
+                model[key] = good
+                self.assertEqual(pt.validate_model(model), [], key)
+                model[key] = bad
+                self.assertTrue(any(p.startswith(f"{key}:") for p in pt.validate_model(model)), key)
+                del model[key]
+        model["show_compartments"] = True
+        self.assertEqual(pt.validate_model(model), [])
+        model["show_compartments"] = "yes"
+        self.assertIn("show_compartments: expected bool, got str", pt.validate_model(model))
+        del model["show_compartments"]
+        model["vcns"][0]["gateways"][0]["side"] = "top"
+        self.assertEqual(pt.validate_model(model), [])
+        model["vcns"][0]["gateways"][0]["side"] = "up"
+        self.assertTrue(any(".side: 'up' not in" in p for p in pt.validate_model(model)))
+
+    def test_validate_model_accepts_both_compartment_forms_mixed(self):
+        model = pt.parse_terraform_dir(FIXTURES / "three_tier")
+        model["compartments"] = ["shop-prod", {"name": "Network", "parent": "Enclosing",
+                                               "vcns": ["vcn-shop"]},
+                                 {"name": "Enclosing", "parent": None}]
+        self.assertEqual(pt.validate_model(model), [])
+        model["compartments"] = [{"name": 7}, {"name": "ok", "vcns": [3]}, 9]
+        problems = pt.validate_model(model)
+        self.assertIn("compartments[0].name: expected str, got int", problems)
+        self.assertIn("compartments[1].vcns[0]: expected str, got int", problems)
+        self.assertIn("compartments[2]: expected str, got int", problems)
+
+    def test_validate_model_checks_the_location_boxes_and_the_drg_route_table(self):
+        model = pt.parse_terraform_dir(FIXTURES / "three_tier")
+        model["internet"] = {"name": "Internet", "items": [
+            pt.new_hub_item("user", "Customers", "internet", "internet.users")]}
+        model["third_party"] = [{"name": "3rd Party Cloud", "items": []}]
+        model["drgs"][0]["route_table"] = "drg-rt-vcn"
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+        model["drgs"][0]["route_table"] = [{"name": "a", "address": None}, "b"]
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+        model["internet"] = 7
+        model["third_party"] = [{"items": "no"}]
+        model["drgs"][0]["route_table"] = [{"name": 5}]
+        problems = pt.validate_model(model, BUILDER_ICONS)
+        self.assertIn("internet: expected dict, got int", problems)
+        self.assertIn("third_party[0].items: expected list, got str", problems)
+        self.assertIn("drgs[0].route_table[0].name: expected str, got int", problems)
+
+    def test_validate_model_checks_the_group_boxes(self):
+        model = pt.parse_terraform_dir(FIXTURES / "landing_zone")
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+        vcn = next(v for v in model["vcns"] if v["name"] == "vcn-spoke")
+        # a VCN group lists SUBNETS of that VCN, not VCN names (spec section 5)
+        vcn["groups"] = [pt.new_group("tier", "Application Tier", ["sn-app"], scope="vcn")]
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+        subnet = find_subnet(vcn, "sn-app")
+        subnet["groups"][0]["type"] = "kubernetes"
+        subnet["groups"][0]["items"] = ["not-an-address"]
+        subnet["groups"][0]["key"] = 7
+        vcn["groups"][0]["subnets"] = ["no-such-subnet"]
+        problems = pt.validate_model(model, BUILDER_ICONS)
+        joined = "\n".join(problems)
+        self.assertIn("groups[0].type: 'kubernetes' not in", joined)
+        self.assertIn("groups[0].items[0]: 'not-an-address' is not an item of this subnet", joined)
+        self.assertIn("groups[0].key: expected", joined)
+        self.assertIn("got int", joined)
+        self.assertIn("groups[0].subnets[0]: 'no-such-subnet' is not a subnet of this VCN", joined)
+
+    def test_an_edge_may_terminate_on_a_group_key(self):
+        """G8 / decision 9: a groups[] key is a legal endpoint although it is not an address."""
+        model = pt.parse_terraform_dir(FIXTURES / "landing_zone")
+        vcn = next(v for v in model["vcns"] if v["name"] == "vcn-spoke")
+        subnet = find_subnet(vcn, "sn-app")
+        self.assertEqual(subnet["groups"][0]["key"], "oke:oke-main")
+        model["edges"].append({"source": subnet["items"][0]["address"], "target": "oke:oke-main",
+                               "label": "443", "kind": "data", "inferred": False})
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+        idx = len(model["edges"]) - 1
+        model["edges"][idx]["target"] = "no-such-box"
+        self.assertIn(f"edges[{idx}].target: 'no-such-box' is not an address in the model",
+                      pt.validate_model(model, BUILDER_ICONS))
+
+    def test_new_group_builds_both_scopes(self):
+        self.assertEqual(pt.new_group("oke_cluster", "oke-main", ["a", "b"], key="oke:oke-main"),
+                         {"type": "oke_cluster", "label": "oke-main", "items": ["a", "b"],
+                          "key": "oke:oke-main"})
+        self.assertEqual(pt.new_group("tier", "App", ["vcn-a"], scope="vcn"),
+                         {"type": "tier", "label": "App", "subnets": ["vcn-a"], "key": None})
+        with self.assertRaises(ValueError):
+            pt.new_group("tier", "App", [], scope="region")
 
     def test_validate_model_reports_bad_container_types_instead_of_raising(self):
         """A41: model_addresses() must not walk drgs/vcns before their types are checked."""
