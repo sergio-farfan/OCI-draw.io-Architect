@@ -136,6 +136,7 @@ API summary:
 | `append_pages(other)` | Append another builder's pages as read-only (deep-copied) |
 | `fit_to_children(cid)` / `resize(cid, ...)` / `fit_page()` | Size containers and the page from content |
 | `validate(strict)` / `check_overlaps(strict)` | Problem lists; call before `write()` |
+| `layout_info` | Recipe metadata dict (`topology`, `warnings`, `drg_style`); empty unless `oci_layout.build_diagram()` filled it |
 | `write(path)` / `render(path, fmt)` | Output `.drawio`; export via draw.io desktop |
 | `add_icons_to_map(dict)` / `set_icon_dir(path)` | Extend `ICON_MAP`; override the icon directory |
 

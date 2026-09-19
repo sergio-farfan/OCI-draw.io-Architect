@@ -1514,6 +1514,9 @@ class DrawioBuilder:
         self._pending_routes = []
         self._pages = []
         self._page_idx = -1
+        # Filled by oci_layout.build_diagram(): {"topology", "warnings", "drg_style"}.
+        # Empty for a hand-built document.
+        self.layout_info = {}
         self.mxfile = ET.Element("mxfile", host="Python", type="device", compressed="false")
         self.add_page(page_name, width, height)
 

@@ -1988,6 +1988,9 @@ class TestModuleCompat(unittest.TestCase):
         self.assertEqual(db.ICON_FOOTPRINT_H, db.ICON_H + db.LABEL_GAP + db.LABEL_H)
         self.assertEqual(db.ICON_FOOTPRINT_H, 142)
 
+    def test_layout_info_is_declared_and_empty_by_default(self):
+        self.assertEqual(DrawioBuilder().layout_info, {})
+
     def test_group_styles_module_view_matches_default_builder(self):
         d = DrawioBuilder()
         for gt in db.GROUP_TYPES:
