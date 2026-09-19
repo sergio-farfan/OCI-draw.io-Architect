@@ -808,14 +808,15 @@ class ExamplesTests(unittest.TestCase):
         self.assertEqual(sorted(c for c, e in d._cells.items() if e.get("badge")),
                          ["adb-nsg", "app-vm-nsg", "lb-nsg", "worker-vm-nsg"])
 
-    def test_demo_builds_four_pages_and_passes_the_gate(self):
+    def test_demo_builds_six_pages_and_passes_the_gate(self):
         import check_overlaps
         import generate_demo_diagram as demo
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "demo.drawio"
             quiet(demo.build, out)
             text = out.read_text(encoding="utf-8")
-            self.assertEqual(text.count("<diagram "), 4)
+            # 1.5.0 added the executive and engineering view pages (spec 10)
+            self.assertEqual(text.count("<diagram "), 6)
             self.assertIn('id="drgbox-drg"', text)                  # page 2: box style
             self.assertIn("Attachment (structural)", text)          # legend row
             self.assertIn("Oracle Services Network", text)
@@ -1069,10 +1070,12 @@ class DemoBadgeTests(unittest.TestCase):
             out = Path(tmp) / "demo.drawio"
             quiet(demo.build, out)
             text = out.read_text(encoding="utf-8")
-            # 7 subnet / NSG badges on each of the two DEMO_MODEL pages, the 2 DRG
-            # route-table badges on page 3, and the legend badge rows Task 2 added
-            # (3 + 3 on pages 1-2, 1 on page 3): 14 + 2 + 7
-            self.assertEqual(text.count("ociRole=badge"), 23)
+            # 7 subnet / NSG badges on each of the three pages that draw them
+            # (1 Architecture, 2 DRG as a box, 5 Engineering detail), the 2 DRG
+            # route-table badges on page 3, and the legend badge rows (3 on each
+            # of those three pages, 1 on page 3): 21 + 2 + 10. Page 4 draws none -
+            # the executive detail level gates the badges off.
+            self.assertEqual(text.count("ociRole=badge"), 33)
             self.assertEqual(quiet(check_overlaps.main, [str(out)]), 0)
 
 

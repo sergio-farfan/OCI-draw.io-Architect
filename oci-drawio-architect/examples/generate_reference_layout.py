@@ -17,6 +17,13 @@ gap, the NAT Gateway faces the Internet box on the VCN's right border and the
 Service Gateway faces the Oracle Services Network band below the VCN. Add
 "locations": "nested" to the model for the 1.3.0 geometry.
 
+Since 1.5.0 the sample keeps its addresses and ports in ``metadata``
+(``private_ip``, ``ports``, ``shape``, ``availability_domain``, ``fault_domain``)
+rather than baked into the caption strings, so it exercises the caption renderer
+of the default ``label_mode: "network"`` instead of bypassing it. Where an
+address is already inside a multi-line authored caption it stays there and the
+metadata is provenance: the renderer never repeats a value it can already see.
+
 Usage:
     python3 generate_reference_layout.py [output.drawio] [--render]
 """
@@ -53,29 +60,38 @@ MODEL = {
         "cidr": "10.0.0.0/16",
         "subnets": [
             {"name": "sn-priv-lb", "cidr": "10.0.0.0/24", "tier": "lb", "items": [
-                {"icon": "load_balancer", "label": "Load Balancer\n10.0.0.23", "address": "lb",
-                 "metadata": {"ip": "10.0.0.23"}, "tooltip": "Private load balancer",
-                 "nsgs": ["nsg-priv-lb"]},
+                {"icon": "load_balancer", "label": "Load Balancer", "address": "lb",
+                 "metadata": {"private_ip": "10.0.0.23", "ports": "HTTPS/443"},
+                 "tooltip": "Private load balancer", "nsgs": ["nsg-priv-lb"]},
                 {"icon": "certificates", "label": "SSL Certificate\n*.internal...", "address": "cert"},
                 {"icon": "waf", "label": "OCI Edge WAF", "address": "waf"},
             ]},
             {"name": "sn-priv-app", "cidr": "10.0.1.0/24", "tier": "app", "items": [
                 {"icon": "vm", "label": "App VM\n10.0.1.251\n16 OCPU / 96 GB", "address": "app-vm",
+                 "metadata": {"private_ip": "10.0.1.251", "shape": "VM.Standard.E5.Flex",
+                              "availability_domain": "Uocm:US-ASHBURN-AD-1",
+                              "fault_domain": "FAULT-DOMAIN-1"},
                  "nsgs": ["nsg-priv-app"]},
                 {"icon": "functions", "label": "Functions App", "address": "fn"},
                 {"icon": "block_storage", "label": "Block Volume\n500 GB", "address": "bv-app"},
             ]},
             {"name": "sn-priv-workers", "cidr": "10.0.2.0/24", "tier": "app", "items": [
                 {"icon": "vm", "label": "Worker VM\n10.0.2.72\n8 OCPU / 64 GB", "address": "worker-vm",
+                 "metadata": {"private_ip": "10.0.2.72", "shape": "VM.Standard.E5.Flex",
+                              "availability_domain": "Uocm:US-ASHBURN-AD-2",
+                              "fault_domain": "FAULT-DOMAIN-2"},
                  "nsgs": ["nsg-priv-workers"]},
                 {"icon": "block_storage", "label": "Block Volume\n300 GB", "address": "bv-worker"},
             ]},
             {"name": "sn-priv-data", "cidr": "10.0.3.0/24", "tier": "data", "items": [
                 {"icon": "autonomous_db", "label": "ADB prod\napp-db\n16 ECPU / 4 TB", "address": "adb",
+                 "metadata": {"ports": "1522", "db_name": "app-db"},
                  "nsgs": ["nsg-priv-data (21 rules)"]},
-                {"icon": "nosql", "label": "Redis\n10.0.3.186", "address": "redis"},
+                {"icon": "nosql", "label": "Redis", "address": "redis",
+                 "metadata": {"private_ip": "10.0.3.186"}},
                 {"icon": "big_data", "label": "OAC\napp-oac\n1 OLPU", "address": "oac"},
-                {"icon": "data_science", "label": "PAC\n10.0.3.99", "address": "pac"},
+                {"icon": "data_science", "label": "PAC", "address": "pac",
+                 "metadata": {"private_ip": "10.0.3.99"}},
                 {"icon": "data_science", "label": "AIDP\napp-oracle\n-mcp-aidp", "address": "aidp"},
                 {"icon": "ai", "label": "GenAI\ncohere.embed\n-multilingual-v3", "address": "genai"},
                 {"icon": "vault", "label": "Vault\n+ Master Key\n+ 4 Secrets", "address": "vault"},
