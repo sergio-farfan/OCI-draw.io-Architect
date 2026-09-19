@@ -194,6 +194,11 @@ ATT_FONT_SIZE = LABEL_FONT_SIZE  # BOX_STYLE font size (label_lines / height est
 ATT_TEXT_PAD = 4                 # text inset each side of an attachment box
 DRG_CLUSTER_GAP = 40             # between stacked DRG clusters
 
+# B05 / B06 / G6: one grouping mechanism - a box around named items in a
+# subnet (the slide-32 OKE cluster) or around whole subnet rows in a VCN.
+GRP_PAD = 15                     # padding left / right / below the members
+GRP_TITLE_H = 30                 # title band above them (top-centre label)
+
 # B04 / L2: compartment containers (opt-in) and the tenancy wrapper.
 CMP_PAD = 30                     # compartment inner padding around its VCN columns
 CMP_TITLE_H = 40                 # compartment title band above the first VCN
@@ -598,13 +603,74 @@ def _subnet_min_w(subnet: dict, d: DrawioBuilder, mode: str = "twoline") -> int:
     return int(math.ceil((tw + SUBNET_TITLE_PAD + BADGE_RESERVE) / 10.0) * 10)
 
 
+def _layout_group_boxes(d: DrawioBuilder, parent_id, entries, members: dict, reg) -> list:
+    """G6 / G8: one container per ``groups[]`` entry, fitted to its members.
+
+    The members are re-parented into the box (with the badges that decorate
+    them), so the validator walks the true chain and the lattice router meets
+    the box exactly as it meets a VCN or a subnet (decision 9). The box's id is
+    the entry's ``key``, so an edge may terminate on it (slide 32: the load
+    balancer connects to the OKE box, not to an icon inside it).
+    """
+    out = []
+    for entry in entries:
+        ids = []
+        for name in entry["members"]:
+            cid = members.get(str(name))
+            if cid is None:
+                raise ValueError(
+                    f"groups[] box {entry['label']!r}: {str(name)!r} is not a member of this "
+                    f"container (known: {', '.join(sorted(members)) or 'none'})")
+            ids.append(cid)
+        x0, y0, x1, y1 = _union_box(d, ids)
+        # G8: members listed non-contiguously would draw a box straight over the
+        # sibling between them. The gate would report that as a sibling OVERLAP
+        # far from its cause, so refuse it here with the model-level reason.
+        bx0, by0, bx1, by1 = x0 - GRP_PAD, y0 - GRP_TITLE_H, x1 + GRP_PAD, y1 + GRP_PAD
+        for oid, oe in d._cells.items():
+            if (oid in ids or oe.get("badge") or oe["parent"] != parent_id
+                    or oe["kind"] not in ("group", "icon", "box")):
+                continue          # a badge follows its host; only real siblings count
+            ox, oy, ow, oh = d.footprint(oid) if oe["kind"] == "icon" else d.bbox(oid)
+            if ox < bx1 and ox + ow > bx0 and oy < by1 and oy + oh > by0:
+                raise ValueError(
+                    f"groups[] box {entry['label']!r} would enclose {oid!r}, which is not one of "
+                    f"its members; list its members contiguously")
+        gid = d.add_group(entry["label"], x0 - GRP_PAD, y0 - GRP_TITLE_H,
+                          (x1 - x0) + 2 * GRP_PAD, (y1 - y0) + GRP_TITLE_H + GRP_PAD,
+                          parent=parent_id, group_type=entry["type"], key=entry["key"])
+        for cid in ids:
+            old_parent = d._cells[cid]["parent"]
+            d.reparent(cid, gid)
+            for bid, be in list(d._cells.items()):
+                # only a badge drawn ALONGSIDE the member follows it; a subnet's
+                # own corner badges are its children and stay inside it
+                if be.get("badge") and be.get("host") == cid and be["parent"] == old_parent:
+                    d.reparent(bid, gid)
+        reg.containers[entry["key"]] = gid
+        out.append(gid)
+    return out
+
+
 def _layout_subnet(d: DrawioBuilder, vcn_id, subnet, x, y, max_cols, reg, min_w=None,
                    label_mode="twoline"):
     items = subnet.get("items") or []
     rows, cols = _grid(len(items), max_cols)
     min_w = max(min_w or 0, _subnet_min_w(subnet, d, label_mode))
-    prov_w = max(cols * COL_W + SUBNET_EXTRA_W, min_w)
-    prov_h = ROW1_Y + (rows - 1) * ROW_H + ICON_FOOTPRINT_H + SUBNET_BOTTOM_PAD
+    key = f"subnet:{subnet.get('name', '')}"
+    groups = normalise_groups(subnet, "subnet", key)
+    # Decision 7: the clearance is measured from the subnet's own title strip -
+    # the grid drops by GRP_TITLE_H, so a group box's top lands exactly on
+    # ROW1_Y and its title band never overlaps the subnet's.
+    grp_top = GRP_TITLE_H if groups else 0
+    # _union_box takes an icon's FOOTPRINT, whose caption overhangs the slot by
+    # (LABEL_W - ICON_W) / 2 on each side, so a grid that starts at PAD would
+    # put the box at PAD - GRP_PAD - 15 = -10, outside the subnet - and
+    # fit_to_children only ever grows. Inset the grid by GRP_PAD instead.
+    grp_side = GRP_PAD if groups else 0
+    prov_w = max(cols * COL_W + SUBNET_EXTRA_W + 2 * grp_side, min_w)
+    prov_h = (ROW1_Y + grp_top + (rows - 1) * ROW_H + ICON_FOOTPRINT_H
+              + SUBNET_BOTTOM_PAD + grp_side)
     sid = d.add_group(_subnet_label(subnet, label_mode), x, y, prov_w, prov_h, parent=vcn_id,
                       group_type="subnet", raw_html=True,
                       key=f"subnet:{subnet.get('name', '')}" if subnet.get("name") else None,
@@ -613,9 +679,16 @@ def _layout_subnet(d: DrawioBuilder, vcn_id, subnet, x, y, max_cols, reg, min_w=
     if subnet.get("address"):
         reg.by_address[str(subnet["address"])] = sid
     if items:
-        _icon_items(d, sid, items, cols, reg=reg)
+        item_ids, _ = _icon_items(d, sid, items, cols, x0=PAD + grp_side,
+                                  y0=ROW1_Y + grp_top, reg=reg)
+        if groups:
+            by_address = {str(it["address"]): cid for it, cid in zip(items, item_ids)
+                          if it.get("address")}
+            _layout_group_boxes(d, sid, groups, by_address, reg)
         w, h = d.fit_to_children(sid, pad=PAD, min_w=max(prov_w, min_w or 0), min_h=prov_h)
     else:
+        if groups:
+            _layout_group_boxes(d, sid, groups, {}, reg)      # raises: no member can exist
         w, h = prov_w, max(prov_h, 120)
         if min_w:
             w = max(w, min_w)
@@ -655,14 +728,20 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
     if cur:
         rows.append(cur)
 
-    inset_top = max(0, top_pad - PAD)      # room for a top-border gateway's glyph
+    vcn_key = f"vcn:{vcn.get('name', '')}"
+    vcn_groups = normalise_groups(vcn, "vcn", vcn_key)
+    inset_top = max(0, top_pad - PAD) + (GRP_TITLE_H if vcn_groups else 0)
     cy = ROW1_Y + inset_top
     row1_right = PAD + inset_left
+    subnet_ids = {}
     for row in rows:
         cx = PAD + inset_left
         bottoms = []
         for s in row:
             sid, w, h = _layout_subnet(d, vid, s, cx, cy, 2, reg, label_mode=label_mode)
+            for k in (s.get("name"), s.get("address")):
+                if k:
+                    subnet_ids[str(k)] = sid
             cx += w + H_GAP
             bottoms.append(cy + h)
         row1_right = max(row1_right, cx - H_GAP)
@@ -690,7 +769,13 @@ def _layout_vcn(d: DrawioBuilder, region_id, vcn: dict, x, y, reg, max_row_w=MAX
         n = len(s.get("items") or [])
         sid, w, h = _layout_subnet(d, vid, s, PAD + inset_left, cy, max(2, min(5, n or 2)), reg,
                                    min_w=row_w if row_w else None, label_mode=label_mode)
+        for k in (s.get("name"), s.get("address")):
+            if k:
+                subnet_ids[str(k)] = sid
         cy += h + V_GAP
+
+    if vcn_groups:
+        _layout_group_boxes(d, vid, vcn_groups, subnet_ids, reg)
 
     w, h = d.fit_to_children(vid, pad=PAD, min_w=VCN_MIN_W, min_h=min_h)
     w = max(w + right_pad - PAD, min_w)
