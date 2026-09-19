@@ -103,8 +103,11 @@ from oci_layout import write_diagram
 MODEL = {
     "subject": "app-prod", "region": "eu-frankfurt-1", "region_label": "Frankfurt", "compartment": "prod",
     "drg_style": "auto",
+    "purpose": "network",            # default; also dataflow, security, inventory, dependency, ha
     "locations": "outside",          # default; "nested" reproduces the v1.3.x canvas
     "subnet_label": "twoline",       # default; "inline" reproduces the v1.3.x one-line label
+    "label_mode": "network",         # default; also minimal, detailed
+    "layers": "off",                 # default; "auto" turns on the layer set the purpose names
     "hub": {"kind": "onprem", "items": [{"icon": "cpe", "label": "Corp VPN\n(10.0.0.0/8)", "address": "cpe"}]},
     "internet": {"name": "Internet", "items": []},   # the box the IGW faces; drop it when there is no IGW
     "drgs": [{"name": "drg", "address": "drg", "label": "Dynamic Routing\nGateway (DRG)",
@@ -131,7 +134,7 @@ MODEL = {
 write_diagram(MODEL, "app-prod_Architecture.drawio", render_fmt="png")
 ```
 
-2. Optional `write_diagram` kwargs: `style_profile="official"|"v1.0"`, `legend=True` (only when asked or with 3+ edge kinds), `logo=<settings logo_light>`, `strict=True` (crossings become errors), `drg_style="box"` (attachments as a dashed `DRG: <name>` group instead of loose boxes), and the five view keywords `locations`, `gateway_edge`, `subnet_label`, `attachment_style`, `show_compartments`, each of which overrides the model key of the same name. A large `model.json` may be loaded with `json.load` instead of inlined.
+2. Optional `write_diagram` kwargs: `style_profile="official"|"v1.0"`, `legend=True` (only when asked or with 3+ edge kinds), `logo=<settings logo_light>`, `strict=True` (crossings become errors), `drg_style="box"` (attachments as a dashed `DRG: <name>` group instead of loose boxes), and eight view keywords that each override the model key of the same name: the five v1.4.0 ones `locations`, `gateway_edge`, `subnet_label`, `attachment_style`, `show_compartments`, plus `label_mode`, `label_fields`, `label_tag_keys`. The rest of the view - `purpose`, `detail`, `layers`, `hidden_layers`, `filter`, `mode`, `global_services`, `show_edges` (item 16 above) - has no `write_diagram` kwarg and is read from the model only. A large `model.json` may be loaded with `json.load` instead of inlined.
 3. `write_diagram` validates, refuses to write on errors (`SystemExit`), writes the file and renders the PNG when draw.io desktop is installed.
 4. Custom layout ONLY when the recipe cannot express the architecture (availability/fault domains, nested compartments, several regions, third-party cloud, rule tables, extra pages). Then use `DrawioBuilder` from the same `scripts` directory with `place_icons` -> `fit_to_children` (innermost first) -> `fit_page` -> `validate` gate exactly as in SKILL.md section 6; never hand-compute container sizes.
 
