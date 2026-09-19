@@ -619,6 +619,21 @@ FILTER_DIMENSIONS = ("tag", "ftag", "dtag", "compartment", "region", "vcn", "sub
                      "type", "icon", "name", "address", "env", "app", "discovery")
 # 6.5: "Structure is not predicated ... unless an expression names it directly."
 STRUCTURAL_DIMENSIONS = ("vcn", "subnet", "type", "name")
+# 6.8: "A filter expression discovery=heuristic works too" - on EDGES. Provenance
+# is a property of a relationship, never of an item, and _lookup defaults a
+# dimensionless entry to "association", so evaluating this axis over items would
+# make any include form (discovery=heuristic, discovery=config, ...) drop every
+# item in the diagram. keep_items therefore predicates ITEM_DIMENSIONS only.
+EDGE_DIMENSIONS = ("discovery",)
+ITEM_DIMENSIONS = tuple(d for d in FILTER_DIMENSIONS if d not in EDGE_DIMENSIONS)
+# 6.6 clause 5: "named DIRECTLY by an include filter expression". Only the
+# dimensions read off the item itself qualify. A container- or model-level
+# dimension (region, vcn, subnet, compartment) matches every item inside it
+# equally, and an inherited tag (item -> subnet -> VCN) can do the same, so
+# treating either as a direct naming would keep the whole model and silently
+# disable participating mode - exactly the live-tenancy case 6.6 exists for,
+# where the sugar flags --compartment and --tag build include expressions.
+DIRECT_DIMENSIONS = ("name", "address", "type", "icon")
 # Conventions, not OCI concepts: documented sugar over tag:, listed here so a
 # project can see exactly which keys are tried and in which order.
 ENV_TAG_KEYS = ("Environment", "environment", "env")
@@ -897,14 +912,20 @@ def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> T
             + sum(len(_list(box.get("items"))) for box in
                   [m.get("hub"), m.get("internet")] + _list(m.get("third_party"))
                   if isinstance(box, dict)))
-        m.update({"vcns": [], "services": [], "hub": None, "drgs": [], "edges": []})
+        # internet and third_party are emptied too: 6.5 calls region "a
+        # whole-model predicate; it either keeps or empties the model", and
+        # leaving them behind would still draw an Internet box with users in a
+        # region the reader filtered out, while the report counted their items
+        # as dropped.
+        m.update({"vcns": [], "services": [], "hub": None, "drgs": [], "edges": [],
+                  "internet": None, "third_party": []})
         report["containers_dropped"] = len(_list(model.get("vcns")))
         return m, report
 
     def keep_items(items, vcn=None, subnet=None):
         kept = []
         for item in _list(items):
-            if not has_filter or _matches(parsed, item, vcn, subnet, m):
+            if not has_filter or _matches(parsed, item, vcn, subnet, m, dims=ITEM_DIMENSIONS):
                 kept.append(item)
                 report["items_kept"] += 1
             else:
@@ -974,11 +995,15 @@ def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> T
     # flag value "association,user", and tuple() on a string yields its
     # CHARACTERS, which matches no discovery kind and would silently drop every
     # edge in the diagram.
-    wanted = _as_tuple(discovery, "discovery") or None
+    # Each kind goes through ``choice`` exactly as resolve_view does, so the two
+    # entry points into the same concept agree: an unknown or mis-cased kind is
+    # a ValueError, not a diagram that silently lost every edge.
+    wanted = tuple(choice(kind, DISCOVERY_KINDS, None, "discovery")
+                   for kind in _as_tuple(discovery, "discovery")) or None
     if wanted or any(e["dim"] == "discovery" for e in parsed["include"] + parsed["exclude"]):
         kept_edges = []
         for edge in _list(m.get("edges")):
-            kind = str(edge.get("discovery") or "association")
+            kind = str(edge.get("discovery") or "association").strip().lower()
             if wanted and kind not in wanted:
                 report["edges_dropped"] += 1
                 continue
@@ -1035,7 +1060,12 @@ def participating(model: dict, include=()) -> set:
         for att in _list(drg.get("attachments")):
             if isinstance(att, dict) and att.get("address"):
                 keep.add(str(att["address"]))
-    parsed_include = list(include or ())
+    # Clause 5 keeps only what an include expression names DIRECTLY, so it is
+    # read over DIRECT_DIMENSIONS. Every item that reaches participating()
+    # already satisfied the whole include list in filter_model, so honouring a
+    # region= / vcn= / compartment= expression here would match every survivor
+    # and turn participating mode back into "all" whenever a filter is set.
+    parsed_include = [e for e in (include or ()) if e.get("dim") in DIRECT_DIMENSIONS]
     for vcn in _list(model.get("vcns")):
         if not isinstance(vcn, dict):
             continue
@@ -1058,7 +1088,8 @@ def participating(model: dict, include=()) -> set:
                 if item.get("nsgs"):
                     keep.add(addr)
                 if parsed_include and _matches({"include": parsed_include, "exclude": []},
-                                               item, vcn, sn, model):
+                                               item, vcn, sn, model,
+                                               dims=DIRECT_DIMENSIONS):
                     keep.add(addr)
             if len(items) == 1 and items[0].get("address"):
                 keep.add(str(items[0]["address"]))       # clause 6
@@ -1068,14 +1099,16 @@ def participating(model: dict, include=()) -> set:
                     continue
                 addr = str(item.get("address") or "")
                 if addr and parsed_include and _matches({"include": parsed_include, "exclude": []},
-                                                        item, vcn, None, model):
+                                                        item, vcn, None, model,
+                                                        dims=DIRECT_DIMENSIONS):
                     keep.add(addr)
     for item in _list(model.get("services")):
         if not isinstance(item, dict):
             continue
         addr = str(item.get("address") or "")
         if addr and parsed_include and _matches({"include": parsed_include, "exclude": []},
-                                                item, None, None, model):
+                                                item, None, None, model,
+                                                dims=DIRECT_DIMENSIONS):
             keep.add(addr)
     keep.discard("")
     return keep
