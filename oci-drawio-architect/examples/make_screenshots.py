@@ -5,7 +5,8 @@ Renders examples/generate_reference_layout.py with the draw.io desktop CLI and
 crops it into the four images the docs use:
 
     screenshots/diagram-overview.png   full diagram (1.25x)
-    screenshots/diagram-detail.png     data subnet + border gateways (1.5x)
+    screenshots/diagram-detail.png     data subnet + the Service Gateway on the
+                                       VCN's bottom border (1.5x)
     Screens/1.png                      top-left 1138x693 window-like crop (1.25x)
     Screens/2.png                      same as diagram-detail.png
 
@@ -93,10 +94,13 @@ def main(argv=None) -> int:
         full150 = _export(binary, drawio, tmp / "full_150.png", 1.5)
 
         sx, sy, sw, sh = d.abs_bbox("subnet-sn-priv-data")
-        nx, ny, nw, nh = d._abs_footprint("nat")            # bottom-border gateway (caption hangs below the VCN)
-        gx, gy, gw, gh = d._abs_footprint("sgw")            # right-border gateway
+        # 1.4.0 outside canvas: the SGW faces the OSN band below the VCN and the
+        # NAT faces the Internet box on the right border - the two swapped sides.
+        # The NAT sits beside the first subnet row, far above this window, so it
+        # is framed out vertically and its width is not part of the crop.
+        bx, by, bw, bh = d._abs_footprint("sgw")            # bottom-border gateway (caption hangs below the VCN)
         x0, y0 = px(sx - 12, sy - 34, 1.5)
-        x1, y1 = px(max(sx + sw + 35, gx + gw + 12), ny + nh + 12, 1.5)
+        x1, y1 = px(sx + sw + 35, by + bh + 12, 1.5)
         detail = tmp / "detail.png"
         _crop(full150, (x0, y0, x1, y1), detail)
 
