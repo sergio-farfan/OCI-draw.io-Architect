@@ -1232,22 +1232,51 @@ class LocationCanvasTests(unittest.TestCase):
         self.assertEqual(errors_of(d), [])
 
     def test_a_right_column_that_does_not_fit_grows_the_region_and_recentres_it(self):
-        """Decision 6: the boxes are floored at LOC_MIN_H first, then the region grows and
-        every region child moves down by half the growth, so the VCN stack stays centred."""
+        """Decision 6: the boxes are floored at their own minimum first, then the region grows
+        and every region child moves down by half the growth, so the VCN stack stays centred.
+
+        One 3rd Party box carries an item, so the floor path is exercised with content: a box
+        with items needs HUB_ICON_Y0 + one icon footprint + PAD, not the bare LOC_MIN_H.
+        """
         model = copy.deepcopy(CANVAS_HYBRID)
-        model["third_party"] = [{"name": "3rd Party Cloud", "items": []},
-                                {"name": "Partner Cloud", "items": []}]
+        model["third_party"] = [
+            {"name": "3rd Party Cloud",
+             "items": [{"icon": "cloud", "label": "Partner SaaS", "address": "saas"}]},
+            {"name": "Partner Cloud", "items": []}]
         small = quiet(ol.build_diagram, CANVAS_HYBRID)
         d = quiet(ol.build_diagram, model)
         _rx, ry, _rw, rh = d.abs_bbox("region")
-        need = 3 * ol.LOC_MIN_H + 2 * ol.LOC_STACK_GAP
+        with_items = ol.HUB_ICON_Y0 + db.ICON_FOOTPRINT_H + ol.PAD
+        self.assertGreater(with_items, ol.LOC_MIN_H)
+        mins = [ol.LOC_MIN_H, with_items, ol.LOC_MIN_H]
+        need = sum(mins) + 2 * ol.LOC_STACK_GAP
         self.assertEqual(rh, max(need, small.abs_bbox("region")[3]))
         heights = [d.abs_bbox(cid)[3] for cid in ("internet", "thirdparty-0", "thirdparty-1")]
-        self.assertTrue(all(h >= ol.LOC_MIN_H for h in heights), heights)
+        self.assertTrue(all(h >= m for h, m in zip(heights, mins)), heights)
         self.assertEqual(sum(heights) + 2 * ol.LOC_STACK_GAP, rh)
         vy = d.abs_bbox("vcn-hub")[1] - ry
         self.assertEqual(vy, ol.VCN_Y + (rh - small.abs_bbox("region")[3]) // 2)
         self.assertEqual(errors_of(d), [])
+        self.assertEqual(quiet(d.check_overlaps, True), [])
+
+    def test_every_right_column_box_with_items_clears_its_own_content(self):
+        """Regression: a box floored at LOC_MIN_H = 160 spilled a one-icon caption (bottom 212)
+        outside itself, which validate() reports as a blocking containment error."""
+        model = copy.deepcopy(CANVAS_HYBRID)
+        model["internet"] = {"items": [{"icon": "user", "label": "Users", "address": "users"}]}
+        model["third_party"] = [
+            {"name": "3rd Party Cloud",
+             "items": [{"icon": "cloud", "label": "Partner SaaS", "address": "saas"}]},
+            {"name": "Partner Cloud",
+             "items": [{"icon": "cloud", "label": "Other SaaS", "address": "other"}]}]
+        d = quiet(ol.build_diagram, model)
+        _rx, _ry, _rw, rh = d.abs_bbox("region")
+        heights = [d.abs_bbox(cid)[3] for cid in ("internet", "thirdparty-0", "thirdparty-1")]
+        floor = ol.HUB_ICON_Y0 + db.ICON_FOOTPRINT_H + ol.PAD
+        self.assertTrue(all(h >= floor for h in heights), heights)
+        self.assertEqual(sum(heights) + 2 * ol.LOC_STACK_GAP, rh)
+        self.assertEqual(errors_of(d), [])
+        self.assertEqual(quiet(d.check_overlaps, True), [])
 
     def test_the_cpe_straddles_the_on_premises_region_facing_border(self):
         """Decision 5 / toolkit Template 1: the CPE's glyph centre sits on the box's right edge."""

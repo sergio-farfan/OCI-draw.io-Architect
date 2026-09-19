@@ -711,29 +711,68 @@ def _layout_location_hub(d: DrawioBuilder, hub: dict, x, y, w, h, centre_y, reg,
     return hid
 
 
-def _layout_right_column(d: DrawioBuilder, ctx: dict, x, y, h, reg) -> list:
-    """G1: Internet on top, one 3rd Party Cloud box per entry below it, together as tall as
-    the region (toolkit Template 1: 210 + 10 + 250 = 470 = the region's height)."""
+def _loc_boxes(ctx: dict) -> list:
+    """The right column's boxes, top to bottom: ``(cell key, spec, group type)``."""
     boxes = []
     if ctx["internet"]:
         boxes.append(("internet", ctx["internet"], "internet"))
     for i, tp in enumerate(ctx["third_party"]):
         boxes.append((f"thirdparty:{i}", tp, "third_party_cloud"))
+    return boxes
+
+
+def _loc_box_min_h(spec: dict) -> int:
+    """Minimum height of one right-column box.
+
+    LOC_MIN_H is the empty box's floor; a box that holds items has to be tall
+    enough for the whole icon block below the title (``HUB_ICON_Y0``) plus the
+    bottom pad, or the caption spills outside the box and ``validate()`` calls
+    it a blocking containment error.
+    """
+    items = list((spec or {}).get("items") or [])
+    if not items:
+        return LOC_MIN_H
+    return max(LOC_MIN_H, HUB_ICON_Y0 + _hub_block_h(items) + PAD)
+
+
+def _fit_min_heights(heights, mins, total: int) -> list:
+    """Raise every height to its minimum, taking the difference from the boxes with slack.
+
+    The caller has already grown the region to ``_right_column_min_h()``, so
+    ``sum(mins) <= total`` and the repair always converges on heights that sum
+    to exactly ``total``.
+    """
+    hs = [max(int(h), int(m)) for h, m in zip(heights, mins)]
+    over = sum(hs) - int(total)
+    while over > 0:
+        slack = [i for i, (hv, m) in enumerate(zip(hs, mins)) if hv > m]
+        if not slack:
+            break                      # cannot fit; the boxes keep their minimum
+        i = max(slack, key=lambda j: hs[j] - mins[j])
+        take = min(over, hs[i] - mins[i])
+        hs[i] -= take
+        over -= take
+    return hs
+
+
+def _layout_right_column(d: DrawioBuilder, ctx: dict, x, y, h, reg) -> list:
+    """G1: Internet on top, one 3rd Party Cloud box per entry below it, together as tall as
+    the region (toolkit Template 1: 210 + 10 + 250 = 470 = the region's height)."""
+    boxes = _loc_boxes(ctx)
     if not boxes:
         return []
     n = len(boxes)
     gaps = LOC_STACK_GAP * (n - 1)
     avail = int(h) - gaps
+    mins = [_loc_box_min_h(spec) for _key, spec, _gtype in boxes]
     if n == 1:
         heights = [int(h)]
     else:
         first = int(round(avail * INTERNET_SPLIT))
         heights = [first] + _split_evenly(avail - first, n - 1)
-        if min(heights) < LOC_MIN_H:
-            # Decision 6: the column is recomputed at the LOC_MIN_H floor. The
-            # caller has already grown the region to _right_column_min_h(), so
-            # an even split of avail gives every box at least LOC_MIN_H.
-            heights = _split_evenly(avail, n)
+    # Decision 6: every box is floored at its own minimum and the column still
+    # sums to the region's height.
+    heights = _fit_min_heights(heights, mins, avail)
     ids = []
     top = y
     for (key, spec, gtype), bh in zip(boxes, heights):
@@ -750,8 +789,12 @@ def _layout_right_column(d: DrawioBuilder, ctx: dict, x, y, h, reg) -> list:
 
 
 def _right_column_min_h(ctx: dict) -> int:
-    n = (1 if ctx["internet"] else 0) + len(ctx["third_party"])
-    return 0 if not n else n * LOC_MIN_H + LOC_STACK_GAP * (n - 1)
+    """Height the region needs so every right-column box clears its own content."""
+    boxes = _loc_boxes(ctx)
+    if not boxes:
+        return 0
+    return (sum(_loc_box_min_h(spec) for _key, spec, _gtype in boxes)
+            + LOC_STACK_GAP * (len(boxes) - 1))
 
 
 def _layout_locations(d: DrawioBuilder, rid, ctx: dict, hub, drgs, stack_y, stack_h, reg,
