@@ -422,6 +422,12 @@ class CompartmentTreeTests(unittest.TestCase):
             ot.compartment_tree({"compartments": [{"name": "A", "parent": "Ghost"}], "vcns": []})
         self.assertIn("Ghost", str(cm.exception))
 
+    def test_an_unknown_parent_two_levels_deep_raises(self):
+        with self.assertRaises(ValueError) as cm:
+            ot.compartment_tree({"compartments": [{"name": "A", "parent": "B"},
+                                                  {"name": "B", "parent": "Ghost"}], "vcns": []})
+        self.assertIn("Ghost", str(cm.exception))
+
     def test_a_cycle_raises(self):
         with self.assertRaises(ValueError) as cm:
             ot.compartment_tree({"compartments": [{"name": "A", "parent": "B"},

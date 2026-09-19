@@ -435,7 +435,8 @@ def compartment_tree(model: dict) -> List[dict]:
         parent = nodes[name]["parent"]
         if parent is not None and parent not in nodes:
             raise ValueError(f"compartments: {name!r} names an unknown parent {parent!r}")
-        seen, cur = {name}, parent
+    for name in order:
+        seen, cur = {name}, nodes[name]["parent"]
         while cur is not None:
             if cur in seen:
                 raise ValueError(f"compartments: cycle through {name!r}")
