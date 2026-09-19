@@ -255,8 +255,11 @@ def _two_line(line1: str, line2: str) -> str:
     top = escape_label(line1)
     if not line2:
         return top
-    return (f'{top}<br><font style="font-size: 10px" color="{COLORS["text_primary"]}">'
-            f'{escape_label(line2)}</font>')
+    # font-weight: normal is required, not cosmetic: the enclosing vcn / subnet
+    # container style carries fontStyle=1, and the nested <font> would inherit
+    # bold, so slide 18's "Text2: 9pt, light" line would render bold.
+    return (f'{top}<br><font style="font-size: 10px; font-weight: normal" '
+            f'color="{COLORS["text_primary"]}">{escape_label(line2)}</font>')
 
 
 def _subnet_title_lines(subnet: dict, mode: str = "twoline") -> list:
