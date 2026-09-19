@@ -11,7 +11,7 @@ Diagrams are data: a MODEL dict laid out by `scripts/oci_layout.py` on top of `s
 
 1. Title (`add_title`): bold `<Subject> - Architecture`, italic second line `<Region label> (<region>) - Compartment: <compartment>`; with a tenancy the first line is `<tenancy> - <Subject> - Architecture`. Optional logo top-right (148x39).
 2. Region: solid Neutral-3 border, Neutral-1 fill, label = bare region id (`us-ashburn-1`) bold, top-left. Only title, notes and legend sit outside it.
-3. On-premises panel (`onprem`): left of the DRG column, 180 px wide, vertically centred on the VCN stack, label `On-premises` (or the hub network name), one icon per row (pitch 200): CPE, FastConnect virtual circuit, RPC peer. Never the DRG.
+3. Hub panel (`onprem` styling): left of the DRG column, 180 px wide, vertically centred on the VCN stack, one icon per row (pitch 200): CPE, FastConnect virtual circuit, RPC peer. Never the DRG. Its title is `hub.name` when set, else `On-premises` for `hub.kind: "onprem"` (the default) and `Remote region` for `hub.kind: "remote_region"` - the parser picks `remote_region` when the hub holds only an RPC peer.
 4. DRG column (`drgs[]`): region-level DRG icon between the on-premises panel and the VCN columns, centred on the VCN stack; one rounded attachment box (100 px wide, 44 px tall minimum, Ivy border; taller when the display name needs more lines, which also widens the stacking pitch) per attachment beside it - VCN attachments on the side facing the VCNs, IPSec / FastConnect / RPC attachments on the side facing the on-premises panel - each linked to its target by an arrowhead-less `attachment` connector (`Site-to-Site VPN`, `FastConnect`, `Remote Peering`). `drg_style` `icon` (default) or `box` (dashed `DRG: <name>` group); `auto` picks `box` above 4 attachments.
 5. VCN: label `VCN: <name> (<cidr>)`, Sienna dashed 2 px. Several VCNs are columns left to right, 45 px apart.
 6. Subnet: label `<name> (<cidr>)` (+ ` - public` when `public`), Sienna dashed 1 px. Row 1 holds lb -> app -> compute -> mgmt -> other subnets in traffic order, 2 icon columns each, wrapping to a new row past 1000 px; data-tier subnets are stretched under the rows (up to 5 columns).
@@ -33,7 +33,8 @@ MODEL = {
   "subject": "Spoke-VCN-D", "region": "us-ashburn-1", "region_label": "Ashburn",
   "compartment": "Spoke-VCN-D", "tenancy_name": None,
   "drg_style": "auto",                # auto | icon | box (CLI --drg-style overrides)
-  "hub": {"name": "On-premises",      # on-premises side only: CPE, IPSec, virtual circuit, RPC peer
+  "hub": {"kind": "onprem",           # onprem (default) | remote_region - selects the default title
+          "name": "On-premises",      # optional override; on-prem side only: CPE, IPSec, VC, RPC peer
           "items": [{"icon": "cpe", "label": "Corp VPN\n(10.0.0.0/8)", "address": "cpe"}],
           "link_label": None},
   "drgs": [{"name": "drg", "address": "drg", "label": "Dynamic Routing\nGateway (DRG)",

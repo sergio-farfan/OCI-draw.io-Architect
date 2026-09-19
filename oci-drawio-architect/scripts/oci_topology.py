@@ -25,6 +25,19 @@ ONPREM_ATTACHMENT_TYPES = ("ipsec", "virtual_circuit")
 ONPREM_ITEM_TYPES = frozenset({"oci_core_cpe", "oci_core_ipsec", "oci_core_virtual_circuit",
                                "cpe", "ipsec", "virtual_circuit"})
 ONPREM_ICON_KEYS = frozenset({"cpe", "customer_premises_equipment", "fastconnect", "vpn"})
+
+# Hub panel kinds. The container keeps the onprem styling in both cases; only
+# the default title follows the kind (an explicit hub["name"] always wins).
+HUB_KINDS = ("onprem", "remote_region")
+HUB_TITLES = {"onprem": "On-premises", "remote_region": "Remote region"}
+
+
+def hub_kind(hub: dict) -> str:
+    """``hub['kind']`` normalised; 'onprem' when absent or unknown."""
+    kind = str((hub or {}).get("kind") or "").strip().lower()
+    return kind if kind in HUB_KINDS else "onprem"
+
+
 ATTACHMENT_LINK_LABELS: Dict[str, str] = {"vcn": "", "ipsec": "Site-to-Site VPN",
                                           "virtual_circuit": "FastConnect", "rpc": "Remote Peering",
                                           "loopback": ""}
@@ -258,7 +271,7 @@ def classify_topology(model: dict) -> dict:
 __all__ = [
     "TOPOLOGY_KINDS", "ATTACHMENT_TYPES", "ONPREM_ATTACHMENT_TYPES", "ATTACHMENT_LINK_LABELS",
     "DRG_ICON_KEYS", "RPC_ICON_KEYS", "DRG_BOX_THRESHOLD", "REGIONAL_ICON_KEYS",
-    "ONPREM_ITEM_TYPES", "ONPREM_ICON_KEYS",
+    "ONPREM_ITEM_TYPES", "ONPREM_ICON_KEYS", "HUB_KINDS", "HUB_TITLES", "hub_kind",
     "first_line", "attachment_type", "attachment_label", "attachment_link_label",
     "is_drg_item", "is_rpc_item", "is_onprem_item", "is_regional", "choose_drg_style",
     "migrate_legacy_model", "classify_topology",

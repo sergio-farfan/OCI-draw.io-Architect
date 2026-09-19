@@ -210,6 +210,16 @@ class HclThreeTierTests(unittest.TestCase):
         for bad in ("oci_load_balancer_listener", "oci_load_balancer_backend_set"):
             self.assertNotIn(bad, dump)
 
+    def test_the_parser_sets_the_hub_kind(self):
+        model = pt.parse_terraform_dir(FIXTURES / "three_tier")
+        self.assertEqual((model["hub"]["kind"], model["hub"]["name"]), ("onprem", "On-premises"))
+        self.assertEqual(pt.validate_model(model), [])
+
+    def test_validate_model_rejects_an_unknown_hub_kind(self):
+        model = pt.parse_terraform_dir(FIXTURES / "three_tier")
+        model["hub"]["kind"] = "datacentre"
+        self.assertTrue(any(p.startswith("hub.kind:") for p in pt.validate_model(model)))
+
 
 # ---------------------------------------------------------------------------
 # HCL mode: tfvars-driven VCN map
