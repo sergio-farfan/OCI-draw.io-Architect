@@ -12,6 +12,7 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 import check_overlaps  # noqa: E402
 import drawio_builder as db  # noqa: E402
 import oci_layout as ol  # noqa: E402
+import oci_view as ov  # noqa: E402
 
 from test_filter_model import model as TAGGED_MODEL  # noqa: E402
 from test_view_layers import quiet  # noqa: E402
@@ -84,6 +85,43 @@ class LayoutModeTests(unittest.TestCase):
     def test_a_participating_diagram_still_validates(self):
         d = quiet(ol.build_diagram, TAGGED_MODEL(), mode="participating")
         self.assertEqual([m for m in d.validate() if not db.is_warning(m)], [])
+
+
+class RecordedCutTests(unittest.TestCase):
+    """6.5 / 5: the front end cut the model; the layout reports that cut too."""
+
+    def cut(self, **kwargs):
+        """What a front end writes out: an already-cut model plus its report."""
+        model, report = ov.filter_model(TAGGED_MODEL(), **kwargs)
+        model["mode"] = report["mode"]
+        return ov.record_cut(model, report)
+
+    def test_a_front_end_filter_is_reported_by_the_layout_that_redraws_it(self):
+        d = quiet(ol.build_diagram, self.cut(spec=["tag:Application=payments"]))
+        info = d.layout_info["filter"]
+        self.assertEqual(info["include"], ("tag:Application=payments",))
+        self.assertEqual(info["items_dropped"], 4)      # the parser's four, not this run's zero
+        self.assertEqual(info["items_kept"], 4)
+        self.assertEqual(info["edges_dropped"], 1)
+
+    def test_a_front_end_prune_is_reported_by_the_layout_that_redraws_it(self):
+        """A1: layout_info["pruned"] always reports what the mode removed."""
+        d = quiet(ol.build_diagram, self.cut(mode="participating"))
+        self.assertEqual(d.layout_info["pruned"], {"items": 1, "services": 3})
+        self.assertEqual(d.layout_info["view"]["mode"], "participating")
+
+    def test_a_further_cli_filter_adds_to_the_recorded_counts(self):
+        model = self.cut(spec=["tag:Application=payments"])
+        d = quiet(ol.build_diagram, model, filter_spec=["!name~Web LB"])
+        self.assertEqual(d.layout_info["filter"]["items_dropped"], 5)   # 4 recorded + 1 here
+        self.assertNotIn("lb", icons(d))
+
+    def test_the_legend_note_uses_the_merged_totals(self):
+        d = quiet(ol.build_diagram, self.cut(spec=["tag:Application=payments"]), legend=True)
+        notes = [str(e.get("label")) for e in d._cells.values()
+                 if "Filtered:" in str(e.get("label"))]
+        self.assertTrue(notes, "no filter note in the legend")
+        self.assertIn("4 of 8 resources", notes[0])
 
 
 class DiscoveryTests(unittest.TestCase):

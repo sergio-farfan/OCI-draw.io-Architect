@@ -45,8 +45,10 @@ MODEL = {
   "label_tag_keys": [],               # which tag keys the "tags" caption field renders, in order
   "layers": "off",                    # off (default) | auto | [layer name, ...] - real draw.io layers
   "hidden_layers": [],                # layers created with visible="0"
-  "filter": {},                       # {"include": [expr], "exclude": [expr], "keep_empty": False}
+  "filter": {},                       # {"include": [expr], "exclude": [expr], "keep_empty": False,
+                                      #  "report": {...}} - the front ends add "report" with what THEY cut
   "mode": "all",                      # all (default) | participating - keep only what takes part
+  "pruned": None,                     # {"items": n, "services": n} written by a front end that pruned
   "global_services": "osn",           # osn (default) | bucket - IAM/Policies/Audit/DNS in a tenancy box
   "show_edges": True,                 # False draws no model connectors (the inventory purpose)
   "attachment_style": "solid",        # solid (default) | dotted - DRG attachment connectors

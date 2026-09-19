@@ -583,8 +583,10 @@ def build_model(bundle: Dict[str, list], compartment_id: Optional[str] = None, v
                 "nothing can match. Re-run with --mode all to see the whole compartment.")
     model, report = ov.filter_model(model, filter_spec, mode=mode, discovery=discovery)
     model["mode"] = mode
-    if report["include"] or report["exclude"]:
-        model["filter"] = {"include": list(report["include"]), "exclude": list(report["exclude"])}
+    # 5 / A1: the counts travel in the model (filter.report / pruned), so
+    # layout_info always reports what the mode and the filter removed here -
+    # the layout's own re-application of the same spec removes nothing.
+    ov.record_cut(model, report)
     model["filter_report"] = dict(report)
     return model
 
