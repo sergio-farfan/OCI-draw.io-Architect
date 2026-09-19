@@ -321,11 +321,14 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="13" value="OCI APIs (via DRG)" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=1;dashPattern=6 3;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="region" source="worker-vm" target="sgw">
+        <mxCell id="13" value="OCI APIs (via DRG)" style="edgeStyle=orthogonalEdgeStyle;html=1;strokeColor=#312D2A;strokeWidth=1.5;dashed=1;dashPattern=6 3;endArrow=open;endFill=0;fontFamily=Oracle Sans,Arial,Helvetica,sans-serif;fontSize=12;fontColor=#312D2A;rounded=1;jettySize=auto;orthogonalLoop=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="region" source="worker-vm" target="sgw">
           <mxGeometry relative="1" as="geometry">
             <Array as="points">
-              <mxPoint x="1227" y="130" />
+              <mxPoint x="1227" y="135" />
+              <mxPoint x="1504" y="135" />
+              <mxPoint x="1504" y="164" />
             </Array>
+            <mxPoint x="0" y="-10" as="offset" />
           </mxGeometry>
         </mxCell>
       </root>

@@ -2437,7 +2437,9 @@ class DrawioBuilder:
         return out
 
     _SHARED_COST = 25.0       # re-using a corridor segment another edge already uses (below one bend)
-    _PORT_SHARE_COST = 120.0  # docking where another connector already docks (above two bends)
+    # docking where another connector already docks; above a three-bend detour
+    # (3 * _BEND_COST + its extra length) so a free side three bends away still wins
+    _PORT_SHARE_COST = 300.0
 
     def _dijkstra(self, lat, starts, goals, allowed, endpoint_boxes, exclude_ids=frozenset(),
                   start_costs=None, goal_costs=None):
@@ -2578,7 +2580,7 @@ class DrawioBuilder:
         allowed = self._ancestors(src) | self._ancestors(tgt) | {src, tgt}
         # one docking point per connector where the geometry allows it: a port
         # another edge already uses costs _PORT_SHARE_COST, so a free side of
-        # the same shape wins unless it is more than a couple of bends away
+        # the same shape wins even when it is three bends away
         taken = lat.setdefault("ports", {})
         start_costs = {n: self._PORT_SHARE_COST * taken.get((src, side), 0) for n, side in starts.items()}
         goal_costs = {n: self._PORT_SHARE_COST * taken.get((tgt, side), 0) for n, side in goals.items()}

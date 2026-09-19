@@ -986,6 +986,39 @@ class TestRouterQuality(TempDirMixin, unittest.TestCase):
                  for eid in eids]
         self.assertEqual(len(set(docks)), len(docks), f"shared docking point: {docks}")
 
+    def test_a_free_side_three_bends_away_beats_a_shared_docking_point(self):
+        """Calibration of _PORT_SHARE_COST (C11/C13).
+
+        A gateway straddling the VCN border is fed by two VMs. Its left port is
+        the cheap approach for both connectors; the free bottom port is three
+        bends away, so the penalty for docking twice on the same point has to
+        outweigh a three-bend detour or the two arrowheads land on each other.
+        """
+        self.assertGreater(DrawioBuilder._PORT_SHARE_COST, 3 * DrawioBuilder._BEND_COST)
+        d = DrawioBuilder()
+        r = d.add_group("us-ashburn-1", 20, 75, 1980, 1073, group_type="region")
+        v = d.add_group("VCN: Spoke (10.0.0.0/16)", 490, 40, 1050, 910, parent=r, group_type="vcn")
+        sa = d.add_group("sn-priv-app (10.0.1.0/24)", 350, 50, 310, 380, parent=v, group_type="subnet")
+        sw = d.add_group("sn-priv-workers (10.0.2.0/24)", 680, 50, 310, 220, parent=v, group_type="subnet")
+        app = d.add_icon("App VM", "vm", 20, 50, parent=sa)
+        wrk = d.add_icon("Worker VM", "vm", 20, 50, parent=sw)
+        d.add_icon("Block Volume", "block_volume", 150, 50, parent=sw)   # blocks the row to the right
+        sgw = d.add_icon("Service Gateway", "service_gateway", 1502, 90, parent=r, label_fill="#FCFBFA")
+        osn = d.add_group("Oracle Services Network", 1650, 40, 310, 910, parent=r,
+                          group_type="oracle_services_network")
+        d.add_icon("Object Storage", "object_storage", 20, 50, parent=osn)
+        d.add_icon("Logging", "logging", 20, 380, parent=osn)
+        eids = [d.add_edge(src, sgw, "443") for src in (app, wrk)]
+        self.assertEqual(only_errors(d.validate()), [])
+        docks = [tuple(tokens(cell(d.root, eid).get("style"))[k] for k in ("entryX", "entryY"))
+                 for eid in eids]
+        self.assertEqual(len(set(docks)), 2, f"shared docking point on the gateway: {docks}")
+        # the second connector really does pay a three-bend detour for its own point
+        poly = d._cells[eids[1]]["polyline"]
+        bends = sum(1 for p, q, s in zip(poly, poly[1:], poly[2:])
+                    if (abs(p[1] - q[1]) < 0.01) != (abs(q[1] - s[1]) < 0.01))
+        self.assertEqual(bends, 3, f"expected a three-bend detour, got {poly}")
+
     def test_an_edge_never_runs_under_its_own_glyph(self):
         """Dropping the endpoint's slot obstacle must not open the band
         between a glyph and its caption to that endpoint's own connector."""
