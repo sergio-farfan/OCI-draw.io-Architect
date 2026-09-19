@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Demo / smoke test for oci-drawio-architect v1.4.0.
+"""Demo / smoke test for oci-drawio-architect v1.5.0.
 
 Page 1 "Architecture": the layout recipe (oci_layout.build_diagram) on a two-VCN
 hybrid model with the default outside canvas - On-Premises and Internet as
@@ -15,7 +15,13 @@ Page 2 "DRG as a box": the same model with locations "nested" and drg_style
 Page 3 "Compartments and OKE": two VCNs in nested compartment containers inside
 a tenancy wrapper, an OKE cluster box inside a subnet, a tier band around a
 subnet row and a DRG with its two route-table badges.
-Page 4 "Security": an NSG rule table (custom DrawioBuilder API).
+Page 4 "Executive overview": the same model at --detail executive --label-mode
+minimal - no badges, no CIDRs, no attachment boxes and no connector labels, the
+one-page management artefact.
+Page 5 "Engineering detail": the same model at --detail engineering --label-mode
+detailed --layers auto with the routes layer hidden - the layers panel is
+populated, and the route badges are present but switched off.
+Page 6 "Security": an NSG rule table (custom DrawioBuilder API).
 
 validate() must return no errors before the file is written.
 
@@ -132,6 +138,14 @@ def build(out_path: Path, do_render: bool = False) -> None:
     d.append_pages(box)
     lz = build_diagram(COMPARTMENT_MODEL, page_name="Compartments and OKE", legend=True)
     d.append_pages(lz)
+    execu = build_diagram(DEMO_MODEL, page_name="Executive overview", legend=True,
+                          detail="executive", label_mode="minimal")
+    engineering = build_diagram(DEMO_MODEL, page_name="Engineering detail", legend=True,
+                                detail="engineering", label_mode="detailed",
+                                layers="auto", hidden_layers=["routes"])
+
+    d.append_pages(execu)
+    d.append_pages(engineering)
 
     d.add_page("Security", 800, 400)
     d.add_title("NSG rules - vcn-spoke", region_label="Ashburn", region="us-ashburn-1", key="title3")
