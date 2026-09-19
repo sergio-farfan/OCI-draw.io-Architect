@@ -42,6 +42,51 @@ def item(model, address):
     raise KeyError(address)
 
 
+# A whole tag map written as a reference, in the three forms real stacks use:
+# a local, a variable, and a merge() the parser cannot evaluate.
+_TAGS_BY_REFERENCE_TF = '''
+provider "oci" { region = "us-phoenix-1" }
+locals {
+  common_tags = {
+    "Application" = "payments"
+  }
+}
+variable "team_tags" {
+  default = {
+    "Team" = "platform"
+  }
+}
+resource "oci_core_vcn" "app" {
+  display_name   = "vcn-app"
+  cidr_block     = "10.0.0.0/16"
+  compartment_id = "ocid1.compartment.oc1..aaaaexample"
+  freeform_tags  = local.common_tags
+}
+resource "oci_core_subnet" "web" {
+  vcn_id         = oci_core_vcn.app.id
+  display_name   = "sn-web"
+  cidr_block     = "10.0.1.0/24"
+  compartment_id = "ocid1.compartment.oc1..aaaaexample"
+  freeform_tags  = var.team_tags
+}
+resource "oci_core_instance" "merged" {
+  display_name   = "Merged VM"
+  compartment_id = "ocid1.compartment.oc1..aaaaexample"
+  shape          = "VM.Standard.E5.Flex"
+  freeform_tags  = merge(local.common_tags, { "Role" = "app" })
+  create_vnic_details {
+    subnet_id = oci_core_subnet.web.id
+  }
+}
+'''
+
+
+def _parse_tags_fixture():
+    with tempfile.TemporaryDirectory() as tmp:
+        (Path(tmp) / "main.tf").write_text(_TAGS_BY_REFERENCE_TF, encoding="utf-8")
+        return quiet(pt.parse_terraform_dir, Path(tmp))
+
+
 class AddressWalkTests(unittest.TestCase):
     def test_the_two_address_walks_agree(self):
         """oci_view duplicates the walk deliberately; this is the pin."""
@@ -70,6 +115,20 @@ class TagCaptureTests(unittest.TestCase):
         self.assertEqual(tags, {"Application": "reporting"})
         self.assertTrue([w for w in model["warnings"]
                          if "freeform_tags" in w and "Environment" in w], model["warnings"])
+
+    def test_a_whole_map_behind_a_local_or_a_var_is_followed(self):
+        """6.5: ``freeform_tags = local.common_tags`` is the common real-world idiom."""
+        model = _parse_tags_fixture()
+        vcn = model["vcns"][0]
+        self.assertEqual(vcn["tags"]["freeform"], {"Application": "payments"})
+        self.assertEqual(vcn["subnets"][0]["tags"]["freeform"], {"Team": "platform"})
+
+    def test_a_whole_map_that_stays_unresolved_warns_instead_of_vanishing(self):
+        """6.5: a filter that silently matches nothing is worse than one that says why."""
+        model = _parse_tags_fixture()
+        self.assertTrue([w for w in model["warnings"]
+                         if "oci_core_instance.merged" in w and "freeform_tags" in w
+                         and "unresolved expression" in w], model["warnings"])
 
     def test_state_json_tags_are_flattened_into_the_same_shape(self):
         model = quiet(pt.parse_show_json, FIXTURES / "tagged_app" / "state.json", "state")
