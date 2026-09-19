@@ -297,7 +297,12 @@ and the box height grows to `label_lines(text, w - 8, 11) * LABEL_LINE_H + 8` (m
 `ATT_H`), with the stack pitch following the real heights. `label_lines()` measures a wrap
 hint as a space, so the estimate matches what the browser does. Validator rule 5 now covers
 `add_box()` cells too: any wrapped label taller than its box is a `WARNING: label '...' needs
-~N lines ...` - a caption still has to exceed three lines to be reported, a box does not.
+~N lines ...` - a caption still has to exceed its line budget to be reported, a box does not.
+The budget is `MAX_LABEL_LINES = 3` unless the caller says otherwise: `build_diagram` passes the
+label mode's `LABEL_LINE_BUDGET` (minimal 2, network 3, detailed 5) into
+`DrawioBuilder(max_label_lines=...)`, and the file gate (`check_overlaps.py`, `validate_file`)
+uses the default 3 - which a `detailed` caption still passes, because `LABEL_H_DETAILED = 88`
+gives it a box tall enough for rule 5's height escape.
 
 ## 22. Security constructs are badges, not workload icons
 

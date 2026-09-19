@@ -51,7 +51,7 @@ oci-drawio-architect/
 │   ├── build_icon_catalog.py             # Regenerate / --check the icon catalog
 │   └── smoke_test.sh                     # Demo -> gate -> PNG
 ├── examples/
-│   ├── generate_demo_diagram.py          # Four-page demo / post-install smoke test
+│   ├── generate_demo_diagram.py          # Six-page demo / post-install smoke test
 │   └── generate_reference_layout.py      # Rebuilds the reference sample from a MODEL dict
 ├── tests/                                # unittest suite (builder, layout, topology, settings, icons) + fixtures/detect/*, fixtures/terraform/hub_spoke/
 │                                         #   v1.5.0 adds test_oci_view.py, test_view_layers.py / test_builder_layers.py, test_layout_label_modes.py,

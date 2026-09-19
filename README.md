@@ -275,7 +275,7 @@ python3 oci-drawio-architect/examples/make_screenshots.py
 oci-drawio-architect/pack.sh /path/to/output
 ```
 
-Expect generated `.drawio` files to weigh roughly 7–13 KB per embedded icon (the four-page demo with 59 icons is about 550 KB; the reference sample with 27 icons and 4 badges about 280 KB). The reference sample itself is `OCI_Architecture.drawio` at the repository root.
+Expect generated `.drawio` files to weigh roughly 7–13 KB per embedded icon (the six-page demo with 95 icons is about 910 KB; the reference sample with 27 icons and 4 badges about 280 KB). The reference sample itself is `OCI_Architecture.drawio` at the repository root.
 
 ---
 
