@@ -1355,6 +1355,29 @@ class TestTopologyCells(TempDirMixin, unittest.TestCase):
         self.assertEqual(geom(cell(d.root, icon))["y"], d._cells[icon]["y"])
         self.assertEqual(geom(cell(d.root, box))["y"], 90)
 
+    def test_reparent_keeps_the_absolute_position_and_moves_the_caption(self):
+        d = DrawioBuilder()
+        r = d.add_group("R", 0, 0, 900, 600, group_type="region")
+        box = d.add_group("C", 100, 100, 400, 300, parent=r, group_type="compartment", key="cmp")
+        v = d.add_group("VCN", 150, 150, 200, 150, parent=r, group_type="vcn", key="vcn")
+        icon = d.add_icon("SGW", "service_gateway", 320, 200, parent=r, key="sgw")
+        before = (d.abs_bbox(v), d.abs_bbox(icon), d._abs_footprint(icon))
+        d.reparent(v, box)
+        d.reparent(icon, box)
+        self.assertEqual((d.abs_bbox(v), d.abs_bbox(icon), d._abs_footprint(icon)), before)
+        self.assertEqual(d._cells[v]["x"], 50)
+        self.assertEqual(d._cells[icon]["parent"], box)
+        self.assertEqual(d._cells[d._cells[icon]["label_id"]]["parent"], box)
+        self.assertEqual(cell(d.root, v).get("parent"), box)
+        self.assertEqual(geom(cell(d.root, v))["x"], 50)
+
+    def test_reparent_refuses_to_nest_a_cell_in_its_own_child(self):
+        d = DrawioBuilder()
+        outer = d.add_group("O", 0, 0, 400, 300, group_type="region")
+        inner = d.add_group("I", 20, 40, 200, 150, parent=outer, group_type="vcn")
+        with self.assertRaises(ValueError):
+            d.reparent(outer, inner)
+
 
 # ---------------------------------------------------------------------------
 # 8. validate() / check_overlaps() / validate_file()

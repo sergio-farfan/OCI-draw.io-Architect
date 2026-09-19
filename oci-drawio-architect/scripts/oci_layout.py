@@ -194,6 +194,13 @@ ATT_FONT_SIZE = LABEL_FONT_SIZE  # BOX_STYLE font size (label_lines / height est
 ATT_TEXT_PAD = 4                 # text inset each side of an attachment box
 DRG_CLUSTER_GAP = 40             # between stacked DRG clusters
 
+# B04 / L2: compartment containers (opt-in) and the tenancy wrapper.
+CMP_PAD = 30                     # compartment inner padding around its VCN columns
+CMP_TITLE_H = 40                 # compartment title band above the first VCN
+CMP_GAP = 40                     # between sibling compartment containers
+TEN_PAD = 25                     # tenancy container padding around the compartment row
+TEN_TITLE_H = 40                 # tenancy title band
+
 # model edge kind -> builder kind (+ colour). analytics / datalake are project
 # extensions kept for compatibility; management is an alias of control.
 EDGE_KINDS = {
@@ -758,6 +765,52 @@ def _hub_links(d: DrawioBuilder, hid, hub: dict, items, ids, explicit_pairs) -> 
         d.add_edge(a, b, hub.get("link_label") or "", parent=hid)
 
 
+def _union_box(d: DrawioBuilder, ids) -> tuple:
+    """(x0, y0, x1, y1) covering the given cells in their shared parent's space."""
+    x0 = y0 = None
+    x1 = y1 = None
+    for cid in ids:
+        e = d._cells[cid]
+        x, y, w, h = d.footprint(cid) if e["kind"] == "icon" else d.bbox(cid)
+        x0 = x if x0 is None else min(x0, x)
+        y0 = y if y0 is None else min(y0, y)
+        x1 = (x + w) if x1 is None else max(x1, x + w)
+        y1 = (y + h) if y1 is None else max(y1, y + h)
+    return (x0 or 0, y0 or 0, x1 or 0, y1 or 0)
+
+
+def _compartment_chain(tree, vcn_name: str) -> list:
+    """The compartment names enclosing one VCN, outermost first ([] when it is in none)."""
+    def walk(nodes, prefix):
+        for node in nodes:
+            chain = prefix + [node["name"]]
+            if vcn_name in node["vcns"]:
+                return chain
+            hit = walk(node["children"], chain)
+            if hit:
+                return hit
+        return []
+    return walk(tree, [])
+
+
+def _compartment_depth(tree) -> int:
+    return max((1 + _compartment_depth(n["children"]) for n in tree), default=0)
+
+
+def _compartment_gap(chain_a: list, chain_b: list) -> int:
+    """Extra column gap between two VCNs: the borders that close and open between them."""
+    if chain_a == chain_b:
+        return 0
+    common = 0
+    for a, b in zip(chain_a, chain_b):
+        if a != b:
+            break
+        common += 1
+    closing = len(chain_a) - common
+    opening = len(chain_b) - common
+    return (closing + opening) * CMP_PAD + CMP_GAP
+
+
 def _layout_hub(d: DrawioBuilder, region_id, hub: dict, vcn_y, vcn_h, reg, explicit_pairs=frozenset()):
     """The v1.3.0 nested on-premises panel: a child of the region, left of the DRG column."""
     items = list(hub.get("items") or [])
@@ -1077,6 +1130,50 @@ def _layout_drg_column(d: DrawioBuilder, region_id, drgs, col_x, stack_y, stack_
     return pending
 
 
+def _layout_compartments(d: DrawioBuilder, rid, model: dict, member_cells: dict, reg) -> dict:
+    """B04: wrap each compartment's VCN cells - and their border gateways - in a container.
+
+    Runs after the VCN columns and their gateways are placed and before
+    ``fit_to_children(region)``: each container is fitted to the cells it
+    claims and they are re-parented into it, innermost first. The DRG column,
+    the on-premises panel and the OSN band stay region children, because the
+    DRG column is shared by VCNs that may sit in different compartments
+    (spec 6.3).
+    """
+    tree = compartment_tree(model)
+    ids = {}
+
+    def place(node, parent_id):
+        own = [cid for cid in (place(child, parent_id) for child in node["children"]) if cid]
+        for vname in node["vcns"]:
+            own.extend(member_cells.get(vname, []))
+        if not own:
+            return None
+        x0, y0, x1, y1 = _union_box(d, own)
+        gid = d.add_group(node["name"], x0 - CMP_PAD, y0 - CMP_TITLE_H,
+                          (x1 - x0) + 2 * CMP_PAD, (y1 - y0) + CMP_TITLE_H + CMP_PAD,
+                          parent=parent_id, group_type="compartment",
+                          key=f"compartment:{node['name']}")
+        for cid in own:
+            d.reparent(cid, gid)
+        reg.containers[f"compartment:{node['name']}"] = gid
+        ids[node["name"]] = gid
+        return gid
+
+    roots = [cid for cid in (place(n, rid) for n in tree) if cid]
+    if roots and model.get("tenancy_name"):
+        x0, y0, x1, y1 = _union_box(d, roots)
+        tid = d.add_group(f"Tenancy: {model['tenancy_name']} (Root Compartment)",
+                          x0 - TEN_PAD, y0 - TEN_TITLE_H,
+                          (x1 - x0) + 2 * TEN_PAD, (y1 - y0) + TEN_TITLE_H + TEN_PAD,
+                          parent=rid, group_type="tenancy", key="tenancy")
+        for cid in roots:
+            d.reparent(cid, tid)
+        reg.containers["tenancy"] = tid
+        ids["__tenancy__"] = tid
+    return ids
+
+
 def _resolve_attachment_target(reg: _Registry, pe: dict):
     """Cell the attachment box connects to: its VCN's border, a hub item, or nothing."""
     if pe.get("vcn") is not None:
@@ -1186,7 +1283,18 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     # A top-border gateway hangs its caption above the VCN: the stack starts
     # lower so the caption stays inside the region's padding.
     vcn_y = VCN_Y_TOP_GW if any(s["top"] for s in all_sides) else VCN_Y
+    # B04: every compartment level adds a title band above and a padding left of
+    # the stack; the containers are drawn after the columns, so the room has to
+    # be reserved now.
+    cmp_tree = compartment_tree(model) if ctx["show_compartments"] else []
+    cmp_depth = _compartment_depth(cmp_tree)
+    cmp_chains = [_compartment_chain(cmp_tree, v.get("name") or "") for v in vcns]
+    tenancy_wrap = bool(cmp_tree) and bool(model.get("tenancy_name"))
+    if cmp_depth:
+        vcn_y += cmp_depth * CMP_TITLE_H + (TEN_TITLE_H + TEN_PAD if tenancy_wrap else 0)
+        x += cmp_depth * CMP_PAD + (TEN_PAD if tenancy_wrap else 0)
     vcn_boxes = []
+    member_cells = {}           # VCN name -> the cells its compartment claims
     edge_gateways = []          # (vcn index, side, gateway dict, icon id)
     for i, vcn in enumerate(vcns):
         sides = all_sides[i]
@@ -1212,17 +1320,28 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                                 top_pad=VCN_TOP_PAD_GW if sides["top"] else PAD,
                                 min_h=need_h, min_w=need_w, label_mode=ctx["subnet_label"])
         vcn_boxes.append((vid, x, vcn_y, w, h))
+        claimed = [vid]
         for side in ("bottom", "top", "right", "left"):
             for slot, g in enumerate(sides[side]):
                 gid = _place_edge_gateway(d, rid, (x, vcn_y, w, h), side, slot, g, reg,
                                           caption_above=(side == "top"))
                 edge_gateways.append((i, side, g, gid))
+                claimed.append(gid)
+        member_cells[vcn.get("name") or ""] = claimed
         # The gap must clear the captions of both facing borders: this column's
-        # right-side gateways and the next column's left-side ones (spec A17).
+        # right-side gateways and the next column's left-side ones (spec A17),
+        # plus the compartment borders that close and open between the columns.
         next_left = all_sides[i + 1]["left"] if i + 1 < len(all_sides) else []
         x += w + (VCN_COLUMN_GAP_GW if (sides["right"] or next_left) else VCN_COLUMN_GAP)
+        if cmp_depth and i + 1 < len(vcns):
+            x += _compartment_gap(cmp_chains[i], cmp_chains[i + 1])
 
     ref_h = max((b[4] for b in vcn_boxes), default=400)
+    # B04: the compartment / tenancy borders close to the right of the last VCN
+    # column and below the stack; without this the OSN band and the region-level
+    # OCI Services panel would be drawn straight over them.
+    cmp_edge = (cmp_depth * CMP_PAD + (TEN_PAD if tenancy_wrap else 0)) if cmp_depth else 0
+    x += cmp_edge
     if top_services:
         rows_n, cols = _grid(len(top_services), 2)
         prov_h = ROW1_Y + (rows_n - 1) * ROW_H + ICON_FOOTPRINT_H + SUBNET_BOTTOM_PAD
@@ -1258,7 +1377,8 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
             stack_right = (x - VCN_COLUMN_GAP) if (vcn_boxes or top_services) else (stack_left + VCN_MIN_W)
             band_w = max(VCN_MIN_W, stack_right - stack_left)
             band_cols = max(1, min(len(osn_items), int((band_w - 2 * PAD) // COL_W) or 1))
-            band_y = int(max(vcn_y + ref_h, _children_bottom(d, rid)) + OSN_BAND_GAP)
+            band_y = int(max(vcn_y + ref_h, _children_bottom(d, rid))
+                         + OSN_BAND_GAP + cmp_edge)
             osn_id, _, _ = _layout_osn(d, rid, osn_items, stack_left, band_y, 0, reg,
                                        min_w=band_w, cols=band_cols)
         else:
@@ -1273,6 +1393,9 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
             _name = str(_vcn.get("name") or "")
             if _name and not (_vcn.get("services") or []):
                 reg.containers.setdefault("services:%s" % _name, osn_id)
+
+    if cmp_depth:
+        d.layout_info["compartments"] = _layout_compartments(d, rid, model, member_cells, reg)
 
     d.fit_to_children(rid, pad=PAD)
     canvas = _layout_locations(d, rid, ctx, hub if not nested_hub else None, drgs, vcn_y, ref_h,

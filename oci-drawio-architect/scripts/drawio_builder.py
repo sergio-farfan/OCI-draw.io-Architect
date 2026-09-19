@@ -2839,6 +2839,33 @@ class DrawioBuilder:
                 e[name] = float(val)
         self._set_geometry(cid, x=e["x"], y=e["y"], width=e["w"], height=e["h"])
 
+    def reparent(self, cid, new_parent) -> None:
+        """Move a cell under another container, keeping its absolute position.
+
+        An icon takes its caption with it. Used by the recipe to wrap already
+        laid out cells in a compartment container (B04) or a groups[] box
+        (B05/B06), so the validator's containment and foreign-containment rules
+        walk the true ancestor chain.
+        """
+        e = self._cells[cid]
+        new_parent = self._check_parent(new_parent, "reparent")
+        if new_parent == e["parent"]:
+            return
+        if cid == new_parent or _is_ancestor_builder(self._cells, cid, new_parent):
+            raise ValueError(f"reparent: {new_parent!r} is inside {cid!r}")
+        ox, oy = self._origin(e["parent"])
+        nx, ny = self._origin(new_parent)
+        moved = [cid]
+        lid = e.get("label_id")
+        if lid and lid in self._cells and self._cells[lid]["parent"] == e["parent"]:
+            moved.append(lid)
+        for mid in moved:
+            el = self._find_cell_element(mid)
+            if el is not None:
+                el.set("parent", new_parent)
+            self._cells[mid]["parent"] = new_parent
+            self.move(mid, dx=ox - nx, dy=oy - ny)
+
     def move(self, cid, dx=0, dy=0) -> None:
         """Translate a cell inside its parent. An icon carries its slot with it.
 
