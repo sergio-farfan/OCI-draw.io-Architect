@@ -1790,7 +1790,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                      "layers": {"enabled": [], "hidden": [], "cells": {}},
                      "filter": {k: filter_report[k] for k in
                                 ("include", "exclude", "items_kept", "items_dropped",
-                                 "edges_dropped", "containers_dropped")},
+                                 "edges_dropped", "containers_dropped", "groups_dropped")},
                      "pruned": {"items": filter_report["pruned_items"],
                                 "services": filter_report["pruned_services"]},
                      "edges": edge_mix}
