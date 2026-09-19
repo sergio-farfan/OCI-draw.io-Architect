@@ -193,6 +193,37 @@ class RelationshipSidecarTests(unittest.TestCase):
                                  "--from-json", str(src), "--relationships", str(rel)])
             self.assertEqual(rc, 2)
 
+    def run_cli(self, raw, *extra):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "bundle.json"
+            src.write_text(json.dumps(raw), encoding="utf-8")
+            rel = Path(tmp) / "rel.json"
+            rel.write_text('[{"source": "a"}]', encoding="utf-8")       # no target: unreadable
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                rc = qt.main(["--compartment-id", "ocid1.compartment.oc1..aaaac",
+                              "--from-json", str(src), "--relationships", str(rel), *extra])
+            return rc, err.getvalue()
+
+    def test_a_non_matching_vcn_id_is_still_reported_before_an_unreadable_sidecar(self):
+        """The sidecar is loaded before build_model so it can be merged before the
+        filter, but the failure is reported after the --vcn-id check: that is the
+        order parse_terraform.py reports the same two failures in (exit 1, then 2)."""
+        rc, err = self.run_cli(bundle(), "--vcn-id", "ocid1.vcn.oc1..nope")
+        self.assertEqual(rc, 1)
+        self.assertIn("No VCN matches", err)
+
+    def test_the_sidecar_error_precedes_the_view_emptied_message(self):
+        """Without the sidecar's edges the mode prunes the services away, so the
+        'view emptied the model' line would report a consequence of the bad file."""
+        services_only = {"networking_topology": [], "search": [{"data": {"items": [
+            {"resource-type": "Bucket", "identifier": BUCKET, "display-name": "logs-bucket",
+             "lifecycle-state": "ACTIVE"}]}}]}
+        rc, err = self.run_cli(services_only)
+        self.assertEqual(rc, 2)
+        self.assertNotIn("The view emptied the model", err)
+        self.assertIn("needs a 'source' and a 'target'", err)
+
 
 class EmptyByTheViewTests(unittest.TestCase):
     """A1: the mode always reports what it removed, empty result included."""

@@ -62,8 +62,10 @@ https://docs.oracle.com/en-us/iaas/Content/Search/Tasks/queryingresources_topic-
 ``--relationships`` is merged BEFORE the mode and the filter run, as it is in
 ``parse_terraform.py``: an endpoint of a surviving edge participates (6.6 clause 1), so an edge the
 user declared by hand keeps both of its endpoints in a ``participating`` model - and, by the same
-ordering, is itself subject to ``--discovery`` (its kind is ``user``).  When the mode or a filter
-empties the model, the counts that say so are printed before the exit-1 message.
+ordering, is itself subject to ``--discovery`` (its kind is ``user``).  An unreadable sidecar still
+exits 2, but only after a non-matching ``--vcn-id`` has exited 1, which is the order
+``parse_terraform.py`` reports the same two failures in.  When the mode or a filter empties the
+model, the counts that say so are printed before the exit-1 message.
 
 Usage
 -----
@@ -711,14 +713,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     include += [f"type={t}" for t in (args.resource_type or [])]
     include += [f"subnet={s}" for s in (args.subnet_id or [])]
     extra_edges = None
+    relationships_error = None
     if args.relationships:
-        # Loaded here, merged inside build_model before the mode and the filter
-        # run, exactly as parse_terraform.py orders it (6.6 clause 1).
+        # Loaded here so build_model can merge it before the mode and the filter
+        # run, exactly as parse_terraform.py orders it (6.6 clause 1).  A failure
+        # is held rather than reported: parse_terraform.py reports a non-matching
+        # --vcn (exit 1) before an unreadable sidecar (exit 2) and this front end
+        # keeps that precedence even though its VCN selection is inside build_model.
         try:
             extra_edges = pt.load_relationships(args.relationships)
         except pt.InputError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return 2
+            relationships_error = exc
     try:
         model = build_model(bundle, args.compartment_id, args.vcn_id, args.region,
                             not args.no_inferred_edges, source_path, mode=args.mode,
@@ -731,6 +736,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     if model is None:
         print(f"No VCN matches {short_ocid(args.vcn_id or '')}.", file=sys.stderr)
         return 1
+    if relationships_error is not None:
+        # Before the emptiness check: the sidecar's edges are what keep their
+        # endpoints in a participating model, so "the view emptied the model"
+        # would otherwise describe a consequence of the unreadable file.
+        print(f"Error: {relationships_error}", file=sys.stderr)
+        return 2
     if pt.model_is_empty(model):
         # A filter or the participating mode can empty the model itself, and the
         # warning that says so is the only thing that explains the exit code.
