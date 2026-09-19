@@ -9,6 +9,10 @@ Fixtures live under tests/fixtures/terraform/:
     tfvars_map/   for_each-driven VCNs whose names/CIDRs only exist in *.auto.tfvars.
     hub_spoke/    two VCNs, one DRG with VCN / FastConnect / RPC attachments, an LPG pair
                   and a regional log group with no single VCN to attach it to.
+    landing_zone/ two compartments, two VCNs, an OKE cluster with two node pools and a DRG
+                  with two route tables.
+    oke_mixed/    an OKE cluster sharing its subnet with an unrelated instance, once in a
+                  subnet where the group box still fills whole icon rows and once not.
     plan.json     hand-written 'terraform show -json tfplan' with unknown values resolved
                   through configuration references, OCID links and nested modules.
 """
@@ -286,6 +290,120 @@ class HclLandingZoneTests(unittest.TestCase):
         line = pt.summarise(self.model)
         self.assertIn("2 compartment(s)", line)
         self.assertIn("1 group box(es)", line)
+
+    def test_the_landing_zone_lays_out(self):
+        import oci_layout as ol
+        self.assertEqual(ol.build_diagram(self.model).check_overlaps(strict=True), [])
+
+
+# ---------------------------------------------------------------------------
+# HCL mode: an OKE cluster sharing its subnet with an unrelated instance
+# ---------------------------------------------------------------------------
+
+class HclOkeMixedTests(unittest.TestCase):
+    """A group box may only span whole rows of its subnet's icon grid.
+
+    ``build_diagram`` refuses a box that would enclose a sibling icon (spec
+    section 6.5), so the parser orders the members into such a block or draws
+    no box at all - either way the model it emits lays out.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.model = pt.parse_terraform_dir(FIXTURES / "oke_mixed")
+        cls.vcn = cls.model["vcns"][0]
+
+    def test_valid(self):
+        self.assertEqual(pt.validate_model(self.model, BUILDER_ICONS), [])
+
+    def test_the_members_lead_the_grid_and_the_unrelated_instance_follows(self):
+        app = find_subnet(self.vcn, "sn-app")
+        self.assertEqual([i["address"] for i in app["items"]],
+                         ["oci_containerengine_cluster.app",
+                          "oci_containerengine_node_pool.app",
+                          "oci_core_instance.bastion"])   # declared first, moved behind the box
+        self.assertEqual(app["groups"], [{
+            "type": "oke_cluster", "label": "oke-app", "key": "oke:oke-app",
+            "items": ["oci_containerengine_cluster.app",
+                      "oci_containerengine_node_pool.app"]}])
+
+    def test_members_that_fill_no_whole_row_get_no_box_but_a_warning(self):
+        mgmt = find_subnet(self.vcn, "sn-mgmt")
+        self.assertNotIn("groups", mgmt)                  # 3 members beside 1 other icon
+        self.assertEqual([i["address"] for i in mgmt["items"]],
+                         ["oci_core_instance.jump",
+                          "oci_containerengine_cluster.mgmt",
+                          "oci_containerengine_node_pool.mgmt_a",
+                          "oci_containerengine_node_pool.mgmt_b"])
+        self.assertEqual([w for w in self.model["warnings"]
+                          if "oci_containerengine_cluster.mgmt" in w and "no OKE box" in w],
+                         self.model["warnings"])
+
+    def test_the_parsed_model_lays_out_and_passes_the_gate(self):
+        import oci_layout as ol
+        self.assertEqual(ol.build_diagram(self.model).check_overlaps(strict=True), [])
+
+    def test_a_second_cluster_in_one_subnet_stays_a_plain_icon(self):
+        """Two boxes stacked in one icon grid always collide, so only the first is drawn."""
+        tf = """
+resource "oci_core_vcn" "a" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  display_name   = "vcn-a"
+  cidr_blocks    = ["10.6.0.0/16"]
+}
+
+resource "oci_core_subnet" "app" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  vcn_id         = oci_core_vcn.a.id
+  display_name   = "sn-app"
+  cidr_block     = "10.6.1.0/24"
+}
+"""
+        for name in ("one", "two"):
+            tf += """
+resource "oci_containerengine_cluster" "%s" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  vcn_id         = oci_core_vcn.a.id
+  name           = "oke-%s"
+  endpoint_config {
+    subnet_id = oci_core_subnet.app.id
+  }
+}
+
+resource "oci_containerengine_node_pool" "%s" {
+  compartment_id = "ocid1.compartment.oc1..aaaa"
+  cluster_id     = oci_containerengine_cluster.%s.id
+  name           = "np-%s"
+  node_shape     = "VM.Standard.E4.Flex"
+  node_config_details {
+    placement_configs {
+      subnet_id = oci_core_subnet.app.id
+    }
+  }
+}
+""" % (name, name, name, name, name)
+        import oci_layout as ol
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "main.tf").write_text(tf, encoding="utf-8")
+            model = pt.parse_terraform_dir(Path(tmp))
+        subnet = model["vcns"][0]["subnets"][0]
+        self.assertEqual([g["key"] for g in subnet["groups"]], ["oke:oke-one"])
+        self.assertTrue(any("oci_containerengine_cluster.two" in w and "plain icon" in w
+                            for w in model["warnings"]), model["warnings"])
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+        self.assertEqual(ol.build_diagram(model).check_overlaps(strict=True), [])
+
+    def test_a_member_block_that_fills_whole_rows_is_kept_whatever_the_order(self):
+        subnet = pt.new_subnet("sn-x", "oci_core_subnet.x", "10.0.1.0/24", False, "app")
+        items = [pt.new_item("vm", n, "oci_core_instance", n) for n in ("a", "b", "c", "d")]
+        cols = pt._group_grid_cols(subnet, len(items))
+        self.assertEqual(cols, 2)
+        self.assertEqual([i["address"] for i in pt._row_block_order(items, ["c", "a"], cols)],
+                         ["c", "a", "b", "d"])
+        self.assertIsNone(pt._row_block_order(items, ["a", "b", "c"], cols))   # 3 of 4: no order
+        self.assertEqual(pt._row_block_order(items, ["a", "b", "c", "d"], cols), items)
+        self.assertIsNone(pt._row_block_order(items, ["a", "zz"], cols))       # not an item here
+        self.assertEqual(pt._group_grid_cols({"tier": "data"}, 7), 5)
 
 
 # ---------------------------------------------------------------------------
@@ -1029,6 +1147,28 @@ class HelperTests(unittest.TestCase):
         idx = len(model["edges"]) - 1
         model["edges"][idx]["target"] = "no-such-box"
         self.assertIn(f"edges[{idx}].target: 'no-such-box' is not an address in the model",
+                      pt.validate_model(model, BUILDER_ICONS))
+
+    def test_location_box_items_are_addresses_of_the_model(self):
+        """Section 5: internet / third_party items use the hub's item shape - so they are
+        addresses, an edge may terminate on one, and two cells may not share one."""
+        model = pt.parse_terraform_dir(FIXTURES / "three_tier")
+        target = model["vcns"][0]["subnets"][0]["items"][0]["address"]
+        model["internet"] = {"name": "Internet",
+                             "items": [pt.new_hub_item("user", "Customers", "internet",
+                                                       "internet.users")]}
+        model["third_party"] = [{"name": "3rd Party Cloud",
+                                 "items": [pt.new_hub_item("vm", "Peer", "internet", "tp.peer")]}]
+        addresses = set(pt.model_addresses(model))
+        self.assertIn("internet.users", addresses)
+        self.assertIn("tp.peer", addresses)
+        model["edges"].append(pt.new_edge("internet.users", target, "443"))
+        model["edges"].append(pt.new_edge("tp.peer", target, "443"))
+        self.assertEqual(pt.validate_model(model, BUILDER_ICONS), [])
+        # the duplicate-address rule is the safety net against two cells claiming
+        # one draw.io id: the builder raises "Duplicate cell key" without it
+        model["internet"]["items"][0]["address"] = target
+        self.assertIn(f"address {target!r} appears 2 times",
                       pt.validate_model(model, BUILDER_ICONS))
 
     def test_new_group_builds_both_scopes(self):
