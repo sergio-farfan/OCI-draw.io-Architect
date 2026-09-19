@@ -40,6 +40,10 @@ Probe order and sources
    (absolute paths).  Files named ``*dark*``/``*black*`` become ``logo_light`` (a dark
    logo for light backgrounds); ``*white*``/``*light*`` become ``logo_dark``.
 
+The probe never detects a VIEW choice. ``purpose`` (v1.5.0, ANSWERED_KEYS) is the one view key the
+settings file carries: the command's Step 1 asks it and writes it back, and this module only gives
+it a stable position in the frontmatter.
+
 Output: a YAML frontmatter block on stdout suitable for
 ``.claude/oci-drawio-architect.local.md``; a human summary goes to stderr.
 
@@ -989,11 +993,18 @@ FIELD_ORDER = (
     "compartment_ocid",
     "compartments",
     "vcns",
+    # A4: the ONE view choice that is remembered between runs, because the
+    # guidelines ask for the diagram's purpose to be recorded with the diagram.
+    # It is never DETECTED - Step 1 asks it and writes it back. Every other view
+    # key (detail, label_mode, layers, filter, mode, global_services) is a
+    # per-run choice, and a stale remembered filter is a correctness problem.
+    "purpose",
     "logo_light",
     "logo_dark",
     "terraform_dir",
     "terraform_dirs",
 )
+ANSWERED_KEYS = ("purpose",)
 INTERNAL_KEYS = frozenset({"cli_warning"})
 
 
