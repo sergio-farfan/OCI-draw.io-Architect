@@ -36,7 +36,12 @@ HUB_TITLES = {"onprem": "On-premises", "remote_region": "Remote region"}
 LOCATION_MODES = ("outside", "nested")          # L1: Oracle's Location Canvas, or the 1.3.0 nested panel
 GATEWAY_EDGES = ("auto", "internet", "top", "bottom")
 GATEWAY_SIDES = ("top", "right", "bottom", "left")
-SUBNET_LABEL_MODES = ("twoline", "inline")      # L4: name+token over CIDR, or the 1.3.0 single line
+# L4: name+token over CIDR, or the 1.3.0 single line. v1.5.0 adds "name" - the
+# name and its (Public)/(Private) token with NO CIDR, which is what the
+# guidelines' "show subnet CIDRs when the view is network-focused" means for
+# the executive and application levels (spec 6.3). An enum WIDENING: every
+# 1.4.0 value stays valid and only a 1.5.0 writer emits the new one.
+SUBNET_LABEL_MODES = ("twoline", "inline", "name")
 ATTACHMENT_STYLE_MODES = ("solid", "dotted")    # mirrors drawio_builder.ATTACHMENT_STYLES
 # G6: one grouping mechanism for B05 (User Group, Tier) and B06 (OKE cluster).
 GROUP_BOX_TYPES = ("oke_cluster", "tier", "user_group", "other")
@@ -134,6 +139,16 @@ REGIONAL_ICON_KEYS = frozenset({
 # "regional" override is never misclassified into the OSN panel.
 _VCN_RESIDENT_TYPES = frozenset({"oci_dns_resolver"})
 
+# v1.5.0 / spec 6.7 (C06): the tenancy-scoped services of the team's diagram
+# guidelines section 4 - IAM, Policies, Audit and public DNS. They stay in
+# REGIONAL_ICON_KEYS as well, because with the default global_services: "osn"
+# they keep landing in the Oracle Services Network panel, exactly as Oracle's
+# own deck slides 29-31 draw them (V7 / A2). Only the "bucket" view separates
+# them, and it reads service_scope() rather than is_regional().
+GLOBAL_ICON_KEYS = frozenset({"iam", "identity", "policies", "policy",
+                              "auditing", "audit", "dns"})
+SERVICE_SCOPES = ("vcn", "regional", "global")
+
 
 _WARNED = set()
 
@@ -186,19 +201,46 @@ def is_onprem_item(item: dict) -> bool:
             or str(item.get("icon") or "").lower() in ONPREM_ICON_KEYS)
 
 
-def is_regional(item: dict) -> bool:
-    flag = item.get("regional")
+def service_scope(item: dict) -> str:
+    """``global`` | ``regional`` | ``vcn`` - where one service item belongs (6.7).
+
+    Precedence: the explicit ``scope`` key, then the legacy ``regional`` boolean,
+    then the VCN-resident type list, then the icon tables. An item is global,
+    else regional, else VCN-resident.
+    """
+    scope = (item or {}).get("scope")
+    if scope not in (None, ""):
+        return _choice(scope, SERVICE_SCOPES, "vcn", "services[].scope")
+    flag = (item or {}).get("regional")
     if isinstance(flag, bool):
-        return flag
+        return "regional" if flag else "vcn"
     if isinstance(flag, str) and flag.strip().lower() in ("true", "false"):
-        return flag.strip().lower() == "true"
+        return "regional" if flag.strip().lower() == "true" else "vcn"
     if isinstance(flag, int) and not isinstance(flag, bool):
-        return bool(flag)
+        return "regional" if flag else "vcn"
     if flag not in (None, ""):
         _warn_once(f"WARNING: regional: {flag!r} is not a boolean; falling back to the icon table")
-    if str(item.get("type") or "") in _VCN_RESIDENT_TYPES:
-        return False
-    return str(item.get("icon") or "") in REGIONAL_ICON_KEYS
+    if str((item or {}).get("type") or "") in _VCN_RESIDENT_TYPES:
+        return "vcn"
+    icon = str((item or {}).get("icon") or "")
+    if icon in GLOBAL_ICON_KEYS:
+        return "global"
+    return "regional" if icon in REGIONAL_ICON_KEYS else "vcn"
+
+
+def is_global(item: dict) -> bool:
+    """6.7: a tenancy-scoped service - IAM, Policies, Audit, public DNS."""
+    return service_scope(item) == "global"
+
+
+def is_regional(item: dict) -> bool:
+    """Regional Oracle service (Oracle Services Network panel) vs VCN-resident.
+
+    Unchanged for every 1.4.0 model: with the default ``global_services: "osn"``
+    a global service is still drawn in the OSN panel, so it must still answer
+    True here. ``service_scope()`` is the three-valued reader the bucket uses.
+    """
+    return service_scope(item) in ("regional", "global")
 
 
 def badge_refs(value) -> List[dict]:
@@ -223,19 +265,21 @@ def drg_route_tables(drg: dict) -> List[dict]:
     return badge_refs((drg or {}).get("route_table"))
 
 
-def label_parts(name, cidr=None, public=None) -> Tuple[str, str]:
+def label_parts(name, cidr=None, public=None, with_cidr: bool = True) -> Tuple[str, str]:
     """L4 / B08: (line 1, line 2) of a two-line subnet or VCN label.
 
     Line 1 is the name plus a ``(Public)`` / ``(Private)`` token when ``public``
     is present AND a bool - so parser output is always marked and a hand-written
-    model that never mentions it stays unmarked. Line 2 is the CIDR.
+    model that never mentions it stays unmarked. Line 2 is the CIDR, or empty
+    when ``with_cidr`` is False (the v1.5.0 ``name`` mode, spec 6.3: the
+    public / private designation is never dropped, only the CIDR).
     """
     line1 = str(name or "")
     if isinstance(public, bool):
         token = "(Public)" if public else "(Private)"
         if token.lower() not in line1.lower():
             line1 = f"{line1} {token}".strip()
-    return line1, str(cidr or "")
+    return line1, (str(cidr or "") if with_cidr else "")
 
 
 def choose_drg_style(requested: str, n_attachments: int) -> str:
@@ -487,6 +531,7 @@ def classify_topology(model: dict) -> dict:
 __all__ = [
     "TOPOLOGY_KINDS", "ATTACHMENT_TYPES", "ONPREM_ATTACHMENT_TYPES", "ATTACHMENT_LINK_LABELS",
     "DRG_ICON_KEYS", "RPC_ICON_KEYS", "DRG_BOX_THRESHOLD", "REGIONAL_ICON_KEYS",
+    "GLOBAL_ICON_KEYS", "SERVICE_SCOPES", "service_scope", "is_global",
     "ONPREM_ITEM_TYPES", "ONPREM_ICON_KEYS", "HUB_KINDS", "HUB_TITLES", "hub_kind",
     "LOCATION_MODES", "GATEWAY_EDGES", "GATEWAY_SIDES", "SUBNET_LABEL_MODES",
     "ATTACHMENT_STYLE_MODES", "GROUP_BOX_TYPES", "GROUP_BOX_TITLES", "GROUP_SCOPES",
