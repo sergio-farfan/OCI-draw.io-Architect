@@ -59,6 +59,12 @@ multi-expression filter cannot be pushed down without changing its meaning.
 Sources: https://docs.oracle.com/en-us/iaas/Content/Search/Concepts/querysyntax.htm and
 https://docs.oracle.com/en-us/iaas/Content/Search/Tasks/queryingresources_topic-To_run_a_custom_freeform_query_to_find_a_resource.htm
 
+``--relationships`` is merged BEFORE the mode and the filter run, as it is in
+``parse_terraform.py``: an endpoint of a surviving edge participates (6.6 clause 1), so an edge the
+user declared by hand keeps both of its endpoints in a ``participating`` model - and, by the same
+ordering, is itself subject to ``--discovery`` (its kind is ``user``).  When the mode or a filter
+empties the model, the counts that say so are printed before the exit-1 message.
+
 Usage
 -----
     python3 query_tenancy.py --compartment-id OCID [--vcn-id OCID] [--profile P] [--region R]
@@ -523,12 +529,18 @@ DEFAULT_MODE = "participating"
 def build_model(bundle: Dict[str, list], compartment_id: Optional[str] = None, vcn_id: Optional[str] = None,
                 region: Optional[str] = None, inferred_edges: bool = True,
                 source_path: Optional[str] = None, mode: Optional[str] = None,
-                filter_spec=None, discovery=None) -> Optional[dict]:
+                filter_spec=None, discovery=None, extra_edges=None) -> Optional[dict]:
     """Bundle of CLI responses -> MODEL (None when ``--vcn-id`` matches no VCN).
 
     ``mode`` defaults to ``participating`` (A1): a tenancy dump routinely holds
     dozens of regional services with no edge, and they are the main reason a
     live-tenancy diagram is unreadable.
+
+    ``extra_edges`` is the ``--relationships`` sidecar (``pt.load_relationships``).
+    It is merged BEFORE the mode and the filter run, as ``parse_terraform.py``
+    does: 6.6 clause 1 makes the endpoint of a surviving edge participate, and a
+    user-declared edge is the most explicit request there is, so its endpoints
+    must not be pruned out from under it.
     """
     ents, rels = collect_entities(bundle)
     for syn in apply_relationships(ents, rels):
@@ -553,6 +565,8 @@ def build_model(bundle: Dict[str, list], compartment_id: Optional[str] = None, v
     model["edges"] = pt.dedupe_edges(model["edges"] + _route_edges(model, ents, rels))
     if vcn_id and not pt.select_vcn(model, vcn_id):
         return None
+    if extra_edges:
+        model["edges"] = pt.dedupe_edges(list(model["edges"]) + list(extra_edges))
     mode = mode or DEFAULT_MODE
     if not inferred_edges and discovery is None:
         discovery = ov.NO_INFERRED_DISCOVERY
@@ -664,7 +678,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--discovery", default=None, metavar="K,K",
                         help=f"keep only edges discovered this way: {','.join(ov.DISCOVERY_KINDS)}")
     parser.add_argument("--relationships", default=None, metavar="FILE",
-                        help="JSON sidecar of extra edges, merged with discovery='user'")
+                        help="JSON sidecar of extra edges, merged with discovery='user' "
+                             "before --mode and --filter are applied")
     args = parser.parse_args(argv)
 
     if args.from_json:
@@ -695,21 +710,24 @@ def main(argv: Optional[List[str]] = None) -> int:
     include += [f"tag:{t}" for t in (args.tag or [])]
     include += [f"type={t}" for t in (args.resource_type or [])]
     include += [f"subnet={s}" for s in (args.subnet_id or [])]
+    extra_edges = None
+    if args.relationships:
+        # Loaded here, merged inside build_model before the mode and the filter
+        # run, exactly as parse_terraform.py orders it (6.6 clause 1).
+        try:
+            extra_edges = pt.load_relationships(args.relationships)
+        except pt.InputError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
     try:
         model = build_model(bundle, args.compartment_id, args.vcn_id, args.region,
                             not args.no_inferred_edges, source_path, mode=args.mode,
                             filter_spec=include,
-                            discovery=args.discovery.split(",") if args.discovery else None)
+                            discovery=args.discovery.split(",") if args.discovery else None,
+                            extra_edges=extra_edges)
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 2
-    if model is not None and args.relationships:
-        try:
-            model["edges"] = pt.dedupe_edges(list(model["edges"])
-                                             + pt.load_relationships(args.relationships))
-        except pt.InputError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
-            return 2
     if model is None:
         print(f"No VCN matches {short_ocid(args.vcn_id or '')}.", file=sys.stderr)
         return 1
@@ -718,6 +736,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         # warning that says so is the only thing that explains the exit code.
         for warning in model.get("warnings") or []:
             print(short_ocid(warning), file=sys.stderr)
+        # A1: the mode always reports what it removed. Without this the user
+        # reads "nothing recognisable" when the resources WERE recognised and
+        # this front end's participating default is what emptied the model.
+        report = model.get("filter_report") or {}
+        pruned = int(report.get("pruned_items") or 0) + int(report.get("pruned_services") or 0)
+        dropped = int(report.get("items_dropped") or 0)
+        if pruned or dropped:
+            parts, remedies = [], []
+            if dropped:
+                parts.append(f"{dropped} item(s) dropped by the filter")
+                remedies.append("relax or drop the filter expressions")
+            if pruned:
+                parts.append(f"{pruned} pruned by mode={report.get('mode')}")
+                remedies.append("re-run with --mode all")
+            print("The view emptied the model: " + ", ".join(parts) + ". To see them, "
+                  + " or ".join(remedies) + ".", file=sys.stderr)
         print("No recognisable resources in the topology/search data.", file=sys.stderr)
         return 1
     problems = pt.validate_model(model, pt._builder_icon_keys())

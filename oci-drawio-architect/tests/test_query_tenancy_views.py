@@ -13,6 +13,7 @@ TESTS_DIR = Path(__file__).resolve().parent
 SCRIPTS_DIR = TESTS_DIR.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 import oci_view as ov  # noqa: E402,F401
+import parse_terraform as pt  # noqa: E402
 import query_tenancy as qt  # noqa: E402
 
 
@@ -145,6 +146,104 @@ class FilterTests(unittest.TestCase):
                 ent["freeform-tags"] = {"Application": "payments"}
         model = quiet(qt.build_model, raw, mode="all")
         self.assertEqual(item(model, INSTANCE)["tags"]["freeform"], {"Application": "payments"})
+
+
+class RelationshipSidecarTests(unittest.TestCase):
+    """6.6 clause 1: a user-declared edge is merged before the mode prunes."""
+
+    def test_a_sidecar_edge_keeps_its_endpoint_under_the_participating_default(self):
+        model = quiet(qt.build_model, bundle(),
+                      extra_edges=[pt.new_edge(INSTANCE, BUCKET, "writes", "data",
+                                               discovery="user")])
+        self.assertEqual(model["mode"], "participating")
+        self.assertTrue(item(model, BUCKET))          # not pruned: it is an endpoint now
+
+    def test_the_sidecar_is_still_subject_to_the_discovery_selector(self):
+        """Merged before filtering, so --discovery applies to it as it does in
+        parse_terraform.py - the two front ends order the merge the same way."""
+        model = quiet(qt.build_model, bundle(), mode="all", discovery=("association", "config"),
+                      extra_edges=[pt.new_edge(INSTANCE, BUCKET, "writes", "data",
+                                               discovery="user")])
+        self.assertEqual([e for e in model["edges"] if e["discovery"] == "user"], [])
+
+    def test_the_cli_merges_the_sidecar_before_the_mode_prunes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "bundle.json"
+            src.write_text(json.dumps(bundle()), encoding="utf-8")
+            rel = Path(tmp) / "rel.json"
+            rel.write_text(json.dumps([{"source": INSTANCE, "target": BUCKET,
+                                        "label": "writes", "kind": "data"}]), encoding="utf-8")
+            out = Path(tmp) / "model.json"
+            rc = quiet(qt.main, ["--compartment-id", "ocid1.compartment.oc1..aaaac",
+                                 "--from-json", str(src), "--relationships", str(rel),
+                                 "--out", str(out)])
+            self.assertEqual(rc, 0)                   # not 1 from schema validation
+            model = json.loads(out.read_text(encoding="utf-8"))
+            self.assertEqual(model["mode"], "participating")
+            self.assertTrue([e for e in model["edges"] if e["target"] == BUCKET])
+            self.assertTrue(item(model, BUCKET))
+
+    def test_an_unreadable_sidecar_still_exits_2(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "bundle.json"
+            src.write_text(json.dumps(bundle()), encoding="utf-8")
+            rel = Path(tmp) / "rel.json"
+            rel.write_text('[{"source": "a"}]', encoding="utf-8")
+            rc = quiet(qt.main, ["--compartment-id", "ocid1.compartment.oc1..aaaac",
+                                 "--from-json", str(src), "--relationships", str(rel)])
+            self.assertEqual(rc, 2)
+
+
+class EmptyByTheViewTests(unittest.TestCase):
+    """A1: the mode always reports what it removed, empty result included."""
+
+    ADB = "ocid1.autonomousdatabase.oc1..aaaaadb"
+
+    def services_only(self):
+        return {"networking_topology": [], "search": [{"data": {"items": [
+            {"resource-type": "Bucket", "identifier": BUCKET, "display-name": "logs-bucket",
+             "lifecycle-state": "ACTIVE"},
+            {"resource-type": "AutonomousDatabase", "identifier": self.ADB,
+             "display-name": "adb-core", "lifecycle-state": "AVAILABLE"}]}}]}
+
+    def run_cli(self, *extra):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "bundle.json"
+            src.write_text(json.dumps(self.services_only()), encoding="utf-8")
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                rc = qt.main(["--compartment-id", "ocid1.compartment.oc1..aaaac",
+                              "--from-json", str(src), *extra])
+            return rc, err.getvalue()
+
+    def test_the_prune_count_and_the_escape_hatch_are_named(self):
+        rc, err = self.run_cli()
+        self.assertEqual(rc, 1)
+        self.assertIn("2 pruned by mode=participating", err)
+        self.assertIn("--mode all", err)
+        self.assertIn("No recognisable resources", err)
+
+    def test_mode_all_keeps_the_same_two_services(self):
+        rc, err = self.run_cli("--mode", "all")
+        self.assertEqual(rc, 0)
+        self.assertIn("2 service(s)", err)
+
+    def test_a_filter_that_empties_the_model_names_the_filter_not_the_mode(self):
+        rc, err = self.run_cli("--mode", "all", "--filter", "name=nothing-matches-this")
+        self.assertEqual(rc, 1)
+        self.assertIn("2 item(s) dropped by the filter", err)
+        self.assertNotIn("--mode all", err)
+
+    def test_a_genuinely_empty_bundle_says_nothing_about_the_view(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "bundle.json"
+            src.write_text(json.dumps({"networking_topology": [], "search": []}), encoding="utf-8")
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                rc = qt.main(["--compartment-id", "ocid1.compartment.oc1..aaaac",
+                              "--from-json", str(src)])
+        self.assertEqual(rc, 1)
+        self.assertNotIn("The view emptied the model", err.getvalue())
 
 
 class DocstringTests(unittest.TestCase):
