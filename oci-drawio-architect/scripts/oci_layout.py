@@ -6,7 +6,8 @@ generated diagram has the same structure as the reference sample:
 
     Title block (bold subject, italic "Region label (region) - Compartment: X")
     Region (solid, label top-left)
-      +-- On-premises panel (left, vertically centred on the VCN stack): CPE, virtual circuit, RPC peer
+      +-- Hub panel (On-premises / Remote region; left, vertically centred on the VCN stack):
+      |   CPE, virtual circuit, RPC peer
       +-- DRG column (region level, centred on the VCN stack): DRG icon with one attachment
       |   box per attachment beside it, each grown to hold its own display name (VCN
       |   attachments facing the VCNs, on-prem / RPC attachments facing the on-premises
@@ -26,7 +27,8 @@ Model schema v2 (JSON-serialisable dict; every key optional except vcns/subject)
       "subject": "Spoke-VCN-D", "region": "us-ashburn-1", "region_label": "Ashburn",
       "compartment": "Spoke-VCN-D", "tenancy_name": null,
       "drg_style": "auto",                # auto | icon | box (CLI --drg-style overrides)
-      "hub": {"name": "On-premises",      # on-premises side only: CPE, IPSec, virtual circuit, RPC peer
+      "hub": {"kind": "onprem",           # onprem (default) | remote_region - selects the default title
+              "name": "On-premises",      # optional override; on-prem side only: CPE, IPSec, VC, RPC peer
               "items": [{"icon": "cpe", "label": "Corp VPN\\n(10.0.0.0/8)", "address": "cpe"}],
               "link_label": null},
       "drgs": [{"name": "drg", "address": "drg", "label": "Dynamic Routing\\nGateway (DRG)",
@@ -94,8 +96,8 @@ from drawio_builder import (  # noqa: E402
     escape_label, is_warning, label_lines, render, wrap_hints,
 )
 from oci_topology import (  # noqa: E402
-    attachment_label, attachment_link_label, attachment_type, choose_drg_style, classify_topology,
-    is_regional, migrate_legacy_model,
+    HUB_TITLES, attachment_label, attachment_link_label, attachment_type, choose_drg_style,
+    classify_topology, hub_kind, is_regional, migrate_legacy_model,
 )
 
 # ---------------------------------------------------------------------------
@@ -516,7 +518,8 @@ def _layout_hub(d: DrawioBuilder, region_id, hub: dict, vcn_y, vcn_h, reg, expli
     n = max(1, len(items))
     hub_h = HUB_ICON_Y0 + (n - 1) * HUB_PITCH + ICON_FOOTPRINT_H + 30
     hub_y = max(VCN_Y, int(round((vcn_y + (vcn_h - hub_h) / 2) / 10.0) * 10))
-    hid = d.add_group(hub.get("name", "On-Premises"), HUB_X, hub_y, HUB_W, hub_h,
+    title = hub.get("name") or HUB_TITLES[hub_kind(hub)]
+    hid = d.add_group(title, HUB_X, hub_y, HUB_W, hub_h,
                       parent=region_id, group_type="onprem", key="hub")
     reg.containers["hub"] = hid
     ids = []

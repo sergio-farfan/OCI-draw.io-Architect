@@ -125,6 +125,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import detect_settings as ds  # noqa: E402
+from oci_topology import HUB_KINDS, HUB_TITLES  # noqa: E402
 
 SCHEMA_VERSION = 2
 TIERS = ("lb", "app", "compute", "mgmt", "data", "other")
@@ -505,6 +506,12 @@ def validate_model(model, icon_keys: Optional[Iterable[str]] = None) -> List[str
 
     hub = model.get("hub")
     if hub is not None and _expect(errors, hub, dict, "hub"):
+        kind = hub.get("kind")
+        # hub_kind() normalises case and whitespace and reads an absent or empty
+        # value as "onprem"; the validator accepts exactly what it accepts.
+        if "kind" in hub and kind not in (None, "") and (
+                not isinstance(kind, str) or kind.strip().lower() not in HUB_KINDS):
+            errors.append(f"hub.kind: {kind!r} not in {HUB_KINDS}")
         _expect(errors, hub.get("name"), str, "hub.name")
         _expect(errors, hub.get("link_label"), (str, type(None)), "hub.link_label")
         if _expect(errors, hub.get("items"), list, "hub.items"):
@@ -1450,7 +1457,8 @@ class ModelBuilder:
             self.hub_items.append(new_hub_item(icon, r.label(default), r.rtype, r.address))
         if not self.hub_items:
             return
-        self.model["hub"] = {"name": "On-premises" if onprem else "Remote region",
+        kind = "onprem" if onprem else "remote_region"
+        self.model["hub"] = {"kind": kind, "name": HUB_TITLES[kind],
                              "items": self.hub_items, "link_label": None}
 
     def _build_drg_links(self) -> None:

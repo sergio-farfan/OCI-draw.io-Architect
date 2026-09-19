@@ -567,6 +567,28 @@ class DrgStyleTests(unittest.TestCase):
         self.assertEqual(errors_of(d), [])
 
 
+class HubKindTests(unittest.TestCase):
+    def _model(self, hub):
+        return {"subject": "hub", "region": "us-ashburn-1", "hub": hub, "vcns": [simple_vcn("a")]}
+
+    def test_the_default_kind_titles_the_panel_on_premises(self):
+        d = quiet(ol.build_diagram, self._model(
+            {"items": [{"icon": "cpe", "label": "CPE", "address": "cpe"}]}))
+        self.assertEqual(d._cells["hub"]["label"], "On-premises")
+        self.assertEqual(d._cells["hub"]["group_type"], "onprem")
+
+    def test_a_remote_region_hub_keeps_the_onprem_styling_and_changes_its_title(self):
+        d = quiet(ol.build_diagram, self._model(
+            {"kind": "remote_region", "items": [{"icon": "rpg", "label": "RPC", "address": "rpc"}]}))
+        self.assertEqual(d._cells["hub"]["label"], "Remote region")
+        self.assertEqual(d._cells["hub"]["group_type"], "onprem")
+
+    def test_an_explicit_name_still_wins(self):
+        d = quiet(ol.build_diagram, self._model(
+            {"kind": "remote_region", "name": "Frankfurt", "items": [{"icon": "rpg", "label": "RPC", "address": "rpc"}]}))
+        self.assertEqual(d._cells["hub"]["label"], "Frankfurt")
+
+
 class LegacyModelTests(unittest.TestCase):
     LEGACY = {
         "subject": "Spoke", "region": "us-ashburn-1",
