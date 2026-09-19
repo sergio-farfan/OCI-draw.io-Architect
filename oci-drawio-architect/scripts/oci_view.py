@@ -1004,6 +1004,13 @@ def prune_groups(model: dict, known=None) -> dict:
     return dropped
 
 
+def _has_igw(model: dict) -> bool:
+    """Whether any surviving VCN still has an Internet gateway (it faces the Internet box)."""
+    return any(str((gw or {}).get("type") or "").strip().lower() == "igw"
+               for vcn in _list(model.get("vcns")) if isinstance(vcn, dict)
+               for gw in _list(vcn.get("gateways")) if isinstance(gw, dict))
+
+
 def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> Tuple[dict, dict]:
     """Apply the shared predicate and the participating mode; return (new model, report).
 
@@ -1122,13 +1129,41 @@ def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> T
             report["containers_dropped"] += 1
     m["vcns"] = vcns
     m["services"] = keep_items(m.get("services"))
+    # A location box the filter emptied is not drawn as an empty container: an
+    # On-premises panel with nothing in it tells the reader there is an
+    # on-premises location and no equipment. A box that was ALREADY empty is
+    # untouched - an empty Internet box is by design, it is what the IGW faces -
+    # and so is one that a surviving gateway still needs (``keep_empty`` keeps
+    # every box, exactly as it keeps an emptied subnet).
+    dropped_boxes: List[str] = []
+
+    def emptied(box, had_items) -> bool:
+        return bool(had_items and not box["items"] and has_filter and not parsed["keep_empty"])
+
     for box_key in ("hub", "internet"):
         box = m.get(box_key)
-        if isinstance(box, dict):
+        if not isinstance(box, dict):
+            continue
+        had_items = bool(_list(box.get("items")))
+        box["items"] = keep_items(box.get("items"))
+        if emptied(box, had_items) and not (box_key == "internet" and _has_igw(m)):
+            m[box_key] = None
+            report["containers_dropped"] += 1
+            dropped_boxes.append(box_key)
+    if isinstance(m.get("third_party"), list):
+        kept_boxes = []
+        for i, box in enumerate(m["third_party"]):
+            if not isinstance(box, dict):
+                kept_boxes.append(box)
+                continue
+            had_items = bool(_list(box.get("items")))
             box["items"] = keep_items(box.get("items"))
-    for box in _list(m.get("third_party")):
-        if isinstance(box, dict):
-            box["items"] = keep_items(box.get("items"))
+            if emptied(box, had_items):
+                report["containers_dropped"] += 1
+                dropped_boxes.append(f"thirdparty:{i}")
+            else:
+                kept_boxes.append(box)
+        m["third_party"] = kept_boxes
 
     # 6.8: the discovery selector and the discovery= expressions prune edges only.
     # Read through _as_tuple, not tuple(): a front end may hand this the raw
@@ -1176,7 +1211,10 @@ def filter_model(model: dict, spec=None, mode: str = "all", discovery=None) -> T
     # box that went (its key joins the endpoint whitelist for that one call).
     groups_report = prune_groups(m, known=known_group_members)
     report["groups_dropped"] = groups_report["boxes"]
-    dangling = prune_dangling(m, known=known_before | set(groups_report["keys"]))
+    # A dropped location box takes the edges that named it with it: "hub",
+    # "internet" and "thirdparty:<i>" are legal edge endpoints (_loc_boxes).
+    dangling = prune_dangling(m, known=known_before | set(groups_report["keys"])
+                              | set(dropped_boxes))
     report["edges_dropped"] += dangling["edges"]
     report["attachments_dropped"] = dangling["attachments"]
     report["peers_nulled"] = dangling["peers"]

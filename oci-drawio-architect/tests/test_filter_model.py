@@ -212,7 +212,9 @@ class FilterModelTests(unittest.TestCase):
         self.assertEqual([v["name"] for v in out["vcns"]], ["vcn-app"])
         self.assertIn("bastion", addresses(model()))
         self.assertNotIn("bastion", addresses(out))
-        self.assertEqual(report["containers_dropped"], 2)      # vcn-ops and its one subnet
+        # vcn-ops, its one subnet, and the On-premises box the CPE left behind.
+        self.assertEqual(report["containers_dropped"], 3)
+        self.assertIsNone(out["hub"])
 
     def test_a_subnet_expression_keeps_the_subnet_and_drops_its_siblings(self):
         out, _ = ov.filter_model(model(), ["subnet=sn-app"])
@@ -224,6 +226,53 @@ class FilterModelTests(unittest.TestCase):
         self.assertEqual(sorted(v["name"] for v in out["vcns"]), ["vcn-app", "vcn-ops"])
         out2, _ = ov.filter_model(model(), {"include": ["name=Bastion"]})
         self.assertEqual([v["name"] for v in out2["vcns"]], ["vcn-ops"])
+
+    def test_a_location_box_the_filter_empties_is_dropped(self):
+        """An On-premises panel with nothing in it misleads the reader."""
+        out, report = ov.filter_model(model(), ["type=oci_core_instance"])
+        self.assertIsNone(out["hub"])
+        self.assertGreaterEqual(report["containers_dropped"], 1)
+
+    def test_keep_empty_keeps_an_emptied_location_box(self):
+        out, _ = ov.filter_model(model(), {"include": ["type=oci_core_instance"],
+                                           "keep_empty": True})
+        self.assertIsInstance(out["hub"], dict)
+        self.assertEqual(out["hub"]["items"], [])
+
+    def test_a_box_that_was_already_empty_is_left_alone(self):
+        """An empty Internet box is by design: it is what the IGW faces."""
+        m = model()
+        m["internet"] = {"name": "Internet", "items": []}
+        out, _ = ov.filter_model(m, ["type=oci_core_instance"])
+        self.assertEqual(out["internet"], {"name": "Internet", "items": []})
+
+    def test_an_emptied_internet_box_survives_while_an_igw_still_faces_it(self):
+        m = model()
+        m["internet"] = {"name": "Internet", "items": [
+            {"icon": "users", "label": "Users", "address": "users"}]}
+        m["vcns"][0]["gateways"].append({"icon": "internet_gateway", "type": "igw",
+                                         "label": "IGW", "address": "igw"})
+        out, _ = ov.filter_model(m, ["type=oci_core_instance"])
+        self.assertIsInstance(out["internet"], dict)
+        self.assertEqual(out["internet"]["items"], [])
+        m2 = copy.deepcopy(m)
+        m2["vcns"][0]["gateways"] = [g for g in m2["vcns"][0]["gateways"] if g["type"] != "igw"]
+        out2, _ = ov.filter_model(m2, ["type=oci_core_instance"])
+        self.assertIsNone(out2["internet"])
+
+    def test_an_edge_onto_a_dropped_location_box_goes_with_it(self):
+        m = model()
+        m["edges"].append({"source": "hub", "target": "broker", "label": "", "kind": "data",
+                           "discovery": "user"})
+        out, _ = ov.filter_model(m, ["type=oci_core_instance"])
+        self.assertNotIn("hub", [e["source"] for e in out["edges"]])
+
+    def test_an_emptied_third_party_box_is_dropped(self):
+        m = model()
+        m["third_party"] = [{"name": "3rd Party Cloud", "items": [
+            {"icon": "vm", "label": "Peer VM", "type": "other", "address": "peer"}]}]
+        out, _ = ov.filter_model(m, ["type=oci_core_instance"])
+        self.assertEqual(out["third_party"], [])
 
     def test_an_edge_whose_endpoint_disappeared_is_dropped_and_counted(self):
         out, report = ov.filter_model(model(), ["name=App Broker VM"])
