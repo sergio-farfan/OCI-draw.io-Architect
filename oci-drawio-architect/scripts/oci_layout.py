@@ -1834,7 +1834,7 @@ def _legend_entries(d: DrawioBuilder, reg: _Registry, view=None, layers=(), hidd
     return rows
 
 
-def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
+def build_diagram(model: dict, style_profile="default", legend=None, logo=None,
                   page_name=None, title=True, max_row_w=MAX_ROW_W, drg_style=None,
                   locations=None, gateway_edge=None, subnet_label=None, attachment_style=None,
                   show_compartments=None, label_mode=None, label_fields=None,
@@ -1861,7 +1861,7 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
                            subnet_label=subnet_label, show_compartments=show_compartments,
                            filter=filter_spec, mode=mode, discovery=discovery,
                            annotate_discovery=annotate_discovery,
-                           global_services=global_services)
+                           global_services=global_services, legend=legend)
     for note in view["notes"]:
         print(note, file=sys.stderr)
     model, filter_report = ov.filter_model(model, view["filter"], mode=view["mode"],
@@ -1882,10 +1882,11 @@ def build_diagram(model: dict, style_profile="default", legend=False, logo=None,
     ctx = _view_ctx(model, locations=locations, gateway_edge=gateway_edge, subnet_label=subnet_label,
                     attachment_style=attachment_style, show_compartments=show_compartments,
                     view=view)
-    # 6.4: a level that asks for a legend gets one; "network" leaves the choice
-    # to the caller (its table entry is None).
-    if view["legend"] is not None:
-        legend = bool(view["legend"])
+    # 6.4 / 6.1: a level that asks for a legend gets one; "network" leaves the
+    # choice to the caller (its table entry is None), and the resolution order
+    # is the standard one - the kwarg (which the CLI --legend flag arrives
+    # through) beats the model key, which beats the detail and the purpose.
+    legend = bool(view["legend"])
     d = DrawioBuilder(page_name=page_name or f"{subject} Architecture", style_profile=style_profile,
                       attachment_style=ctx["attachment_style"],
                       max_label_lines=view["line_budget"])
@@ -2257,8 +2258,9 @@ def main(argv=None) -> int:
     subject = model.get("subject") or "Architecture"
     out = Path(args.out) if args.out else Path(f"{subject.replace(' ', '_')}_Architecture.drawio")
     write_diagram(model, out, strict=args.strict, render_fmt=args.render,
-                  style_profile=args.profile, legend=args.legend, logo=args.logo,
-                  drg_style=args.drg_style, locations=args.locations,
+                  style_profile=args.profile, logo=args.logo,
+                  legend=True if args.legend else None, drg_style=args.drg_style,
+                  locations=args.locations,
                   gateway_edge=args.gateway_edge, subnet_label=args.subnet_label,
                   attachment_style=args.attachment_style, show_compartments=args.show_compartments,
                   label_mode=args.label_mode, label_fields=args.label_fields,
