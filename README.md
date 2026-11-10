@@ -1,6 +1,6 @@
 # OCI draw.io Architect — Claude Code Plugin
 
-**A Claude Code plugin that generates production-quality draw.io architecture diagrams for Oracle Cloud Infrastructure (OCI) — from Terraform configurations or free-form descriptions.**
+**Generate an editable OCI architecture diagram in draw.io from Terraform or a plain-text description. Run `/drawio-architect` in Claude Code to turn your input into a validated `.drawio` file with Oracle Cloud Infrastructure icons.**
 
 [![Version](https://img.shields.io/badge/version-1.5.0-blue.svg)](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/tag/v1.5.0)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
@@ -11,7 +11,19 @@
 ---
 
 **Author:** Sergio Farfan · sergio.farfan@gmail.com
-**Version:** 1.5.0 · [Download archive](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.5.0/oci-drawio-architect-v1.5.0.tar.gz) · [Changelog](oci-drawio-architect/CHANGELOG.md)
+**Version:** 1.5.0 · [Install the plugin](#installation) · [Download archive](https://github.com/sergio-farfan/OCI-draw.io-Architect/releases/download/v1.5.0/oci-drawio-architect-v1.5.0.tar.gz) · [Changelog](oci-drawio-architect/CHANGELOG.md)
+
+---
+
+## What It Does
+
+![OCI Architecture Diagram in draw.io](screenshots/diagram-overview.png)
+
+*Single-VCN topology with the on-premises panel, region-level DRG and its VCN attachment, subnets with NSG shields on the protected resources, gateways on the VCN border and the Oracle Services Network panel — rendered by draw.io from the reference layout example (`oci-drawio-architect/examples/generate_reference_layout.py`); every connector is routed automatically.*
+
+![Diagram detail — data subnet](screenshots/diagram-detail.png)
+
+*Detail view: data subnet, Service Gateway on the bottom border facing the Oracle Services Network band — uniform icon sizes, captions under every icon, connectors kept in the gutters.*
 
 ---
 
@@ -28,20 +40,6 @@ For cloud architects working with OCI, this is a recurring tax on every project:
 - **Diagrams are created once and abandoned.** Because updating them is expensive, teams stop maintaining them. By the time a new engineer joins or an audit happens, the diagram shows an architecture from two sprints ago.
 
 > **The root cause:** architecture diagrams are treated as a design artifact — something you create manually — rather than something you generate from the actual infrastructure definition.
-
----
-
-## What It Does
-
-Type `/drawio-architect` in any Claude Code session and the plugin generates a production-quality `.drawio` file directly from your infrastructure — no manual drawing, no icon hunting, no layout math.
-
-![OCI Architecture Diagram in draw.io](screenshots/diagram-overview.png)
-
-*Single-VCN topology with the on-premises panel, region-level DRG and its VCN attachment, subnets with NSG shields on the protected resources, gateways on the VCN border and the Oracle Services Network panel — rendered by draw.io from the reference layout example (`oci-drawio-architect/examples/generate_reference_layout.py`); every connector is routed automatically.*
-
-![Diagram detail — data subnet](screenshots/diagram-detail.png)
-
-*Detail view: data subnet, Service Gateway on the bottom border facing the Oracle Services Network band — uniform icon sizes, captions under every icon, connectors kept in the gutters.*
 
 ---
 
